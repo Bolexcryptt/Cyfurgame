@@ -101,6 +101,7 @@ function startScene() {
     const gridX = (col) => GRID.x0 + col * GRID.step;
     const gridZ = (row) => GRID.z0 + row * GRID.step;
     const tileTargets = [];
+    const sourceTargets = [];
     const placedMirrors = new Map();
     const raycaster = new THREE.Raycaster();
     const pointerNdc = new THREE.Vector2();
@@ -110,6 +111,8 @@ function startScene() {
     let corePulse = null;
     let corePowered = false;
     let tracing = false;
+    let launchDirection = 1;
+    let updateSourceMarker = () => {};
     let traceStartedAt = 0;
     let traceResult = null;
 
@@ -484,7 +487,70 @@ function startScene() {
         hoverRing.position.y = 0.27;
         hoverRing.visible = false;
         interactionGroup.add(hoverRing);
+        updateSourceMarker = createSourceMarker();
         return hoverRing;
+    }
+
+    function createSourceMarker() {
+        const marker = new THREE.Group();
+        marker.position.set(-2.55, 0.25, -3.55);
+        platform.add(marker);
+
+        const ring = new THREE.Mesh(
+            new THREE.TorusGeometry(0.48, 0.025, 6, 40),
+            new THREE.MeshBasicMaterial({
+                color: 0xffa0ed,
+                transparent: true,
+                opacity: 0.82,
+                toneMapped: false,
+                depthWrite: false
+            })
+        );
+        ring.rotation.x = Math.PI / 2;
+        marker.add(ring);
+
+        const arrows = [-1, 1].map((direction) => {
+            const arrow = new THREE.Mesh(
+                new THREE.ConeGeometry(0.13, 0.3, 3),
+                new THREE.MeshBasicMaterial({
+                    color: 0x744d78,
+                    transparent: true,
+                    opacity: 0.6,
+                    toneMapped: false,
+                    depthWrite: false
+                })
+            );
+            arrow.rotation.z = direction < 0 ? Math.PI / 2 : -Math.PI / 2;
+            arrow.position.set(direction * 0.31, 0.035, 0);
+            marker.add(arrow);
+            return arrow;
+        });
+
+        const hitArea = new THREE.Mesh(
+            new THREE.PlaneGeometry(1.05, 1.05),
+            new THREE.MeshBasicMaterial({
+                transparent: true,
+                opacity: 0,
+                colorWrite: false,
+                depthWrite: false,
+                side: THREE.DoubleSide
+            })
+        );
+        hitArea.rotation.x = -Math.PI / 2;
+        hitArea.position.set(-2.55, 0.29, -3.55);
+        interactionGroup.add(hitArea);
+        sourceTargets.push(hitArea);
+
+        const update = () => {
+            arrows.forEach((arrow, index) => {
+                const isSelected = (index === 1) === (launchDirection === 1);
+                arrow.material.color.setHex(isSelected ? 0xffb8f0 : 0x744d78);
+                arrow.material.opacity = isSelected ? 1 : 0.48;
+                arrow.scale.setScalar(isSelected ? 1.2 : 0.84);
+            });
+        };
+        update();
+        return update;
     }
 
     function createSquarePlacementGrid() {
@@ -594,7 +660,7 @@ function startScene() {
     function traceLight() {
         let row = GRID.start.row;
         let col = GRID.start.col;
-        let direction = 1;
+        let direction = launchDirection;
         let colorIndex = 0;
         const segments = [];
         const visited = new Set();
@@ -721,19 +787,31 @@ function startScene() {
             setFeedback(`Mirror placed at row ${row + 1}, column ${col + 1}. Tap it again to rotate.`);
         }
 
-        environmentNetwork.visible = false;
+        clearObjectGroup(activeBeamGroup);
+        beamSegments.length = 0;
         previewRoute = traceLight();
-        drawActiveRoute(previewRoute);
         if (previewRoute.outcome === "powered") {
-            setFeedback("The beam reaches the core. Press POWER SOURCE to activate it.", "ready");
+            setFeedback("Route ready. Press POWER SOURCE to launch the beam.", "ready");
         } else if (previewRoute.outcome === "loop") {
-            setFeedback("The live beam loops. Rotate or move a mirror to create a route to the core.", "miss");
+            setFeedback("This route loops. Rotate or move a mirror before launching.", "miss");
         } else {
             setFeedback(
-                `The live beam exits after row ${previewRoute.finalCell.row + 1}, column ${previewRoute.finalCell.col + 1}. Adjust a mirror.`,
+                `The route exits after row ${previewRoute.finalCell.row + 1}, column ${previewRoute.finalCell.col + 1}. Adjust a mirror before launching.`,
                 "miss"
             );
         }
+    }
+
+    function toggleLaunchDirection() {
+        if (tracing || corePowered) return;
+        launchDirection = launchDirection === 1 ? 3 : 1;
+        updateSourceMarker();
+        clearObjectGroup(activeBeamGroup);
+        beamSegments.length = 0;
+        previewRoute = placedMirrors.size ? traceLight() : null;
+        setFeedback(
+            `Source points ${launchDirection === 1 ? "right" : "left"}. Place mirrors, then press POWER SOURCE to launch.`
+        );
     }
 
     function animateTrace() {
@@ -754,6 +832,8 @@ function startScene() {
         tracing = false;
         traceResult = null;
         previewRoute = null;
+        launchDirection = 1;
+        updateSourceMarker();
         placedMirrors.clear();
         clearObjectGroup(mirrorGroup);
         clearObjectGroup(activeBeamGroup);
@@ -764,7 +844,7 @@ function startScene() {
         if (sourcePylon?.userData.beaconLight) sourcePylon.userData.beaconLight.intensity = 7;
         traceButton.disabled = false;
         traceButton.innerHTML = "<span>▶</span> POWER SOURCE";
-        setStatus("Route the beam to the core", "Tap or click an open floor tile to place a mirror. Tap it again to rotate.");
+        setStatus("Route the beam to the core", "Tap the source arrows to choose a side. Place mirrors, then press POWER SOURCE to launch.");
     }
 
     function pickTile(event) {
@@ -792,6 +872,16 @@ function startScene() {
 
         canvas.addEventListener("pointerup", (event) => {
             if (cameraState.moved || cameraState.pointers.size !== 0) return;
+            const bounds = canvas.getBoundingClientRect();
+            pointerNdc.set(
+                ((event.clientX - bounds.left) / bounds.width) * 2 - 1,
+                -((event.clientY - bounds.top) / bounds.height) * 2 + 1
+            );
+            raycaster.setFromCamera(pointerNdc, camera);
+            if (raycaster.intersectObjects(sourceTargets, false).length) {
+                toggleLaunchDirection();
+                return;
+            }
             const cell = pickTile(event);
             if (cell) placeOrRotateMirror(cell.row, cell.col);
         });
