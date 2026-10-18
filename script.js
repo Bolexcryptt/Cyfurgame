@@ -40,18 +40,18 @@ function startScene() {
     renderer.shadowMap.enabled = true;
     renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    renderer.toneMappingExposure = 1.06;
+    renderer.toneMappingExposure = 1;
     renderer.outputColorSpace = THREE.SRGBColorSpace;
 
     const composer = new EffectComposer(renderer);
     composer.addPass(new RenderPass(scene, camera));
-    const bloom = new UnrealBloomPass(new THREE.Vector2(1, 1), 0.26, 0.38, 0.93);
+    const bloom = new UnrealBloomPass(new THREE.Vector2(1, 1), 0.12, 0.34, 1.02);
     composer.addPass(bloom);
     composer.addPass(new OutputPass());
 
-    scene.add(new THREE.HemisphereLight(0x899bb4, 0x21150f, 1.45));
+    scene.add(new THREE.HemisphereLight(0x899bb4, 0x21150f, 1.5));
 
-    const moonLight = new THREE.DirectionalLight(0xb5c6dc, 3.2);
+    const moonLight = new THREE.DirectionalLight(0xb5c6dc, 4);
     moonLight.position.set(-7, 15, -4);
     moonLight.castShadow = true;
     moonLight.shadow.mapSize.set(2048, 2048);
@@ -62,16 +62,16 @@ function startScene() {
     moonLight.shadow.bias = -0.00035;
     scene.add(moonLight);
 
-    const warmLight = new THREE.PointLight(0xff7134, 24, 12, 2);
+    const warmLight = new THREE.PointLight(0xff7134, 17, 12, 2);
     warmLight.position.set(-3.8, 2.7, 1.7);
     scene.add(warmLight);
-    const magentaLight = new THREE.PointLight(colors.pink, 18, 9, 2);
+    const magentaLight = new THREE.PointLight(colors.pink, 10, 9, 2);
     magentaLight.position.set(-4.7, 1.5, -1.5);
     scene.add(magentaLight);
-    const blueLight = new THREE.PointLight(colors.blue, 28, 12, 2);
+    const blueLight = new THREE.PointLight(colors.blue, 15, 12, 2);
     blueLight.position.set(3.4, 2.2, 2.7);
     scene.add(blueLight);
-    const coreLight = new THREE.PointLight(colors.cold, 32, 8, 2);
+    const coreLight = new THREE.PointLight(colors.cold, 8, 8, 2);
     coreLight.position.set(1.35, 1.5, 0.1);
     scene.add(coreLight);
 
@@ -115,10 +115,10 @@ function startScene() {
 
     const cameraState = {
         azimuth: 0.53,
-        elevation: 0.82,
-        distance: 22,
+        elevation: 0.54,
+        distance: 12.5,
         defaultAzimuth: 0.53,
-        defaultElevation: 0.82,
+        defaultElevation: 0.54,
         dragging: false,
         moved: false,
         lastX: 0,
@@ -133,7 +133,7 @@ function startScene() {
     const materials = {
         platform: makeMaterial(0x282321, 0.92, 0.16),
         platformSide: makeMaterial(0x181c21, 0.74, 0.42),
-        underside: makeMaterial(0x111720, 0.62, 0.64),
+        underside: makeMaterial(0x171c25, 0.62, 0.64),
         floor: [
             makeMaterial(0x37302c, 0.92, 0.08, { side: THREE.DoubleSide }),
             makeMaterial(0x40352e, 0.94, 0.06, { side: THREE.DoubleSide }),
@@ -145,8 +145,8 @@ function startScene() {
         seam: new THREE.MeshBasicMaterial({ color: 0x151311 }),
         metal: makeMaterial(0x202a34, 0.46, 0.78),
         metalEdge: makeMaterial(0x4b5560, 0.4, 0.82),
-        column: makeMaterial(0x202733, 0.64, 0.72),
-        columnLight: makeMaterial(0x303b49, 0.52, 0.73),
+        column: makeMaterial(0x29323f, 0.64, 0.72),
+        columnLight: makeMaterial(0x3b4655, 0.52, 0.73),
         stone: [
             makeMaterial(0x363431, 0.95, 0.04),
             makeMaterial(0x45403a, 0.94, 0.05),
@@ -495,7 +495,7 @@ function startScene() {
         const glassMaterial = new THREE.MeshStandardMaterial({
             color: 0x79e6fa,
             emissive: 0x168db6,
-            emissiveIntensity: 1.35,
+            emissiveIntensity: 0.65,
             metalness: 0.56,
             roughness: 0.17,
             transparent: true,
@@ -514,7 +514,7 @@ function startScene() {
         addBox(panel, [0.075, 0.75, 0.12], [-0.31, 0, 0], frameMaterial);
         addBox(panel, [0.075, 0.75, 0.12], [0.31, 0, 0], frameMaterial);
 
-        const mount = new THREE.PointLight(0x42d7ff, 4.5, 1.8, 2);
+        const mount = new THREE.PointLight(0x42d7ff, 2, 1.4, 2);
         mount.position.set(0, 0.35, 0);
         group.add(mount);
 
@@ -619,18 +619,18 @@ function startScene() {
     function addActiveSegment(segment, index, visibleCount) {
         const curve = new THREE.LineCurve3(segment.from, segment.to);
         const glow = new THREE.Mesh(
-            new THREE.TubeGeometry(curve, 1, 0.11, 8, false),
+            new THREE.TubeGeometry(curve, 1, 0.055, 8, false),
             new THREE.MeshBasicMaterial({
                 color: segment.color,
                 transparent: true,
-                opacity: 0.22,
+                opacity: 0.12,
                 depthWrite: false,
                 toneMapped: false,
                 blending: THREE.AdditiveBlending
             })
         );
         const core = new THREE.Mesh(
-            new THREE.TubeGeometry(curve, 1, 0.027, 6, false),
+            new THREE.TubeGeometry(curve, 1, 0.018, 6, false),
             new THREE.MeshBasicMaterial({
                 color: segment.color,
                 toneMapped: false,
@@ -653,11 +653,11 @@ function startScene() {
         corePowered = powered;
         if (corePulse) {
             corePulse.material.emissive.setHex(powered ? 0x7deeff : 0x1287aa);
-            corePulse.material.emissiveIntensity = powered ? 4.2 : 0.55;
+            corePulse.material.emissiveIntensity = powered ? 1.2 : 0.32;
             corePulse.material.color.setHex(powered ? 0xc2fbff : 0x317b94);
         }
         if (sourcePylon?.userData.beaconLight) {
-            sourcePylon.userData.beaconLight.intensity = powered ? 24 : 16;
+            sourcePylon.userData.beaconLight.intensity = powered ? 10 : 7;
         }
     }
 
@@ -705,7 +705,7 @@ function startScene() {
         previewRoute = traceLight();
         environmentNetwork.visible = false;
         drawActiveRoute(previewRoute, 0);
-        if (sourcePylon?.userData.beaconLight) sourcePylon.userData.beaconLight.intensity = 34;
+        if (sourcePylon?.userData.beaconLight) sourcePylon.userData.beaconLight.intensity = 12;
         tracing = true;
         traceStartedAt = performance.now();
         traceResult = previewRoute;
@@ -724,8 +724,8 @@ function startScene() {
         beamSegments.length = 0;
         environmentNetwork.visible = true;
         setCorePowered(false);
-        coreLight.intensity = 32;
-        if (sourcePylon?.userData.beaconLight) sourcePylon.userData.beaconLight.intensity = 16;
+        coreLight.intensity = 14;
+        if (sourcePylon?.userData.beaconLight) sourcePylon.userData.beaconLight.intensity = 7;
         traceButton.disabled = false;
         traceButton.innerHTML = "<span>▶</span> POWER SOURCE";
         setStatus("Route the beam to the core", "Tap or click an open floor tile to place a mirror. Tap it again to rotate.");
@@ -942,7 +942,7 @@ function startScene() {
         const colorMaterial = new THREE.MeshStandardMaterial({
             color,
             emissive: color,
-            emissiveIntensity: 1.4,
+            emissiveIntensity: 0.72,
             metalness: 0.18,
             roughness: 0.22
         });
@@ -963,7 +963,7 @@ function startScene() {
         group.add(crystal);
         addBox(group, [0.36 * scale, 0.08, 0.36 * scale], [0, 0.35 + shaftHeight, 0], whiteMaterial);
 
-        const pointLight = new THREE.PointLight(color, type === "beacon" ? 16 : 7, type === "beacon" ? 4.4 : 2.6, 2);
+        const pointLight = new THREE.PointLight(color, type === "beacon" ? 7 : 3, type === "beacon" ? 3.8 : 2.4, 2);
         pointLight.position.set(0, 0.85 + shaftHeight, 0);
         group.add(pointLight);
         if (type === "beacon") group.userData.beaconLight = pointLight;
@@ -996,7 +996,7 @@ function startScene() {
         const glowMaterial = new THREE.MeshBasicMaterial({
             color,
             transparent: true,
-            opacity: 0.16,
+            opacity: 0.075,
             depthWrite: false,
             toneMapped: false,
             blending: THREE.AdditiveBlending
@@ -1057,7 +1057,7 @@ function startScene() {
             { x: 0.02, z: -0.82, color: colors.pink },
             { x: 2.82, z: -3.75, color: colors.blue }
         ].forEach(({ x, z, color }) => {
-            const lamp = new THREE.PointLight(color, 8, 5, 2);
+            const lamp = new THREE.PointLight(color, 3.5, 4.5, 2);
             lamp.position.set(x, 0.48, z);
             platform.add(lamp);
         });
@@ -1081,7 +1081,7 @@ function startScene() {
         const blueMetal = new THREE.MeshStandardMaterial({
             color: 0x4fbfe2,
             emissive: 0x087ab1,
-            emissiveIntensity: 0.8,
+            emissiveIntensity: 0.42,
             metalness: 0.72,
             roughness: 0.3
         });
@@ -1120,7 +1120,7 @@ function startScene() {
             );
             inset.rotation.y = -angle;
             if (i % 3 === 0) {
-                const light = new THREE.PointLight(colors.blue, 2.5, 1.8, 2);
+                const light = new THREE.PointLight(colors.blue, 1.1, 1.8, 2);
                 light.position.set(x + Math.cos(angle) * r, 0.85, z + Math.sin(angle) * r);
                 platform.add(light);
             }
@@ -1139,6 +1139,32 @@ function startScene() {
             blending: THREE.AdditiveBlending
         });
 
+        const shaft = new THREE.Mesh(
+            new THREE.CylinderGeometry(0.025, 0.045, 4.2, 10),
+            new THREE.MeshBasicMaterial({
+                color: 0x65ebf4,
+                transparent: true,
+                opacity: 0.1,
+                depthWrite: false,
+                toneMapped: true
+            })
+        );
+        shaft.position.y = 2.25;
+        hologram.add(shaft);
+
+        const shaftGlow = new THREE.Mesh(
+            new THREE.CylinderGeometry(0.085, 0.12, 4.2, 10),
+            new THREE.MeshBasicMaterial({
+                color: 0x43dce9,
+                transparent: true,
+                opacity: 0.035,
+                depthWrite: false,
+                toneMapped: true
+            })
+        );
+        shaftGlow.position.y = 2.25;
+        hologram.add(shaftGlow);
+
         const disc = new THREE.Mesh(
             new THREE.CircleGeometry(0.89, 64),
             hologramMaterial(0x2acfff, 0.12)
@@ -1149,7 +1175,7 @@ function startScene() {
         [0.25, 0.42, 0.61, 0.78].forEach((radius, i) => {
             const orbitRing = new THREE.Mesh(
                 new THREE.TorusGeometry(radius, i % 2 ? 0.009 : 0.014, 5, 64),
-                hologramMaterial(i === 2 ? 0xa7ffff : colors.cold, i === 2 ? 0.9 : 0.65)
+                hologramMaterial(i === 2 ? 0xa7ffff : colors.cold, i === 2 ? 0.44 : 0.3)
             );
             orbitRing.rotation.x = Math.PI / 2;
             orbitRing.position.y = i % 2 ? 0.018 : -0.012;
@@ -1189,7 +1215,7 @@ function startScene() {
             new THREE.MeshStandardMaterial({
                 color: 0x317b94,
                 emissive: 0x1287aa,
-                emissiveIntensity: 0.55,
+                emissiveIntensity: 0.32,
                 metalness: 0.38,
                 roughness: 0.2
             })
@@ -1236,7 +1262,7 @@ function startScene() {
     }
 
     function setupCamera() {
-        const target = new THREE.Vector3(0, 0.2, -0.1);
+        const target = new THREE.Vector3(-0.65, 0.2, -0.1);
         const horizontal = Math.cos(cameraState.elevation) * cameraState.distance;
         camera.position.set(
             target.x + Math.sin(cameraState.azimuth) * horizontal,
@@ -1249,7 +1275,7 @@ function startScene() {
     function resetCamera() {
         cameraState.azimuth = cameraState.defaultAzimuth;
         cameraState.elevation = cameraState.defaultElevation;
-        cameraState.distance = window.innerWidth < 620 ? 25.5 : 20.8;
+        cameraState.distance = window.innerWidth < 620 ? 17.5 : 12.5;
         setupCamera();
     }
 
@@ -1382,11 +1408,11 @@ function startScene() {
                     setCorePowered(true);
                     traceButton.disabled = true;
                     traceButton.innerHTML = "<span>✓</span> CORE ONLINE";
-                    coreLight.intensity = 70;
+                    coreLight.intensity = 28;
                     setStatus("Core online", "Success! The live beam has powered the core. Reset to try another route.", "success");
                 } else {
-                    coreLight.intensity = 32;
-                    if (sourcePylon?.userData.beaconLight) sourcePylon.userData.beaconLight.intensity = 16;
+                    coreLight.intensity = 14;
+                    if (sourcePylon?.userData.beaconLight) sourcePylon.userData.beaconLight.intensity = 7;
                     const ending = traceResult.outcome === "loop"
                         ? "The beam loops back on itself."
                         : "The beam misses the core and exits the playable platform.";
@@ -1401,10 +1427,10 @@ function startScene() {
             }
         });
         if (corePowered) {
-            coreLight.intensity = 65 + Math.sin(time * 4) * 7;
+            coreLight.intensity = 16 + Math.sin(time * 4) * 2;
             corePulse.scale.setScalar(1 + Math.sin(time * 3.2) * 0.08);
         } else {
-            coreLight.intensity = 32;
+            coreLight.intensity = 14;
             if (corePulse) corePulse.scale.setScalar(1 + Math.sin(time * 1.8) * 0.025);
         }
         composer.render();
