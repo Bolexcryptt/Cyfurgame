@@ -1,135 +1,32 @@
 :root {
     color-scheme: dark;
-    --ink: #e7edf5;
-    --muted: #8290a4;
-    --cyan: #70e9ff;
-    --pink: #ff82e8;
-    --amber: #ffbf68;
-    --panel: rgba(8, 14, 25, .82);
-    --line: rgba(144, 171, 206, .19);
-    font-family: Manrope, "Segoe UI", sans-serif;
+    font-family: "Segoe UI", Arial, sans-serif;
+    background: #05080e;
 }
 
 * { box-sizing: border-box; }
 
 html, body {
     width: 100%;
-    min-width: 320px;
     height: 100%;
     margin: 0;
     overflow: hidden;
-    background: #070b15;
-    color: var(--ink);
+    background: #05080e;
 }
 
-body {
-    background:
-        radial-gradient(ellipse at 50% 44%, rgba(30, 54, 79, .25), transparent 55%),
-        linear-gradient(145deg, #0a101d, #050912 70%);
-    -webkit-tap-highlight-color: transparent;
-}
-
-button { font: inherit; }
-
-.game-shell {
+.scene-preview {
     position: relative;
     width: 100%;
     height: 100%;
-    min-height: 520px;
+    min-height: 320px;
     overflow: hidden;
-    isolation: isolate;
-}
-
-.game-shell::before {
-    position: absolute;
-    z-index: -1;
-    inset: 0;
-    content: "";
-    pointer-events: none;
     background:
-        linear-gradient(90deg, rgba(103, 160, 206, .035) 1px, transparent 1px),
-        linear-gradient(rgba(103, 160, 206, .035) 1px, transparent 1px);
-    background-size: 58px 58px;
-    mask-image: radial-gradient(ellipse at center, #000 2%, transparent 82%);
+        radial-gradient(ellipse at 52% 50%, #17202a 0, #0a0f17 48%, #03060a 100%);
 }
 
-.hud-top {
-    position: absolute;
-    z-index: 4;
-    inset: 0 0 auto;
-    height: 78px;
-    padding: 0 clamp(18px, 4vw, 54px);
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    border-bottom: 1px solid rgba(167, 197, 228, .1);
-    background: linear-gradient(180deg, rgba(5, 9, 17, .83), rgba(5, 9, 17, .25));
-}
-
-.brand {
-    display: inline-flex;
-    align-items: center;
-    gap: 12px;
-    color: inherit;
-    text-decoration: none;
-}
-
-.brand-logo {
-    width: 49px;
-    height: 44px;
-    object-fit: contain;
-    filter: drop-shadow(0 0 9px rgba(74, 202, 255, .28));
-}
-
-.brand-copy { display: grid; gap: 3px; }
-.brand-copy strong { font-size: 14px; letter-spacing: .16em; }
-.brand-copy i {
-    margin-left: 3px;
-    color: var(--cyan);
-    font-size: 9px;
-    font-style: normal;
-    letter-spacing: .18em;
-}
-.brand-copy small,
-.level-tag,
-.scene-caption,
-.scene-legend,
-.camera-hint,
-.eyebrow,
-.hud-bottom {
-    font-family: "DM Mono", Consolas, monospace;
-    letter-spacing: .12em;
-}
-.brand-copy small { color: #8290a4; font-size: 8px; }
-
-.level-tag {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    color: #a4b2c5;
-    font-size: 9px;
-}
-.level-tag b {
-    padding: 7px 9px;
-    border: 1px solid rgba(112, 233, 255, .23);
-    color: var(--cyan);
-    font-size: 10px;
-    font-weight: 500;
-}
-.live-dot, .footer-led {
-    width: 7px;
-    height: 7px;
-    border-radius: 50%;
-    background: #8dfac6;
-    box-shadow: 0 0 10px rgba(141, 250, 198, .8);
-}
-
-.game-view {
+#scene-canvas {
     position: absolute;
     inset: 0;
-}
-
-#game-canvas {
     display: block;
     width: 100%;
     height: 100%;
@@ -137,247 +34,174 @@ button { font: inherit; }
     touch-action: none;
     cursor: grab;
 }
-#game-canvas:active { cursor: grabbing; }
-
-.scene-caption {
-    position: absolute;
-    top: 105px;
-    left: clamp(19px, 4vw, 55px);
-    display: grid;
-    gap: 7px;
-    pointer-events: none;
-}
-.caption-kicker { color: var(--cyan); font-size: 9px; }
-.caption-title {
-    color: rgba(231, 237, 245, .88);
-    font: 600 clamp(18px, 2vw, 25px) Manrope, sans-serif;
-    letter-spacing: -.04em;
-}
-
-.scene-legend {
-    position: absolute;
-    top: 109px;
-    right: clamp(18px, 4vw, 54px);
-    display: grid;
-    gap: 11px;
-    color: #98a5b7;
-    font-size: 8px;
-    pointer-events: none;
-}
-.scene-legend span { display: flex; align-items: center; gap: 8px; }
-.scene-legend i {
-    width: 7px;
-    height: 7px;
-    border-radius: 2px;
-    box-shadow: 0 0 8px currentColor;
-}
-.legend-pink { color: var(--pink); background: currentColor; }
-.legend-amber { color: var(--amber); background: currentColor; }
-.legend-cyan { color: var(--cyan); background: currentColor; }
+#scene-canvas:active { cursor: grabbing; }
 
 .camera-tools {
     position: absolute;
     z-index: 2;
-    top: 159px;
-    right: clamp(18px, 4vw, 54px);
+    top: max(14px, env(safe-area-inset-top));
+    right: max(14px, env(safe-area-inset-right));
     display: flex;
     align-items: center;
-    gap: 5px;
+    gap: 4px;
     padding: 5px;
-    border: 1px solid rgba(144, 171, 206, .2);
-    background: rgba(8, 14, 25, .78);
-    box-shadow: 0 8px 28px rgba(0, 0, 0, .2);
-    backdrop-filter: blur(10px);
+    border: 1px solid rgba(164, 187, 209, .16);
+    background: rgba(5, 9, 16, .62);
+    backdrop-filter: blur(12px);
 }
-.camera-tools-label {
+
+.camera-tools span {
     padding: 0 7px;
-    color: #8fa0b6;
-    font: 8px "DM Mono", Consolas, monospace;
-    letter-spacing: .12em;
+    color: rgba(203, 217, 230, .65);
+    font: 8px "Consolas", monospace;
+    letter-spacing: .14em;
 }
-.camera-button {
+
+.camera-tools button {
     width: 31px;
     height: 30px;
     padding: 0;
-    border: 1px solid rgba(144, 171, 206, .14);
-    background: rgba(19, 30, 47, .86);
-    color: #d3e3f1;
+    border: 1px solid rgba(165, 194, 219, .13);
+    background: rgba(27, 39, 53, .56);
+    color: #e2edf5;
     cursor: pointer;
-    font: 16px "DM Mono", Consolas, monospace;
+    font: 15px "Consolas", monospace;
+    transition: border-color .15s, color .15s, background .15s;
 }
-.camera-button:hover,
-.camera-button:focus-visible {
-    border-color: rgba(112, 233, 255, .72);
-    color: var(--cyan);
+
+.camera-tools button:hover,
+.camera-tools button:focus-visible {
+    border-color: rgba(118, 221, 245, .7);
+    background: rgba(31, 69, 83, .7);
+    color: #a9f2ff;
     outline: none;
 }
-.camera-button:active { background: rgba(44, 87, 113, .8); }
-.camera-reset {
+
+.camera-tools .reset-camera {
     width: auto;
-    padding-inline: 8px;
+    padding-inline: 9px;
     font-size: 8px;
     letter-spacing: .08em;
 }
 
-.camera-hint {
+.gesture-hint {
     position: absolute;
-    right: clamp(18px, 4vw, 54px);
-    bottom: 155px;
-    color: rgba(170, 188, 209, .58);
-    font-size: 8px;
+    right: max(17px, env(safe-area-inset-right));
+    bottom: max(14px, env(safe-area-inset-bottom));
+    margin: 0;
+    color: rgba(183, 199, 215, .46);
+    font: 8px "Consolas", monospace;
+    letter-spacing: .11em;
     pointer-events: none;
 }
-.camera-hint span { color: var(--cyan); padding: 0 4px; }
+.gesture-hint span { padding-inline: 4px; color: rgba(112, 215, 239, .72); }
 
-.control-deck {
+.game-hud {
     position: absolute;
-    z-index: 4;
-    right: clamp(14px, 4vw, 54px);
-    bottom: 56px;
-    left: clamp(14px, 4vw, 54px);
-    min-height: 82px;
-    padding: 15px 18px;
+    z-index: 2;
+    right: max(18px, env(safe-area-inset-right));
+    bottom: max(39px, calc(env(safe-area-inset-bottom) + 34px));
+    left: max(18px, env(safe-area-inset-left));
+    min-height: 76px;
+    padding: 12px 15px;
     display: flex;
     align-items: center;
     justify-content: space-between;
     gap: 18px;
-    border: 1px solid var(--line);
-    background:
-        linear-gradient(110deg, rgba(15, 25, 41, .92), rgba(8, 14, 25, .89));
-    box-shadow: 0 16px 48px rgba(0, 0, 0, .34), inset 0 1px rgba(255, 255, 255, .035);
-    backdrop-filter: blur(14px);
+    border: 1px solid rgba(157, 187, 212, .2);
+    background: linear-gradient(105deg, rgba(7, 12, 20, .86), rgba(10, 16, 25, .76));
+    box-shadow: 0 12px 38px rgba(0, 0, 0, .3), inset 0 1px rgba(255, 255, 255, .035);
+    backdrop-filter: blur(12px);
 }
 
-.mission-copy { min-width: 0; }
-.eyebrow { color: var(--cyan); font-size: 8px; }
-.mission-copy strong {
+.game-instructions { min-width: 0; }
+.hud-kicker {
+    display: block;
+    color: #8cecff;
+    font: 8px "Consolas", monospace;
+    letter-spacing: .15em;
+}
+.game-instructions strong {
     display: block;
     margin-top: 4px;
+    color: #edf4f8;
     font-size: 13px;
-    font-weight: 700;
-    letter-spacing: -.02em;
+    font-weight: 650;
 }
-.mission-copy p {
+.game-instructions p {
     margin: 4px 0 0;
-    color: var(--muted);
+    color: rgba(190, 204, 217, .72);
     font-size: 10px;
-    line-height: 1.45;
+    line-height: 1.4;
 }
-
-.deck-actions { display: flex; flex: 0 0 auto; gap: 8px; }
-.button {
-    min-height: 42px;
-    padding: 0 16px;
+.game-instructions p[data-state="ready"] { color: #a7f4ce; }
+.game-instructions p[data-state="success"] { color: #a7f4ce; }
+.game-instructions p[data-state="miss"] { color: #ffc5a1; }
+.game-actions { display: flex; flex: 0 0 auto; gap: 7px; }
+.game-button {
+    min-height: 38px;
+    padding: 0 13px;
     border: 1px solid transparent;
     cursor: pointer;
-    font: 500 9px "DM Mono", Consolas, monospace;
-    letter-spacing: .09em;
-    transition: border-color .18s, background .18s, transform .18s, box-shadow .18s;
+    font: 500 9px "Consolas", monospace;
+    letter-spacing: .08em;
+    transition: border-color .15s, background .15s, transform .15s;
 }
-.button:active { transform: translateY(1px); }
-.button:focus-visible { outline: 2px solid white; outline-offset: 3px; }
-.button-secondary {
-    border-color: rgba(145, 168, 197, .21);
-    background: rgba(19, 30, 47, .76);
-    color: #b7c3d2;
+.game-button:active { transform: translateY(1px); }
+.game-button:focus-visible { outline: 2px solid #e6faff; outline-offset: 2px; }
+.game-button:disabled { cursor: wait; opacity: .65; }
+.game-button.secondary {
+    border-color: rgba(164, 187, 209, .28);
+    background: rgba(22, 32, 45, .76);
+    color: #d4e0e9;
 }
-.button-secondary:hover { border-color: rgba(151, 183, 221, .52); }
-.button-primary {
-    border-color: rgba(99, 227, 255, .65);
-    background: linear-gradient(105deg, #69eaff, #9af4ff);
-    color: #07121c;
+.game-button.secondary:hover { border-color: rgba(164, 221, 239, .65); }
+.game-button.primary {
+    border-color: rgba(110, 223, 244, .58);
+    background: linear-gradient(105deg, #72d9ef, #a4eff7);
+    color: #071018;
     font-weight: 700;
-    box-shadow: 0 0 22px rgba(75, 213, 255, .19);
+    box-shadow: 0 0 18px rgba(85, 205, 232, .16);
 }
-.button-primary span { margin-right: 7px; font-size: 8px; }
-.button-primary:hover { box-shadow: 0 0 25px rgba(75, 213, 255, .42); }
+.game-button.primary:hover { box-shadow: 0 0 23px rgba(85, 205, 232, .32); }
+.game-button.primary span { margin-right: 6px; font-size: 8px; }
 
-.hud-bottom {
+.load-error {
     position: absolute;
-    z-index: 4;
-    right: clamp(18px, 4vw, 54px);
-    bottom: 19px;
-    left: clamp(18px, 4vw, 54px);
-    display: flex;
-    justify-content: space-between;
-    gap: 14px;
-    color: rgba(134, 152, 174, .64);
-    font-size: 7px;
-    pointer-events: none;
-}
-.hud-bottom b { color: var(--cyan); font-weight: 400; }
-.hud-bottom > span:first-child { display: inline-flex; align-items: center; gap: 8px; }
-.footer-led { width: 5px; height: 5px; }
-
-.toast {
-    position: absolute;
-    z-index: 6;
-    top: 94px;
+    top: 50%;
     left: 50%;
-    max-width: min(90vw, 440px);
-    padding: 10px 16px;
-    transform: translate(-50%, -8px);
-    border: 1px solid rgba(118, 223, 255, .3);
-    background: rgba(7, 16, 28, .88);
-    color: #d7eff7;
-    font: 10px "DM Mono", Consolas, monospace;
-    text-align: center;
-    opacity: 0;
-    pointer-events: none;
-    transition: opacity .2s, transform .2s;
-    backdrop-filter: blur(10px);
+    width: min(90vw, 480px);
+    margin: 0;
+    padding: 16px 20px;
+    transform: translate(-50%, -50%);
+    border: 1px solid rgba(255, 148, 128, .38);
+    background: rgba(10, 12, 18, .94);
+    color: #ffd2c8;
+    font: 13px/1.6 "Segoe UI", Arial, sans-serif;
 }
-.toast.show { transform: translate(-50%, 0); opacity: 1; }
-.toast.error { border-color: rgba(255, 145, 126, .45); color: #ffd1c6; }
-.toast.success { border-color: rgba(116, 255, 195, .5); color: #b4ffdd; }
 
-@media (max-width: 640px) {
-    .game-shell { min-height: 480px; }
-    .hud-top { height: 64px; padding-inline: 15px; }
-    .brand { gap: 8px; }
-    .brand-logo { width: 39px; height: 37px; }
-    .brand-copy strong { font-size: 12px; }
-    .brand-copy small { font-size: 7px; }
-    .level-tag { gap: 7px; font-size: 7px; }
-    .level-tag b { padding: 6px 7px; }
-    .scene-caption { top: 79px; left: 16px; gap: 4px; }
-    .caption-kicker { font-size: 7px; }
-    .caption-title { font-size: 17px; }
-    .scene-legend { top: 82px; right: 15px; gap: 8px; font-size: 7px; }
-    .scene-legend i { width: 6px; height: 6px; }
-    .camera-tools { top: 132px; right: 13px; gap: 3px; padding: 4px; }
-    .camera-tools-label { padding-inline: 5px; font-size: 7px; }
-    .camera-button { width: 29px; height: 28px; font-size: 15px; }
-    .camera-reset { width: auto; padding-inline: 6px; font-size: 7px; }
-    .camera-hint { right: 15px; bottom: 162px; font-size: 7px; }
-    .control-deck {
-        right: 10px;
-        bottom: 42px;
-        left: 10px;
-        min-height: 112px;
-        padding: 12px;
+@media (max-width: 520px) {
+    .camera-tools { gap: 3px; padding: 4px; }
+    .camera-tools span { padding-inline: 5px; font-size: 7px; }
+    .camera-tools button { width: 28px; height: 28px; }
+    .camera-tools .reset-camera { padding-inline: 6px; font-size: 7px; }
+    .gesture-hint { right: 12px; bottom: 12px; font-size: 7px; }
+    .game-hud {
+        right: 9px;
+        bottom: max(37px, calc(env(safe-area-inset-bottom) + 32px));
+        left: 9px;
+        min-height: 105px;
+        padding: 10px;
         align-items: stretch;
         flex-direction: column;
-        gap: 10px;
+        gap: 9px;
     }
-    .mission-copy strong { font-size: 12px; }
-    .mission-copy p { font-size: 9px; }
-    .deck-actions { display: grid; grid-template-columns: .8fr 1.5fr; }
-    .button { min-height: 39px; padding-inline: 10px; font-size: 8px; }
-    .hud-bottom { bottom: 14px; left: 13px; right: 13px; font-size: 6px; }
-    .hud-bottom > span:nth-child(2) { display: none; }
-    .toast { top: 76px; font-size: 9px; }
-}
-
-@media (max-height: 620px) and (min-width: 641px) {
-    .hud-top { height: 58px; }
-    .scene-caption { top: 72px; }
-    .scene-legend { top: 77px; }
-    .control-deck { bottom: 38px; min-height: 70px; padding-block: 10px; }
-    .hud-bottom { bottom: 12px; }
-    .camera-hint { bottom: 125px; }
+    .game-instructions strong { margin-top: 3px; font-size: 12px; }
+    .game-instructions p { margin-top: 3px; font-size: 9px; }
+    .game-actions { display: grid; grid-template-columns: .75fr 1.4fr; }
+    .game-button { min-height: 36px; padding-inline: 8px; font-size: 8px; }
 }
 
 @media (prefers-reduced-motion: reduce) {
-    *, *::before, *::after { scroll-behavior: auto !important; transition-duration: .01ms !important; }
+    *, *::before, *::after { transition-duration: .01ms !important; }
 }

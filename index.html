@@ -3,72 +3,43 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-    <meta name="theme-color" content="#070b15">
-    <title>CY-FUR // Light Protocol</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <meta name="theme-color" content="#05080e">
+    <title>CY-FUR // Light Protocol — Scene Preview</title>
     <link rel="stylesheet" href="style.css">
-    <script defer src="https://cdn.jsdelivr.net/npm/three@0.149.0/build/three.min.js"></script>
-    <script defer src="script.js"></script>
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+                "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+            }
+        }
+    </script>
+    <script type="module" src="script.js"></script>
 </head>
 <body>
-    <main class="game-shell">
-        <header class="hud-top">
-            <a class="brand" href="#" aria-label="CY-FUR Light Protocol">
-                <img src="logo.png" alt="" class="brand-logo">
-                <span class="brand-copy">
-                    <strong>CY-FUR <i>LABS</i></strong>
-                    <small>OPTICAL SYSTEMS DIVISION</small>
-                </span>
-            </a>
-            <div class="level-tag">
-                <span class="live-dot"></span>
-                <span>LIGHT PROTOCOL</span>
-                <b>01</b>
+    <main class="scene-preview" aria-label="CY-FUR light puzzle scene preview">
+        <canvas id="scene-canvas" aria-label="Three-dimensional ruined optical chamber. Drag to orbit the camera and scroll or pinch to zoom."></canvas>
+        <nav class="camera-tools" aria-label="Camera controls">
+            <span>CAMERA</span>
+            <button id="camera-left" type="button" aria-label="Rotate camera left" title="Rotate left">↶</button>
+            <button id="camera-right" type="button" aria-label="Rotate camera right" title="Rotate right">↷</button>
+            <button id="camera-up" type="button" aria-label="Tilt camera up" title="Tilt up">↑</button>
+            <button id="camera-down" type="button" aria-label="Tilt camera down" title="Tilt down">↓</button>
+            <button id="camera-reset" class="reset-camera" type="button">RESET VIEW</button>
+        </nav>
+        <p class="gesture-hint">DRAG TO ORBIT <span>·</span> SCROLL / PINCH TO ZOOM</p>
+        <section class="game-hud" aria-label="Puzzle controls">
+            <div class="game-instructions">
+                <span class="hud-kicker">LIGHT ROUTING</span>
+                <strong id="game-status-title">Route the beam to the core</strong>
+                <p id="game-status" role="status" aria-live="polite">Tap or click an open floor tile to place a mirror. Tap it again to rotate.</p>
             </div>
-        </header>
-
-        <section class="game-view" aria-label="Three-dimensional light puzzle">
-            <canvas id="game-canvas" tabindex="0" aria-label="Puzzle platform. Use arrow keys to choose a tile and Enter to place or rotate a mirror. Drag to rotate the view."></canvas>
-            <div class="scene-caption">
-                <span class="caption-kicker">CHAMBER 01</span>
-                <span class="caption-title">Restore the core</span>
-            </div>
-            <div class="scene-legend" aria-label="Light colors">
-                <span><i class="legend-pink"></i> SOURCE</span>
-                <span><i class="legend-amber"></i> REFLECTION</span>
-                <span><i class="legend-cyan"></i> POWER</span>
-            </div>
-            <div class="camera-tools" aria-label="Camera controls">
-                <span class="camera-tools-label">CAMERA</span>
-                <button type="button" class="camera-button" id="camera-left" aria-label="Rotate camera left" title="Rotate left">↶</button>
-                <button type="button" class="camera-button" id="camera-right" aria-label="Rotate camera right" title="Rotate right">↷</button>
-                <button type="button" class="camera-button" id="camera-up" aria-label="Tilt camera up" title="Tilt up">↑</button>
-                <button type="button" class="camera-button" id="camera-down" aria-label="Tilt camera down" title="Tilt down">↓</button>
-                <button type="button" class="camera-button camera-reset" id="camera-reset" aria-label="Reset camera view" title="Reset view">RESET</button>
-            </div>
-            <div class="camera-hint" id="camera-hint">DRAG TO ORBIT <span>·</span> PINCH / SCROLL TO ZOOM</div>
-        </section>
-
-        <section class="control-deck" aria-label="Puzzle controls">
-            <div class="mission-copy">
-                <span class="eyebrow">PRIMARY OBJECTIVE</span>
-                <strong>Route light into the power core</strong>
-                <p id="game-status" role="status" aria-live="polite">Tap an open tile to place a mirror. Tap it again to rotate.</p>
-            </div>
-            <div class="deck-actions">
-                <button class="button button-secondary" id="reset-btn" type="button">RESET</button>
-                <button class="button button-primary" id="power-btn" type="button"><span>▶</span> POWER THE CORE</button>
+            <div class="game-actions">
+                <button id="reset-game" class="game-button secondary" type="button">RESET</button>
+                <button id="trace-beam" class="game-button primary" type="button"><span>▶</span> POWER SOURCE</button>
             </div>
         </section>
-
-        <footer class="hud-bottom">
-            <span><i class="footer-led"></i> OPTICAL NETWORK ONLINE</span>
-            <span>PLACE A REFLECTOR <b>·</b> ROUTE THE BEAM <b>·</b> POWER THE CORE</span>
-            <span>CY-FUR / PROTOTYPE</span>
-        </footer>
-        <div id="toast" class="toast" aria-live="polite"></div>
+        <p id="load-error" class="load-error" hidden></p>
     </main>
 </body>
 </html>
