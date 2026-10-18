@@ -487,6 +487,42 @@ function startScene() {
         return hoverRing;
     }
 
+    function createSquarePlacementGrid() {
+        const grid = new THREE.Group();
+        const lineMaterial = makeMaterial(0x46535d, 0.82, 0.24);
+        const lineWidth = 0.02;
+        const lineHeight = 0.012;
+        const left = gridX(0) - GRID.step / 2;
+        const right = gridX(GRID.cols - 1) + GRID.step / 2;
+        const back = gridZ(0) - GRID.step / 2;
+        const front = gridZ(GRID.rows - 1) + GRID.step / 2;
+        const y = 0.205;
+
+        for (let col = 0; col <= GRID.cols; col++) {
+            const x = left + col * GRID.step;
+            addBox(
+                grid,
+                [lineWidth, lineHeight, front - back],
+                [x, y, (back + front) / 2],
+                lineMaterial,
+                { castShadow: false, receiveShadow: false }
+            );
+        }
+
+        for (let row = 0; row <= GRID.rows; row++) {
+            const z = back + row * GRID.step;
+            addBox(
+                grid,
+                [right - left, lineHeight, lineWidth],
+                [(left + right) / 2, y, z],
+                lineMaterial,
+                { castShadow: false, receiveShadow: false }
+            );
+        }
+
+        platform.add(grid);
+    }
+
     function createPlayerMirror(row, col, slash = true) {
         const group = new THREE.Group();
         group.position.set(gridX(col), 0.2, gridZ(row));
@@ -1379,6 +1415,7 @@ function startScene() {
     createCore();
     createTerminals();
     createLightNetwork();
+    createSquarePlacementGrid();
     const hoverRing = createGameplaySurface();
     bindCameraControls();
     bindGameplay(hoverRing);
