@@ -1,277 +1,74 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <meta name="theme-color" content="#080d18">
-    <title>CYFUR — Laser Protocol</title>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+    <meta name="theme-color" content="#070b15">
+    <title>CY-FUR // Light Protocol</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="style.css">
+    <script defer src="https://cdn.jsdelivr.net/npm/three@0.149.0/build/three.min.js"></script>
+    <script defer src="script.js"></script>
 </head>
 <body>
-
-<div class="ambient ambient-one"></div>
-<div class="ambient ambient-two"></div>
-
-<main class="game-shell">
-
-    <header class="topbar">
-        <div class="brand">
-            <img class="brand-logo" src="logo.png" alt="CY-FUR Space Adventurer">
-
-            <div>
-                <div class="brand-name">CYFUR <span>LABS</span></div>
-                <div class="brand-subtitle">LASER PROTOCOL · SYSTEM ONLINE</div>
-            </div>
-        </div>
-
-        <div class="top-status">
-            <span class="status-dot"></span>
-            PUZZLE SIMULATION
-        </div>
-    </header>
-
-    <section class="intro-row">
-        <div class="intro-content">
-            <div class="eyebrow">
-                <span class="eyebrow-line"></span>
-                OPTICAL CHALLENGE 01
-            </div>
-
-            <h1>Route the <span>beam.</span></h1>
-
-            <p class="intro-copy">
-                Redirect the laser through the chamber and power up the battery.
-                Place mirrors, rotate them, and find the path.
-            </p>
-        </div>
-
-        <div class="level-card">
-            <div class="level-label">CURRENT LEVEL</div>
-            <div class="level-number">01 <span>/ 01</span></div>
-
-            <div class="level-progress">
-                <span id="level-progress"></span>
-            </div>
-
-            <div class="level-foot">
-                <span>DIFFICULTY</span>
-                <b>INTRODUCTORY</b>
-            </div>
-        </div>
-    </section>
-
-    <section class="workspace">
-
-        <div class="board-panel">
-
-            <div class="panel-head">
-                <div class="panel-title">
-                    <span class="tiny-square"></span>
-                    OPTICAL CHAMBER
-                </div>
-
-                <div class="live-pill">
-                    <span></span> LIVE TRACE
-                </div>
-            </div>
-
-            <div class="action-stack">
-                <button id="fire-btn" class="btn-primary">
-                    <span class="play-symbol">▶</span>
-                    POWER THE CELL
-                    <span class="button-arrow">↗</span>
-                </button>
-
-                <button id="reset-btn" class="btn-secondary">
-                    <span class="reset-symbol">↺</span>
-                    RESET
-                </button>
-            </div>
-
-            <div class="view-controls" aria-label="Board view controls">
-                <label class="view-control">
-                    <span class="view-control-name">ROTATE</span>
-                    <input id="board-rotation" type="range" min="0" max="360" value="325"
-                           aria-label="Rotate board from 0 to 360 degrees">
-                    <output id="rotation-value" for="board-rotation">325°</output>
-                </label>
-                <label class="view-control">
-                    <span class="view-control-name">STAND</span>
-                    <input id="board-tilt" type="range" min="0" max="85" value="52"
-                           aria-label="Tilt board from flat to nearly vertical">
-                    <output id="tilt-value" for="board-tilt">52°</output>
-                </label>
-                <button id="reset-view-btn" class="view-reset" type="button"
-                        aria-label="Reset board angle">RESET VIEW</button>
-            </div>
-
-            <div class="board-wrap">
-
-                <div class="board-frame">
-
-                    <div class="board-corners">
-                        <i></i><i></i><i></i><i></i>
-                    </div>
-
-                    <div id="game-board" class="game-board"
-                         role="grid" aria-label="Laser puzzle board"></div>
-
-                    <div class="scanline"></div>
-                </div>
-
-                <div class="board-legend">
-                    <span><i class="legend-source"></i> EMITTER</span>
-                    <span><i class="legend-mirror"></i> MIRROR</span>
-                    <span><i class="legend-obstacle"></i> BLOCKER</span>
-                    <span><i class="legend-target"></i> POWER CELL</span>
-                </div>
-
-            </div>
-        </div>
-
-        <aside class="control-panel">
-
-            <div class="panel-head">
-                <div class="panel-title">
-                    <span class="tiny-square"></span>
-                    CONTROL DECK
-                </div>
-
-                <div class="deck-icon">⌘</div>
-            </div>
-
-            <div class="mission-card">
-                <div class="mission-icon">
-                    <span class="mission-ray"></span>
-                </div>
-
-                <div>
-                    <div class="mission-kicker">PRIMARY OBJECTIVE</div>
-                    <div class="mission-title">Power the cell</div>
-
-                    <p>Redirect the beam around fixed stone blockers and into the power cell.</p>
-                </div>
-            </div>
-
-            <div class="control-section">
-
-                <div class="section-label">
-                    MIRROR TOOL <span>01</span>
-                </div>
-
-                <div class="tool-card">
-                    <div class="mirror-preview">
-                        <span class="mirror-slash"></span>
-                    </div>
-
-                    <div class="tool-copy">
-                        <strong>Reflector mirror</strong>
-                        <small>Place on an empty tile</small>
-                    </div>
-
-                    <div class="tool-count">∞</div>
-                </div>
-
-                <div class="tool-hint">
-                    <span class="hint-key">TAP</span>
-                    empty tile to place
-                    <span class="hint-separator">·</span>
-                    tap mirror to rotate
-                </div>
-
-            </div>
-
-            <div class="control-section settings-section">
-
-                <div class="section-label">
-                    BEAM SYSTEM <span>02</span>
-                </div>
-
-                <div class="setting-row">
-                    <span><i class="setting-icon beam-icon"></i> Laser emitter</span>
-                    <b class="state-on">ACTIVE</b>
-                </div>
-
-                <div class="setting-row">
-                    <span><i class="setting-icon grid-icon"></i> Chamber grid</span>
-                    <b>8 × 8</b>
-                </div>
-
-                <div class="setting-row">
-                    <span><i class="setting-icon pulse-icon"></i> Beam power</span>
-                    <b>100%</b>
-                </div>
-
-            </div>
-
-            <div id="status-card" class="status-card" aria-live="polite">
-                <span class="status-orb"></span>
-
-                <div>
-                    <strong id="status-title">System ready</strong>
-                    <p id="status-message">
-                        Place your first mirror to redirect the beam.
-                    </p>
-                </div>
-            </div>
-
-        </aside>
-
-    </section>
-
-    <footer class="bottom-bar">
-        <div>
-            <span class="footer-mark">C</span>
-            CYFUR <span class="footer-muted">/ OPTICS DIVISION</span>
-        </div>
-
-        <div class="footer-center">
-            <span class="footer-pulse"></span>
-            SIMULATION RUNNING LOCALLY
-        </div>
-
-        <div class="footer-right">
-            PROTOTYPE <span>v1.0.0</span>
-        </div>
-    </footer>
-
-</main>
-
-<div id="win-overlay" class="win-overlay" role="dialog" aria-modal="true" aria-labelledby="win-title" aria-hidden="true">
-
-    <div class="win-card">
-
-        <div class="win-emblem" aria-hidden="true">✓</div>
-
-        <div class="win-kicker">CHAMBER STABILIZED</div>
-
-        <h2 id="win-title">Power <span>restored.</span></h2>
-
-        <p>
-            The laser reached the battery.
-            Optical connection confirmed.
-        </p>
-
-        <div class="win-stats">
-            <div>
-                <small>LEVEL</small>
+    <main class="game-shell">
+        <header class="hud-top">
+            <a class="brand" href="#" aria-label="CY-FUR Light Protocol">
+                <img src="logo.png" alt="" class="brand-logo">
+                <span class="brand-copy">
+                    <strong>CY-FUR <i>LABS</i></strong>
+                    <small>OPTICAL SYSTEMS DIVISION</small>
+                </span>
+            </a>
+            <div class="level-tag">
+                <span class="live-dot"></span>
+                <span>LIGHT PROTOCOL</span>
                 <b>01</b>
             </div>
+        </header>
 
-            <div>
-                <small>STATUS</small>
-                <b class="win-green">COMPLETE</b>
+        <section class="game-view" aria-label="Three-dimensional light puzzle">
+            <canvas id="game-canvas" tabindex="0" aria-label="Puzzle platform. Use arrow keys to choose a tile and Enter to place or rotate a mirror. Drag to rotate the view."></canvas>
+            <div class="scene-caption">
+                <span class="caption-kicker">CHAMBER 01</span>
+                <span class="caption-title">Restore the core</span>
             </div>
-        </div>
+            <div class="scene-legend" aria-label="Light colors">
+                <span><i class="legend-pink"></i> SOURCE</span>
+                <span><i class="legend-amber"></i> REFLECTION</span>
+                <span><i class="legend-cyan"></i> POWER</span>
+            </div>
+            <div class="camera-tools" aria-label="Camera controls">
+                <span class="camera-tools-label">CAMERA</span>
+                <button type="button" class="camera-button" id="camera-left" aria-label="Rotate camera left" title="Rotate left">↶</button>
+                <button type="button" class="camera-button" id="camera-right" aria-label="Rotate camera right" title="Rotate right">↷</button>
+                <button type="button" class="camera-button" id="camera-up" aria-label="Tilt camera up" title="Tilt up">↑</button>
+                <button type="button" class="camera-button" id="camera-down" aria-label="Tilt camera down" title="Tilt down">↓</button>
+                <button type="button" class="camera-button camera-reset" id="camera-reset" aria-label="Reset camera view" title="Reset view">RESET</button>
+            </div>
+            <div class="camera-hint" id="camera-hint">DRAG TO ORBIT <span>·</span> PINCH / SCROLL TO ZOOM</div>
+        </section>
 
-        <button id="continue-btn" class="btn-primary">
-            RUN AGAIN <span class="button-arrow">↗</span>
-        </button>
+        <section class="control-deck" aria-label="Puzzle controls">
+            <div class="mission-copy">
+                <span class="eyebrow">PRIMARY OBJECTIVE</span>
+                <strong>Route light into the power core</strong>
+                <p id="game-status" role="status" aria-live="polite">Tap an open tile to place a mirror. Tap it again to rotate.</p>
+            </div>
+            <div class="deck-actions">
+                <button class="button button-secondary" id="reset-btn" type="button">RESET</button>
+                <button class="button button-primary" id="power-btn" type="button"><span>▶</span> POWER THE CORE</button>
+            </div>
+        </section>
 
-    </div>
-
-</div>
-
-<script src="script.js"></script>
+        <footer class="hud-bottom">
+            <span><i class="footer-led"></i> OPTICAL NETWORK ONLINE</span>
+            <span>PLACE A REFLECTOR <b>·</b> ROUTE THE BEAM <b>·</b> POWER THE CORE</span>
+            <span>CY-FUR / PROTOTYPE</span>
+        </footer>
+        <div id="toast" class="toast" aria-live="polite"></div>
+    </main>
 </body>
 </html>
