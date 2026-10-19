@@ -13,6 +13,7 @@ const screens = [
 const introVideo = document.getElementById("intro-video");
 const transitionVideo = document.getElementById("transition-video");
 const videoAction = document.getElementById("video-action-button");
+const videoSkip = document.getElementById("video-skip-button");
 const videoCaption = document.getElementById("video-caption");
 const backgroundMusic = document.getElementById("background-music");
 const playerNameInput = document.getElementById("player-name");
@@ -366,10 +367,18 @@ function beginGameIntro() {
     transitionVideo.hidden = false;
     transitionVideo.src = "gamevideo.mp4";
     transitionVideo.currentTime = 0;
-    transitionVideo.muted = true;
+    transitionVideo.muted = false;
+    videoSkip.hidden = !player.watchedGameIntro;
+    videoSkip.onclick = () => {
+        transitionVideo.pause();
+        transitionVideo.hidden = true;
+        videoSkip.hidden = true;
+        showNameOrHome();
+    };
     transitionVideo.onended = () => {
         player.watchedGameIntro = true;
         savePlayer();
+        videoSkip.hidden = true;
         videoCaption.textContent = "Welcome, pilot.";
         videoAction.textContent = "CONTINUE  →";
         videoAction.hidden = false;
@@ -380,39 +389,54 @@ function beginGameIntro() {
             videoAction.hidden = true;
             showNameOrHome();
         };
-        transitionVideo.onerror = () => {
-            console.error("Gameplay introduction video could not be decoded.", transitionVideo.error);
-            videoCaption.textContent = "This browser could not play the introduction video.";
-            videoAction.textContent = "CONTINUE WITHOUT VIDEO  →";
-            videoAction.hidden = false;
-            videoAction.onclick = () => {
-                transitionVideo.hidden = true;
-                showNameOrHome();
-            };
+    };
+    transitionVideo.onerror = () => {
+        console.error("Gameplay introduction video could not be decoded.", transitionVideo.error);
+        videoCaption.textContent = "This browser could not play the introduction video.";
+        videoAction.textContent = "CONTINUE WITHOUT VIDEO  →";
+        videoAction.hidden = false;
+        videoAction.onclick = () => {
+            transitionVideo.hidden = true;
+            videoSkip.hidden = true;
+            showNameOrHome();
         };
     };
     videoAction.hidden = true;
     videoCaption.textContent = "Initializing your first mission…";
     const playback = transitionVideo.play();
-    if (playback && typeof playback.catch === "function") {
-        playback.catch((error) => {
+    if (playback && typeof playback.then === "function") {
+        playback.then(() => {
+            videoCaption.textContent = "Gameplay transmission online · audio enabled.";
+        }).catch((error) => {
+            if (error.name === "AbortError" && transitionVideo.paused) return;
             console.warn("Gameplay introduction video could not start.", error);
-            videoCaption.textContent = "This browser could not play the introduction video.";
-            videoAction.textContent = "CONTINUE WITHOUT VIDEO  →";
+            videoCaption.textContent = "Tap to play the gameplay introduction with sound.";
+            videoAction.textContent = "PLAY VIDEO WITH SOUND  →";
             videoAction.hidden = false;
             videoAction.onclick = () => {
-                transitionVideo.hidden = true;
-                showNameOrHome();
+                const retry = transitionVideo.play();
+                if (retry && typeof retry.then === "function") {
+                    retry.then(() => {
+                        videoAction.hidden = true;
+                        videoCaption.textContent = "Gameplay transmission online · audio enabled.";
+                    }).catch((retryError) => {
+                        console.error("Gameplay introduction video could not start after interaction.", retryError);
+                        videoCaption.textContent = "The gameplay introduction could not be played.";
+                        videoAction.textContent = "CONTINUE WITHOUT VIDEO  →";
+                        videoAction.hidden = false;
+                        videoAction.onclick = () => {
+                            transitionVideo.hidden = true;
+                            videoSkip.hidden = true;
+                            showNameOrHome();
+                        };
+                    });
+                }
             };
         });
     }
 }
 
 function continueAfterIntro() {
-    if (player.watchedGameIntro) {
-        showNameOrHome();
-        return;
-    }
     beginGameIntro();
 }
 
@@ -420,6 +444,8 @@ function showOpeningIntro() {
     showScreen("video-screen");
     transitionVideo.hidden = true;
     introVideo.hidden = false;
+    introVideo.muted = false;
+    videoSkip.hidden = true;
     introFinished = false;
     videoAction.hidden = true;
     videoCaption.textContent = "A new signal is waiting.";
@@ -431,6 +457,7 @@ function showOpeningIntro() {
         videoAction.textContent = "PLAY NOW  →";
         videoAction.hidden = false;
         videoAction.onclick = continueAfterIntro;
+        videoSkip.hidden = !player.watchedGameIntro;
     };
     introVideo.onerror = () => {
         console.error("Opening introduction video could not be decoded.", introVideo.error);
@@ -443,10 +470,21 @@ function showOpeningIntro() {
     if (playback && typeof playback.catch === "function") {
         playback.catch((error) => {
             console.warn("Opening introduction video could not autoplay.", error);
-            videoCaption.textContent = "Play the opening transmission.";
-            videoAction.textContent = "PLAY INTRO  →";
+            videoCaption.textContent = "Tap to play the opening transmission with sound.";
+            videoAction.textContent = "PLAY INTRO WITH SOUND  →";
             videoAction.hidden = false;
-            videoAction.onclick = () => introVideo.play();
+            videoAction.onclick = () => {
+                const retry = introVideo.play();
+                if (retry && typeof retry.then === "function") {
+                    retry.then(() => {
+                        videoCaption.textContent = "Opening transmission online · audio enabled.";
+                        videoAction.hidden = true;
+                    }).catch((retryError) => {
+                        console.error("Opening introduction video could not start after interaction.", retryError);
+                        videoCaption.textContent = "The opening video could not be played.";
+                    });
+                }
+            };
         });
     }
 }

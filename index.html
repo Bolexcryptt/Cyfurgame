@@ -21,14 +21,16 @@
 <body>
     <main class="app-shell">
         <section id="video-screen" class="screen video-screen" aria-label="Game introduction">
-            <video id="intro-video" class="intro-video" src="intro.mp4" playsinline muted preload="auto"></video>
+            <video id="intro-video" class="intro-video" src="intro.mp4" playsinline preload="auto"></video>
             <video id="transition-video" class="intro-video" playsinline preload="metadata" hidden></video>
             <div class="video-shade"></div>
+            <button id="video-skip-button" class="video-skip-button button button-quiet" type="button" hidden>SKIP GAME VIDEO <span>→</span></button>
             <div class="video-brand">
                 <img src="logo.png" alt="FluxGrid">
                 <span>FLUXGRID <i>LIGHT PROTOCOL</i></span>
             </div>
             <div class="video-action">
+                <span class="video-audio-status"><i></i> TRANSMISSION AUDIO ENABLED</span>
                 <p id="video-caption">A new signal is waiting.</p>
                 <button id="video-action-button" class="button button-primary" type="button" hidden>PLAY NOW <span>→</span></button>
             </div>
@@ -78,6 +80,7 @@
                     </div>
                     <div class="hero-art" aria-hidden="true">
                         <div class="hero-radar-sweep"></div>
+                        <div class="hero-scanline"></div>
                         <div class="hero-orbit orbit-one"></div>
                         <div class="hero-orbit orbit-two"></div>
                         <div class="hero-core"></div>
