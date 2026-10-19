@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
     <meta name="theme-color" content="#05080e">
-    <title>CY-FUR // Light Protocol — Scene Preview</title>
+    <title>FluxGrid — Route the light</title>
     <link rel="stylesheet" href="style.css">
     <script type="importmap">
         {
@@ -14,32 +14,182 @@
             }
         }
     </script>
+    <script type="module" src="levels.js"></script>
+    <script type="module" src="app.js"></script>
     <script type="module" src="script.js"></script>
 </head>
 <body>
-    <main class="scene-preview" aria-label="CY-FUR light puzzle scene preview">
-        <canvas id="scene-canvas" aria-label="Three-dimensional ruined optical chamber. Drag to orbit the camera and scroll or pinch to zoom."></canvas>
-        <nav class="camera-tools" aria-label="Camera controls">
-            <span>CAMERA</span>
-            <button id="camera-left" type="button" aria-label="Rotate camera left" title="Rotate left">↶</button>
-            <button id="camera-right" type="button" aria-label="Rotate camera right" title="Rotate right">↷</button>
-            <button id="camera-up" type="button" aria-label="Tilt camera up" title="Tilt up">↑</button>
-            <button id="camera-down" type="button" aria-label="Tilt camera down" title="Tilt down">↓</button>
-            <button id="camera-reset" class="reset-camera" type="button">RESET VIEW</button>
-        </nav>
-        <p class="gesture-hint">DRAG TO ORBIT <span>·</span> SCROLL / PINCH TO ZOOM</p>
-        <section class="game-hud" aria-label="Puzzle controls">
-            <div class="game-instructions">
-                <span class="hud-kicker">LIGHT ROUTING</span>
-                <strong id="game-status-title">Route the beam to the core</strong>
-                <p id="game-status" role="status" aria-live="polite">Tap the source arrows to choose a side. Place mirrors, then press POWER SOURCE to launch.</p>
+    <main class="app-shell">
+        <section id="video-screen" class="screen video-screen" aria-label="Game introduction">
+            <video id="intro-video" class="intro-video" src="intro.mp4" playsinline muted preload="auto"></video>
+            <video id="transition-video" class="intro-video" playsinline preload="metadata" hidden></video>
+            <div class="video-shade"></div>
+            <div class="video-brand">
+                <img src="logo.png" alt="FluxGrid">
+                <span>FLUXGRID <i>LIGHT PROTOCOL</i></span>
             </div>
-            <div class="game-actions">
-                <button id="reset-game" class="game-button secondary" type="button">RESET</button>
-                <button id="trace-beam" class="game-button primary" type="button"><span>▶</span> POWER SOURCE</button>
+            <div class="video-action">
+                <p id="video-caption">A new signal is waiting.</p>
+                <button id="video-action-button" class="button button-primary" type="button" hidden>PLAY NOW <span>→</span></button>
             </div>
         </section>
-        <p id="load-error" class="load-error" hidden></p>
+
+        <section id="name-screen" class="screen name-screen" hidden>
+            <div class="name-card">
+                <img src="logo.png" alt="" class="name-logo">
+                <span class="eyebrow">PLAYER IDENTIFICATION</span>
+                <h1>Welcome to FluxGrid</h1>
+                <p>Choose a callsign to save your local profile and begin your first sector.</p>
+                <form id="name-form">
+                    <label for="player-name">CALLSIGN</label>
+                    <input id="player-name" name="name" maxlength="20" autocomplete="nickname" required placeholder="Enter your name">
+                    <button class="button button-primary" type="submit">SAVE & CONTINUE <span>→</span></button>
+                </form>
+            </div>
+        </section>
+
+        <section id="home-screen" class="screen home-screen" hidden>
+            <header class="site-header">
+                <a class="brand" href="#" aria-label="FluxGrid home">
+                    <img src="logo.png" alt="">
+                    <span>FLUXGRID<small>LIGHT PROTOCOL</small></span>
+                </a>
+                <div class="header-actions">
+                    <button id="leaderboard-open" class="button button-quiet" type="button">LEADERBOARD</button>
+                    <button id="profile-open" class="profile-chip" type="button" aria-label="Open player profile">
+                        <span class="profile-avatar" id="profile-initial">?</span>
+                        <span><b id="profile-name">Pilot</b><small id="profile-progress">0 / 99 cleared</small></span>
+                        <span class="profile-chevron">⌄</span>
+                    </button>
+                </div>
+            </header>
+
+            <div class="home-content">
+                <section class="hero-panel">
+                    <div class="hero-copy">
+                        <span class="eyebrow"><span class="signal-dot"></span> SIGNAL DETECTED · SECTOR 01</span>
+                        <h1>Route the light.<br><em>Restore the grid.</em></h1>
+                        <p>Place reflectors, read the route, and guide the beam into the dormant power core.</p>
+                        <button id="continue-game" class="button button-primary" type="button">CONTINUE MISSION <span>→</span></button>
+                    </div>
+                    <div class="hero-art" aria-hidden="true">
+                        <div class="hero-orbit orbit-one"></div>
+                        <div class="hero-orbit orbit-two"></div>
+                        <div class="hero-core"></div>
+                        <div class="hero-beam beam-pink"></div>
+                        <div class="hero-beam beam-blue"></div>
+                        <span class="hero-coordinate">FG // 01—99</span>
+                    </div>
+                </section>
+
+                <section class="level-section" aria-labelledby="level-heading">
+                    <div class="section-heading">
+                        <div>
+                            <span class="eyebrow">THE CAMPAIGN</span>
+                            <h2 id="level-heading">Select a sector</h2>
+                            <p>99 signal routes. Each one is a new layout to solve.</p>
+                        </div>
+                        <span id="campaign-progress" class="progress-pill">01 / 99</span>
+                    </div>
+                    <ol id="level-list" class="level-list" aria-label="Levels"></ol>
+                </section>
+
+                <section class="bottom-panels">
+                    <article class="info-card how-card">
+                        <span class="eyebrow">FIELD GUIDE</span>
+                        <h2>How to play</h2>
+                        <ol class="how-steps">
+                            <li><b>01</b><span>Tap the source marker to choose the launch direction.</span></li>
+                            <li><b>02</b><span>Place mirrors on square floor tiles; tap again to rotate.</span></li>
+                            <li><b>03</b><span>Press POWER SOURCE to send the beam and reach the battery.</span></li>
+                        </ol>
+                    </article>
+                    <article class="info-card wallet-card">
+                        <span class="eyebrow">PILOT RESOURCES</span>
+                        <h2>Wallet</h2>
+                        <p>Wallet connection and CYFUR credits are not enabled yet.</p>
+                        <button id="wallet-placeholder" class="button button-quiet" type="button" disabled>COMING LATER</button>
+                    </article>
+                </section>
+                <footer class="site-footer"><span>FLUXGRID <i>LIGHT PROTOCOL</i></span><span>PLAYER PROGRESS · SYNCED TO SUPABASE WHEN CONNECTED</span></footer>
+            </div>
+        </section>
+
+        <section id="leaderboard-screen" class="screen subpage-screen" hidden>
+            <header class="site-header">
+                <a class="brand" href="#" aria-label="FluxGrid home">
+                    <img src="logo.png" alt="">
+                    <span>FLUXGRID<small>LIGHT PROTOCOL</small></span>
+                </a>
+                <button class="button button-quiet" data-home type="button">← HOME</button>
+            </header>
+            <main class="subpage-content">
+                <div class="leaderboard-heading">
+                    <div>
+                        <span class="eyebrow">GLOBAL PILOT STANDINGS</span>
+                        <h1>Leaderboard</h1>
+                        <p class="subpage-intro">Ranked by unique campaign levels completed. Replaying a level does not add extra points.</p>
+                    </div>
+                    <button id="leaderboard-refresh" class="button button-quiet" type="button">↻ REFRESH</button>
+                </div>
+                <p id="leaderboard-status" class="leaderboard-status" role="status" aria-live="polite">Connecting to the leaderboard…</p>
+                <div class="leaderboard-table-wrap">
+                    <table class="leaderboard-table">
+                        <thead>
+                            <tr><th scope="col">RANK</th><th scope="col">PILOT</th><th scope="col">LEVELS CLEARED</th><th scope="col">HIGHEST</th></tr>
+                        </thead>
+                        <tbody id="leaderboard-rows"></tbody>
+                    </table>
+                </div>
+                <p class="leaderboard-footnote">Rank is based on the number of distinct completed levels; ties are ordered by callsign, then account creation time. Progress is shared through this Supabase project.</p>
+            </main>
+        </section>
+
+        <section id="profile-screen" class="screen subpage-screen" hidden>
+            <header class="site-header">
+                <a class="brand" href="#" aria-label="FluxGrid home">
+                    <img src="logo.png" alt="">
+                    <span>FLUXGRID<small>LIGHT PROTOCOL</small></span>
+                </a>
+                <button class="button button-quiet" data-home type="button">← HOME</button>
+            </header>
+            <main class="subpage-content">
+                <span class="eyebrow">PILOT DOSSIER</span>
+                <h1>Your profile</h1>
+                <div id="profile-details" class="profile-details"></div>
+            </main>
+        </section>
+
+        <section id="play-screen" class="screen play-screen" hidden>
+            <canvas id="scene-canvas" aria-label="Three-dimensional laser puzzle. Drag to orbit; scroll or pinch to zoom."></canvas>
+            <div class="play-topbar">
+                <button id="levels-open" class="button button-quiet" type="button">← LEVELS</button>
+                <div class="play-level-label"><span id="play-level">LEVEL 01</span><small id="play-level-title">SECTOR 01</small></div>
+                <button id="play-home" class="icon-button" type="button" aria-label="Return home">⌂</button>
+            </div>
+            <nav class="camera-tools" aria-label="Camera controls">
+                <span>CAMERA</span>
+                <button id="camera-left" type="button" aria-label="Rotate camera left" title="Rotate left">↶</button>
+                <button id="camera-right" type="button" aria-label="Rotate camera right" title="Rotate right">↷</button>
+                <button id="camera-up" type="button" aria-label="Tilt camera up" title="Tilt up">↑</button>
+                <button id="camera-down" type="button" aria-label="Tilt camera down" title="Tilt down">↓</button>
+                <button id="camera-reset" class="reset-camera" type="button">RESET VIEW</button>
+            </nav>
+            <p class="gesture-hint">DRAG TO ORBIT <span>·</span> SCROLL / PINCH TO ZOOM</p>
+            <section class="game-hud" aria-label="Puzzle controls">
+                <div class="game-instructions">
+                    <span class="hud-kicker">LIGHT ROUTING</span>
+                    <strong id="game-status-title">Route the beam to the battery</strong>
+                    <p id="game-status" role="status" aria-live="polite">Tap the source to choose a side. Set mirrors, then launch.</p>
+                </div>
+                <div class="game-actions">
+                    <button id="reset-game" class="game-button secondary" type="button">RESET</button>
+                    <button id="trace-beam" class="game-button primary" type="button"><span>▶</span> POWER SOURCE</button>
+                </div>
+            </section>
+            <p id="load-error" class="load-error" hidden></p>
+        </section>
     </main>
+    <audio id="background-music" src="music.mp3" preload="auto" loop></audio>
 </body>
 </html>

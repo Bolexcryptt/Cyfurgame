@@ -3,6 +3,7 @@ import { EffectComposer } from "three/addons/postprocessing/EffectComposer.js";
 import { RenderPass } from "three/addons/postprocessing/RenderPass.js";
 import { UnrealBloomPass } from "three/addons/postprocessing/UnrealBloomPass.js";
 import { OutputPass } from "three/addons/postprocessing/OutputPass.js";
+import { levels } from "./levels.js";
 
 const canvas = document.getElementById("scene-canvas");
 const errorPanel = document.getElementById("load-error");
@@ -83,6 +84,8 @@ function startScene() {
     platform.add(environmentNetwork);
     const interactionGroup = new THREE.Group();
     platform.add(interactionGroup);
+    const levelObjectGroup = new THREE.Group();
+    platform.add(levelObjectGroup);
     const mirrorGroup = new THREE.Group();
     platform.add(mirrorGroup);
     const activeBeamGroup = new THREE.Group();
@@ -106,8 +109,12 @@ function startScene() {
     const raycaster = new THREE.Raycaster();
     const pointerNdc = new THREE.Vector2();
     const beamSegments = [];
+    let activeLevel = levels[0];
     let previewRoute = null;
     let sourcePylon = null;
+    let sourceMarkerGroup = null;
+    let sourceHitArea = null;
+    let coreSystem = null;
     let corePulse = null;
     let corePowered = false;
     let tracing = false;
@@ -459,9 +466,6 @@ function startScene() {
 
         for (let row = 0; row < GRID.rows; row++) {
             for (let col = 0; col < GRID.cols; col++) {
-                if ((row === GRID.start.row && col === GRID.start.col) ||
-                    (row === GRID.target.row && col === GRID.target.col)) continue;
-
                 const target = new THREE.Mesh(targetGeometry, targetMaterial);
                 target.rotation.x = -Math.PI / 2;
                 target.position.set(gridX(col), 0.235, gridZ(row));
@@ -493,8 +497,8 @@ function startScene() {
 
     function createSourceMarker() {
         const marker = new THREE.Group();
-        marker.position.set(-2.55, 0.25, -3.55);
         platform.add(marker);
+        sourceMarkerGroup = marker;
 
         const ring = new THREE.Mesh(
             new THREE.TorusGeometry(0.48, 0.025, 6, 40),
@@ -537,11 +541,17 @@ function startScene() {
             })
         );
         hitArea.rotation.x = -Math.PI / 2;
-        hitArea.position.set(-2.55, 0.29, -3.55);
+        hitArea.position.set(0, 0.29, 0);
         interactionGroup.add(hitArea);
+        sourceHitArea = hitArea;
         sourceTargets.push(hitArea);
 
         const update = () => {
+            const x = gridX(GRID.start.col);
+            const z = gridZ(GRID.start.row);
+            marker.position.set(x, 0.25, z);
+            hitArea.position.set(x, 0.29, z);
+            sourcePylon?.position.set(x, 0.05, z);
             arrows.forEach((arrow, index) => {
                 const isSelected = (index === 1) === (launchDirection === 1);
                 arrow.material.color.setHex(isSelected ? 0xffb8f0 : 0x744d78);
@@ -665,8 +675,9 @@ function startScene() {
         const segments = [];
         const visited = new Set();
         let outcome = "edge";
+        let reflections = 0;
         let finalCell = { row, col };
-        let from = new THREE.Vector3(-2.55, 0.82, -3.55);
+        let         from = new THREE.Vector3(gridX(GRID.start.col), 0.82, gridZ(GRID.start.row));
 
         for (let step = 0; step < GRID.rows * GRID.cols * 2; step++) {
             const state = `${row},${col},${direction}`;
@@ -695,8 +706,9 @@ function startScene() {
             col = nextCol;
             finalCell = { row, col };
             const isTarget = row === GRID.target.row && col === GRID.target.col;
+            const isObstacle = activeLevel.obstacles.some((cell) => cell.row === row && cell.col === col);
             const to = isTarget
-                ? new THREE.Vector3(1.35, 1.17, 0.1)
+                ? new THREE.Vector3(gridX(col), 1.17, gridZ(row))
                 : new THREE.Vector3(gridX(col), 0.72, gridZ(row));
             segments.push({ from: from.clone(), to, color: beamColors[colorIndex % beamColors.length] });
             from = to.clone();
@@ -705,17 +717,25 @@ function startScene() {
                 outcome = "powered";
                 break;
             }
+            if (isObstacle) {
+                outcome = "blocked";
+                break;
+            }
 
             const mirror = placedMirrors.get(gridKey(row, col));
             if (mirror) {
                 direction = mirror.slash
                     ? slashReflection[direction]
                     : backslashReflection[direction];
+                reflections++;
                 colorIndex++;
             }
         }
 
-        return { outcome, finalCell, segments };
+        if (outcome === "powered" && reflections < activeLevel.par) {
+            outcome = "underpowered";
+        }
+        return { outcome, finalCell, segments, reflections };
     }
 
     function addActiveSegment(segment, index, visibleCount) {
@@ -751,6 +771,56 @@ function startScene() {
         route.segments.forEach((segment, index) => addActiveSegment(segment, index, visibleCount));
     }
 
+    function placeLevelTarget() {
+        coreSystem.position.set(
+            gridX(GRID.target.col) - 1.35,
+            0,
+            gridZ(GRID.target.row) - 0.1
+        );
+        coreLight.position.set(gridX(GRID.target.col), 1.5, gridZ(GRID.target.row));
+    }
+
+    function createLevelObstacles() {
+        clearObjectGroup(levelObjectGroup);
+        const blockMaterial = makeMaterial(0x303944, 0.82, 0.35);
+        const edgeMaterial = makeMaterial(0x46515a, 0.65, 0.64);
+        activeLevel.obstacles.forEach(({ row, col }, index) => {
+            const block = new THREE.Group();
+            block.position.set(gridX(col), 0.19, gridZ(row));
+            levelObjectGroup.add(block);
+            const width = index % 3 === 0 ? 0.92 : 0.76;
+            addBox(
+                block,
+                [width, 0.48 + (index % 2) * 0.16, width * 0.82],
+                [0, 0.25, 0],
+                blockMaterial
+            );
+            addBox(
+                block,
+                [width + 0.12, 0.08, width * 0.9],
+                [0, 0.52 + (index % 2) * 0.16, 0],
+                edgeMaterial
+            );
+        });
+    }
+
+    function loadLevel(level) {
+        if (!level || !Number.isInteger(level.number) || level.number < 1 || level.number > levels.length) {
+            console.error("Cannot load an invalid FluxGrid level.", level);
+            return;
+        }
+        activeLevel = level;
+        GRID.start = { row: level.start.row, col: level.start.col };
+        GRID.target = { row: level.target.row, col: level.target.col };
+        launchDirection = level.start.direction;
+        placeLevelTarget();
+        createLevelObstacles();
+        resetGame();
+        updateSourceMarker();
+        environmentNetwork.visible = false;
+        statusTitle.textContent = `Level ${String(level.number).padStart(2, "0")} — ${level.title}`;
+    }
+
     function setCorePowered(powered) {
         corePowered = powered;
         if (corePulse) {
@@ -776,6 +846,15 @@ function startScene() {
 
     function placeOrRotateMirror(row, col) {
         if (tracing || corePowered) return;
+        if ((row === GRID.start.row && col === GRID.start.col) ||
+            (row === GRID.target.row && col === GRID.target.col)) {
+            setFeedback("The source and battery occupy those tiles.");
+            return;
+        }
+        if (activeLevel.obstacles.some((cell) => cell.row === row && cell.col === col)) {
+            setFeedback("That tile is blocked by a structure.");
+            return;
+        }
         const cellKey = gridKey(row, col);
         const existing = placedMirrors.get(cellKey);
         if (existing) {
@@ -792,6 +871,12 @@ function startScene() {
         previewRoute = traceLight();
         if (previewRoute.outcome === "powered") {
             setFeedback("Route ready. Press POWER SOURCE to launch the beam.", "ready");
+        } else if (previewRoute.outcome === "underpowered") {
+            const needed = activeLevel.par - previewRoute.reflections;
+            setFeedback(
+                `Battery reached, but this sector requires ${activeLevel.par} mirrors on the beam path. Add ${needed} more.`,
+                "miss"
+            );
         } else if (previewRoute.outcome === "loop") {
             setFeedback("This route loops. Rotate or move a mirror before launching.", "miss");
         } else {
@@ -832,7 +917,7 @@ function startScene() {
         tracing = false;
         traceResult = null;
         previewRoute = null;
-        launchDirection = 1;
+        launchDirection = activeLevel.start.direction;
         updateSourceMarker();
         placedMirrors.clear();
         clearObjectGroup(mirrorGroup);
@@ -844,7 +929,10 @@ function startScene() {
         if (sourcePylon?.userData.beaconLight) sourcePylon.userData.beaconLight.intensity = 7;
         traceButton.disabled = false;
         traceButton.innerHTML = "<span>▶</span> POWER SOURCE";
-        setStatus("Route the beam to the core", "Tap the source arrows to choose a side. Place mirrors, then press POWER SOURCE to launch.");
+        setStatus(
+            `Level ${String(activeLevel.number).padStart(2, "0")} — ${activeLevel.title}`,
+            `Requires ${activeLevel.par} mirror${activeLevel.par === 1 ? "" : "s"} on the beam path. Tap the source to switch side, place mirrors, then launch.`
+        );
     }
 
     function pickTile(event) {
@@ -862,7 +950,10 @@ function startScene() {
         canvas.addEventListener("pointermove", (event) => {
             if (cameraState.pointers.size !== 0 || cameraState.dragging || cameraState.moved) return;
             const cell = pickTile(event);
-            if (!cell) {
+            if (!cell ||
+                (cell.row === GRID.start.row && cell.col === GRID.start.col) ||
+                (cell.row === GRID.target.row && cell.col === GRID.target.col) ||
+                activeLevel.obstacles.some((obstacle) => obstacle.row === cell.row && obstacle.col === cell.col)) {
                 hoverRing.visible = false;
                 return;
             }
@@ -1190,6 +1281,7 @@ function startScene() {
     }
 
     function createCore() {
+        const firstCoreChild = platform.children.length;
         const x = 1.35;
         const z = 0.1;
         const baseMaterials = [
@@ -1349,6 +1441,13 @@ function startScene() {
         corePulse.position.y = 0.09;
         hologram.add(corePulse);
         hologram.userData.animate = true;
+
+        coreSystem = new THREE.Group();
+        platform.children.slice(firstCoreChild).forEach((child) => {
+            platform.remove(child);
+            coreSystem.add(child);
+        });
+        platform.add(coreSystem);
     }
 
     function addBackdropArchitecture() {
@@ -1417,6 +1516,7 @@ function startScene() {
         bloom.setSize(width, height);
         resetCamera();
     }
+    window.fluxGridSceneResize = resize;
 
     function orbitBy(horizontal, vertical) {
         cameraState.azimuth += horizontal;
@@ -1510,6 +1610,7 @@ function startScene() {
     bindCameraControls();
     bindGameplay(hoverRing);
     resize();
+    window.addEventListener("fluxgrid:load-level", (event) => loadLevel(event.detail));
 
     const clock = new THREE.Clock();
     function render() {
@@ -1536,14 +1637,21 @@ function startScene() {
                     traceButton.disabled = true;
                     traceButton.innerHTML = "<span>✓</span> CORE ONLINE";
                     coreLight.intensity = 28;
-                    setStatus("Core online", "Success! The live beam has powered the core. Reset to try another route.", "success");
+                    setStatus("Battery connected", `Level ${String(activeLevel.number).padStart(2, "0")} complete. The next sector is unlocked.`, "success");
+                    window.dispatchEvent(new CustomEvent("fluxgrid:level-complete", {
+                        detail: { number: activeLevel.number }
+                    }));
                 } else {
                     coreLight.intensity = 14;
                     if (sourcePylon?.userData.beaconLight) sourcePylon.userData.beaconLight.intensity = 7;
                     const ending = traceResult.outcome === "loop"
                         ? "The beam loops back on itself."
-                        : "The beam misses the core and exits the playable platform.";
-                    setStatus("Beam missed the core", `${ending} Adjust the mirrors and trace again.`, "miss");
+                        : traceResult.outcome === "blocked"
+                            ? "The beam hits an obstacle."
+                            : traceResult.outcome === "underpowered"
+                                ? `The battery received the beam, but this sector requires ${activeLevel.par} mirrors on its path; only ${traceResult.reflections} reflected the beam.`
+                            : "The beam misses the battery and exits the platform.";
+                    setStatus("Route interrupted", `${ending} Adjust the mirrors or choose the other launch side.`, "miss");
                 }
             }
         }
