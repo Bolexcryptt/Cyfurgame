@@ -166,6 +166,15 @@ function renderProfile() {
     document.getElementById("profile-progress").textContent = `${completed} / 99 cleared`;
     document.getElementById("campaign-progress").textContent =
         `${String(player.unlockedLevel).padStart(2, "0")} / 99`;
+    const progressFill = document.getElementById("campaign-progress-fill");
+    if (progressFill) {
+        progressFill.style.width = `${Math.min(100, (player.unlockedLevel - 1) / 99 * 100)}%`;
+    }
+    const nextLevel = levels[player.unlockedLevel - 1];
+    const nextLevelLabel = document.getElementById("hero-next-level");
+    if (nextLevelLabel) {
+        nextLevelLabel.textContent = nextLevel ? `SECTOR ${String(nextLevel.number).padStart(2, "0")}` : "CAMPAIGN COMPLETE";
+    }
 
     const profileDetails = document.getElementById("profile-details");
     profileDetails.replaceChildren(
@@ -189,6 +198,34 @@ function appendLeaderboardCell(row, text, className = "") {
     cell.textContent = text;
     row.append(cell);
     return cell;
+}
+
+function renderLeaderboardPodium(records) {
+    const podium = document.getElementById("leaderboard-podium");
+    podium.replaceChildren();
+    for (const [index, record] of records.slice(0, 3).entries()) {
+        const rank = index + 1;
+        const card = document.createElement("article");
+        card.style.setProperty("--row-index", String(index));
+        card.className = `podium-card podium-rank-${rank}${record.player_id === authUser.id ? " is-current-player" : ""}`;
+        const crest = document.createElement("span");
+        crest.className = "podium-crest";
+        crest.textContent = String(rank).padStart(2, "0");
+        const label = document.createElement("span");
+        label.className = "podium-label";
+        label.textContent = rank === 1 ? "SIGNAL ACE" : rank === 2 ? "GRID RUNNER" : "LIGHT SEEKER";
+        const name = document.createElement("strong");
+        name.className = "podium-name";
+        name.textContent = record.display_name || "Pilot";
+        const score = document.createElement("span");
+        score.className = "podium-score";
+        score.textContent = `${record.levels_completed} / 99 SECTORS`;
+        const marker = document.createElement("span");
+        marker.className = "podium-rank-mark";
+        marker.textContent = rank === 1 ? "✦" : rank === 2 ? "◇" : "△";
+        card.append(crest, label, name, score, marker);
+        podium.append(card);
+    }
 }
 
 async function refreshLeaderboard() {
@@ -222,6 +259,7 @@ async function refreshLeaderboard() {
     }
 
     if (!data.length) {
+        renderLeaderboardPodium([]);
         const row = document.createElement("tr");
         const cell = appendLeaderboardCell(row, "No pilots yet. Complete a level to appear here.", "leaderboard-empty");
         cell.colSpan = 4;
@@ -230,8 +268,10 @@ async function refreshLeaderboard() {
         return;
     }
 
-    for (const record of data) {
+    renderLeaderboardPodium(data);
+    for (const [index, record] of data.entries()) {
         const row = document.createElement("tr");
+        row.style.setProperty("--row-index", String(index));
         if (record.player_id === authUser.id) row.classList.add("is-current-player");
         appendLeaderboardCell(row, `#${String(record.rank).padStart(2, "0")}`, "rank-cell");
 
@@ -277,6 +317,7 @@ function renderLevels() {
         const unlocked = level.number <= player.unlockedLevel;
         const item = document.createElement("li");
         const button = document.createElement("button");
+        button.style.setProperty("--card-index", String((level.number - 1) % 12));
         button.className = `level-card${completed ? " is-complete" : ""}${unlocked ? " is-unlocked" : " is-locked"}`;
         button.type = "button";
         button.disabled = !unlocked;
