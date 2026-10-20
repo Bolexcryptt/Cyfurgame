@@ -3,7 +3,7 @@ import { EffectComposer } from "three/addons/postprocessing/EffectComposer.js";
 import { RenderPass } from "three/addons/postprocessing/RenderPass.js";
 import { UnrealBloomPass } from "three/addons/postprocessing/UnrealBloomPass.js";
 import { OutputPass } from "three/addons/postprocessing/OutputPass.js";
-import { levels } from "./levels.js";
+import { levels, calculateSolveTimeMilliseconds, evaluateLevelStars, getLevelEconomy } from "./levels.js";
 
 const canvas = document.getElementById("scene-canvas");
 const errorPanel = document.getElementById("load-error");
@@ -11,6 +11,8 @@ const statusTitle = document.getElementById("game-status-title");
 const statusText = document.getElementById("game-status");
 const traceButton = document.getElementById("trace-beam");
 const resetButton = document.getElementById("reset-game");
+const completionSummary = document.getElementById("completion-summary");
+const gameHud = document.querySelector(".game-hud");
 const colors = {
     pink: 0xff77e6,
     amber: 0xffaa43,
@@ -119,8 +121,10 @@ function startScene() {
     let corePowered = false;
     let tracing = false;
     let launchDirection = 1;
+    let walletLevelSessionId = null;
     let updateSourceMarker = () => {};
     let traceStartedAt = 0;
+    let levelStartedAt = null;
     let traceResult = null;
 
     const cameraState = {
@@ -140,27 +144,143 @@ function startScene() {
     const makeMaterial = (color, roughness = 0.8, metalness = 0.1, extra = {}) =>
         new THREE.MeshStandardMaterial({ color, roughness, metalness, ...extra });
 
+    function createStoneMaps() {
+        const size = 512;
+        const colorCanvas = document.createElement("canvas");
+        const heightCanvas = document.createElement("canvas");
+        colorCanvas.width = colorCanvas.height = size;
+        heightCanvas.width = heightCanvas.height = size;
+        const colorContext = colorCanvas.getContext("2d");
+        const heightContext = heightCanvas.getContext("2d");
+        const colorImage = colorContext.createImageData(size, size);
+        const heightImage = heightContext.createImageData(size, size);
+        let seed = 92831;
+        const random = () => {
+            seed = (seed * 1664525 + 1013904223) >>> 0;
+            return seed / 4294967296;
+        };
+        const cloudCanvas = document.createElement("canvas");
+        cloudCanvas.width = cloudCanvas.height = 64;
+        const cloudContext = cloudCanvas.getContext("2d");
+        const cloudImage = cloudContext.createImageData(64, 64);
+        for (let i = 0; i < cloudImage.data.length; i += 4) {
+            const shade = 82 + Math.floor(random() * 94);
+            cloudImage.data[i] = shade;
+            cloudImage.data[i + 1] = shade;
+            cloudImage.data[i + 2] = shade;
+            cloudImage.data[i + 3] = 255;
+        }
+        cloudContext.putImageData(cloudImage, 0, 0);
+        colorContext.imageSmoothingEnabled = true;
+        colorContext.drawImage(cloudCanvas, 0, 0, size, size);
+        const cloudField = colorContext.getImageData(0, 0, size, size).data;
+
+        for (let y = 0; y < size; y++) {
+            for (let x = 0; x < size; x++) {
+                const index = (y * size + x) * 4;
+                const cloud = cloudField[index] - 128;
+                const grain = (random() - 0.5) * 18;
+                const strata = Math.sin(x * 0.035 + Math.sin(y * 0.018) * 2.2) * 9;
+                const fleck = Math.sin(x * 0.19 + y * 0.11) * Math.cos(y * 0.16 - x * 0.05) * 8;
+                const shade = Math.max(0, Math.min(255, 119 + cloud * 0.42 + grain + strata + fleck));
+                colorImage.data[index] = shade * 1.04;
+                colorImage.data[index + 1] = shade;
+                colorImage.data[index + 2] = shade * 0.91;
+                colorImage.data[index + 3] = 255;
+                const relief = Math.max(0, Math.min(255, 150 + cloud * 0.65 + grain * 1.6 + strata * 1.8 + fleck));
+                heightImage.data[index] = relief;
+                heightImage.data[index + 1] = relief;
+                heightImage.data[index + 2] = relief;
+                heightImage.data[index + 3] = 255;
+            }
+        }
+        colorContext.putImageData(colorImage, 0, 0);
+        heightContext.putImageData(heightImage, 0, 0);
+
+        for (let i = 0; i < 38; i++) {
+            const x = random() * size;
+            const y = random() * size;
+            const radius = 4 + random() * 25;
+            const shade = 77 + Math.floor(random() * 84);
+            colorContext.fillStyle = `rgba(${shade},${shade * 0.98},${shade * 0.9},${0.025 + random() * 0.06})`;
+            colorContext.beginPath();
+            colorContext.ellipse(x, y, radius * (0.6 + random()), radius * (0.3 + random() * 0.4), random() * Math.PI, 0, Math.PI * 2);
+            colorContext.fill();
+        }
+
+        for (let i = 0; i < 15; i++) {
+            let x = random() * size;
+            let y = random() * size;
+            const steps = 4 + Math.floor(random() * 7);
+            colorContext.beginPath();
+            heightContext.beginPath();
+            colorContext.moveTo(x, y);
+            heightContext.moveTo(x, y);
+            for (let step = 0; step < steps; step++) {
+                x += (random() - 0.5) * 56;
+                y += (random() - 0.5) * 56;
+                colorContext.lineTo(x, y);
+                heightContext.lineTo(x, y);
+            }
+            colorContext.strokeStyle = "rgba(32,30,27,0.72)";
+            colorContext.lineWidth = 0.7 + random() * 1.2;
+            colorContext.stroke();
+            heightContext.strokeStyle = "rgba(45,45,45,0.9)";
+            heightContext.lineWidth = 2.4;
+            heightContext.stroke();
+            colorContext.strokeStyle = "rgba(215,202,178,0.24)";
+            colorContext.lineWidth = 0.7;
+            colorContext.stroke();
+            heightContext.strokeStyle = "rgba(225,225,225,0.46)";
+            heightContext.lineWidth = 1;
+            heightContext.stroke();
+        }
+
+        const colorMap = new THREE.CanvasTexture(colorCanvas);
+        colorMap.colorSpace = THREE.SRGBColorSpace;
+        colorMap.wrapS = colorMap.wrapT = THREE.RepeatWrapping;
+        const heightMap = new THREE.CanvasTexture(heightCanvas);
+        heightMap.wrapS = heightMap.wrapT = THREE.RepeatWrapping;
+        return { colorMap, heightMap };
+    }
+
+    const stoneMaps = createStoneMaps();
+    const makeStoneMaterial = (color, repeatX = 1, repeatY = 1, extra = {}) => {
+        const map = stoneMaps.colorMap.clone();
+        map.repeat.set(repeatX, repeatY);
+        map.needsUpdate = true;
+        const bumpMap = stoneMaps.heightMap.clone();
+        bumpMap.repeat.set(repeatX, repeatY);
+        bumpMap.needsUpdate = true;
+        return makeMaterial(color, 0.96, 0.015, {
+            map,
+            bumpMap,
+            bumpScale: 0.11,
+            ...extra
+        });
+    };
+
     const materials = {
-        platform: makeMaterial(0x282321, 0.92, 0.16),
-        platformSide: makeMaterial(0x181c21, 0.74, 0.42),
-        underside: makeMaterial(0x171c25, 0.62, 0.64),
+        platform: makeStoneMaterial(0xaaa49a, 2.8, 2.3),
+        platformSide: makeStoneMaterial(0x615e59, 2.1, 1.2),
+        underside: makeStoneMaterial(0x696c70, 2.2, 1.1),
         floor: [
-            makeMaterial(0x37302c, 0.92, 0.08, { side: THREE.DoubleSide }),
-            makeMaterial(0x40352e, 0.94, 0.06, { side: THREE.DoubleSide }),
-            makeMaterial(0x37383a, 0.91, 0.11, { side: THREE.DoubleSide }),
-            makeMaterial(0x4a3b30, 0.93, 0.05, { side: THREE.DoubleSide }),
-            makeMaterial(0x34353a, 0.9, 0.12, { side: THREE.DoubleSide }),
-            makeMaterial(0x413a35, 0.92, 0.08, { side: THREE.DoubleSide })
+            makeStoneMaterial(0x92877b, 1.15, 1.15, { side: THREE.DoubleSide }),
+            makeStoneMaterial(0xa09485, 1.15, 1.15, { side: THREE.DoubleSide }),
+            makeStoneMaterial(0x8d9291, 1.15, 1.15, { side: THREE.DoubleSide }),
+            makeStoneMaterial(0xa28f7c, 1.15, 1.15, { side: THREE.DoubleSide }),
+            makeStoneMaterial(0x898d91, 1.15, 1.15, { side: THREE.DoubleSide }),
+            makeStoneMaterial(0x978d84, 1.15, 1.15, { side: THREE.DoubleSide })
         ],
         seam: new THREE.MeshBasicMaterial({ color: 0x151311 }),
         metal: makeMaterial(0x202a34, 0.46, 0.78),
         metalEdge: makeMaterial(0x4b5560, 0.4, 0.82),
-        column: makeMaterial(0x29323f, 0.64, 0.72),
-        columnLight: makeMaterial(0x3b4655, 0.52, 0.73),
+        column: makeStoneMaterial(0x818487, 1.3, 3.4),
+        columnLight: makeStoneMaterial(0xa09a8d, 1.5, 2.2),
         stone: [
-            makeMaterial(0x363431, 0.95, 0.04),
-            makeMaterial(0x45403a, 0.94, 0.05),
-            makeMaterial(0x34393a, 0.91, 0.08)
+            makeStoneMaterial(0x89837b, 0.95, 0.95),
+            makeStoneMaterial(0x9a9185, 0.95, 0.95),
+            makeStoneMaterial(0x858b8b, 0.95, 0.95)
         ],
         crack: new THREE.LineBasicMaterial({ color: 0x191918, transparent: true, opacity: 0.86 }),
         circuit: new THREE.MeshStandardMaterial({
@@ -782,8 +902,6 @@ function startScene() {
 
     function createLevelObstacles() {
         clearObjectGroup(levelObjectGroup);
-        const blockMaterial = makeMaterial(0x303944, 0.82, 0.35);
-        const edgeMaterial = makeMaterial(0x46515a, 0.65, 0.64);
         activeLevel.obstacles.forEach(({ row, col }, index) => {
             const block = new THREE.Group();
             block.position.set(gridX(col), 0.19, gridZ(row));
@@ -793,23 +911,25 @@ function startScene() {
                 block,
                 [width, 0.48 + (index % 2) * 0.16, width * 0.82],
                 [0, 0.25, 0],
-                blockMaterial
+                materials.stone[index % materials.stone.length]
             );
             addBox(
                 block,
                 [width + 0.12, 0.08, width * 0.9],
                 [0, 0.52 + (index % 2) * 0.16, 0],
-                edgeMaterial
+                materials.stone[(index + 1) % materials.stone.length]
             );
         });
     }
 
-    function loadLevel(level) {
+    function loadLevel(levelDetails) {
+        const level = levelDetails?.level ?? levelDetails;
         if (!level || !Number.isInteger(level.number) || level.number < 1 || level.number > levels.length) {
             console.error("Cannot load an invalid FluxGrid level.", level);
             return;
         }
         activeLevel = level;
+        walletLevelSessionId = levelDetails?.level ? levelDetails.walletSessionId ?? null : null;
         GRID.start = { row: level.start.row, col: level.start.col };
         GRID.target = { row: level.target.row, col: level.target.col };
         launchDirection = level.start.direction;
@@ -844,6 +964,48 @@ function startScene() {
         statusText.dataset.state = kind;
     }
 
+    function startSolveTimer() {
+        if (levelStartedAt === null) {
+            levelStartedAt = performance.now();
+            if (walletLevelSessionId) {
+                window.dispatchEvent(new CustomEvent("fluxgrid:level-timer-start", {
+                    detail: { walletSessionId: walletLevelSessionId }
+                }));
+            }
+        }
+    }
+
+    function showCompletionSummary(level, elapsedMilliseconds, result) {
+        const economy = getLevelEconomy(level.number);
+        const timeTargets = level.starTimeTargets;
+        const stars = result.stars;
+        document.getElementById("completion-stars").textContent = `${stars} / 3`;
+        document.getElementById("completion-star-icons").textContent = `${"★".repeat(stars)}${"☆".repeat(3 - stars)}`;
+        document.getElementById("completion-time").textContent = `${(elapsedMilliseconds / 1000).toFixed(1)} s`;
+        document.getElementById("completion-time-thresholds").textContent =
+            `3★ ≤ ${timeTargets.threeSeconds}s · 2★ ≤ ${timeTargets.twoSeconds}s`;
+        document.getElementById("completion-entry-cost").textContent = `${economy.entryCostCredits.toLocaleString("en-US")} credits`;
+
+        const rewardLabel = document.getElementById("completion-reward-label");
+        const reward = document.getElementById("completion-reward");
+        const rewardNote = document.getElementById("completion-reward-note");
+        if (stars === 3) {
+            rewardLabel.textContent = "3-STAR PAYOUT";
+            reward.textContent = `${economy.threeStarPayoutCredits.toLocaleString("en-US")} credits`;
+            rewardNote.textContent = "Potential payout · not credited";
+        } else if (stars === 2) {
+            rewardLabel.textContent = "2-STAR REFUND";
+            reward.textContent = `${economy.twoStarRefundCredits.toLocaleString("en-US")} credits`;
+            rewardNote.textContent = "Potential refund · not credited";
+        } else {
+            rewardLabel.textContent = "1-STAR PAYOUT";
+            reward.textContent = `${economy.oneStarPayoutCredits.toLocaleString("en-US")} credits`;
+            rewardNote.textContent = "No payout for 1 star";
+        }
+        completionSummary.hidden = false;
+        gameHud.dataset.completed = "true";
+    }
+
     function placeOrRotateMirror(row, col) {
         if (tracing || corePowered) return;
         if ((row === GRID.start.row && col === GRID.start.col) ||
@@ -855,6 +1017,7 @@ function startScene() {
             setFeedback("That tile is blocked by a structure.");
             return;
         }
+        startSolveTimer();
         const cellKey = gridKey(row, col);
         const existing = placedMirrors.get(cellKey);
         if (existing) {
@@ -889,6 +1052,7 @@ function startScene() {
 
     function toggleLaunchDirection() {
         if (tracing || corePowered) return;
+        startSolveTimer();
         launchDirection = launchDirection === 1 ? 3 : 1;
         updateSourceMarker();
         clearObjectGroup(activeBeamGroup);
@@ -901,6 +1065,7 @@ function startScene() {
 
     function animateTrace() {
         if (tracing || corePowered) return;
+        startSolveTimer();
         previewRoute = traceLight();
         environmentNetwork.visible = false;
         drawActiveRoute(previewRoute, 0);
@@ -917,6 +1082,9 @@ function startScene() {
         tracing = false;
         traceResult = null;
         previewRoute = null;
+        levelStartedAt = null;
+        completionSummary.hidden = true;
+        delete gameHud.dataset.completed;
         launchDirection = activeLevel.start.direction;
         updateSourceMarker();
         placedMirrors.clear();
@@ -1637,9 +1805,35 @@ function startScene() {
                     traceButton.disabled = true;
                     traceButton.innerHTML = "<span>✓</span> CORE ONLINE";
                     coreLight.intensity = 28;
-                    setStatus("Battery connected", `Level ${String(activeLevel.number).padStart(2, "0")} complete. The next sector is unlocked.`, "success");
+                    const elapsedMilliseconds = calculateSolveTimeMilliseconds(
+                        levelStartedAt,
+                        performance.now(),
+                        traceResult.outcome === "powered"
+                    );
+                    if (elapsedMilliseconds === null) {
+                        console.error("Solved level did not have a valid running solve timer.", {
+                            level: activeLevel.number,
+                            startedAt: levelStartedAt
+                        });
+                        return;
+                    }
+                    const starResult = evaluateLevelStars(activeLevel, elapsedMilliseconds, true);
+                    const starLabel = starResult.stars === 3
+                        ? "3 stars"
+                        : starResult.stars === 2
+                            ? "2 stars"
+                            : "1 star";
+                    showCompletionSummary(activeLevel, elapsedMilliseconds, starResult);
+                    setStatus("Battery connected", `Level ${String(activeLevel.number).padStart(2, "0")} complete. Rating: ${starLabel}. Credit preview only; no balance changed.`, "success");
                     window.dispatchEvent(new CustomEvent("fluxgrid:level-complete", {
-                        detail: { number: activeLevel.number }
+                        detail: {
+                            number: activeLevel.number,
+                            stars: starResult.stars,
+                            elapsedMilliseconds,
+                            walletSessionId: walletLevelSessionId,
+                            launchDirection,
+                            mirrors: [...placedMirrors.values()].map(({ row, col, slash }) => ({ row, col, slash }))
+                        }
                     }));
                 } else {
                     coreLight.intensity = 14;

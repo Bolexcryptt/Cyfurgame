@@ -93,6 +93,67 @@
                     </div>
                 </section>
 
+                <section class="level-section" aria-labelledby="level-heading">
+                    <div class="section-heading">
+                        <div>
+                            <span class="eyebrow">THE CAMPAIGN</span>
+                            <h2 id="level-heading">Select a sector</h2>
+                            <p>Every sector shows its entry cost. Progress unlocks the route; paid entry still requires a verified balance.</p>
+                        </div>
+                        <div class="campaign-progress-card">
+                            <span>CAMPAIGN PROGRESS</span>
+                            <b id="campaign-progress">01 / 99</b>
+                            <i><span id="campaign-progress-fill"></span></i>
+                        </div>
+                    </div>
+                    <p id="level-entry-status" class="level-entry-status" role="status" aria-live="polite">Paid missions require backend-verified credits. Deposits and paid gameplay are disabled.</p>
+                    <ol id="level-list" class="level-list" aria-label="Levels"></ol>
+                </section>
+
+                <article class="info-card wallet-card wallet-home-card" id="wallet-card" aria-labelledby="wallet-heading">
+                    <div class="wallet-home-overview">
+                        <div class="wallet-emblem" aria-hidden="true"><i></i><b>F</b></div>
+                        <span class="eyebrow"><span class="wallet-signal"></span> PILOT RESOURCES // ACCOUNT REQUIRED</span>
+                        <h2 id="wallet-heading">Wallet &amp; balance</h2>
+                        <p class="wallet-description">Connect your own Solana wallet, send CYFUR to the owner-controlled treasury, then submit the transaction signature for server verification.</p>
+                        <p class="wallet-exchange-rate">EXCHANGE RATE <b id="wallet-exchange-rate">1 CYFUR = 10,000 CREDITS</b> · DISPLAY ONLY</p>
+                        <div class="wallet-data-panel wallet-balance-panel">
+                            <span class="wallet-field-label">VERIFIED IN-GAME BALANCE</span>
+                            <b id="wallet-balance">Unavailable</b>
+                            <small id="wallet-balance-state">CREDITS · NOT VERIFIED</small>
+                        </div>
+                        <button id="fund-account-button" class="button button-primary wallet-fund-button" type="button" aria-controls="wallet-api-status">CONNECT SOLANA WALLET <span>→</span></button>
+                    </div>
+                    <div class="wallet-home-details">
+                        <div class="wallet-gates" id="wallet-gates">
+                            <span id="wallet-gate-mint">OFFICIAL CYFUR MINT AND NETWORK VERIFIED SERVER-SIDE</span>
+                            <span id="wallet-gate-custody">SENDER OWNERSHIP PROVED BY SIGNATURE · NO GAME CUSTODY</span>
+                        </div>
+                        <div class="wallet-data-panel wallet-address-panel">
+                            <span class="wallet-field-label">OWNER-CONTROLLED CYFUR TREASURY</span>
+                            <code id="wallet-address">Not configured</code>
+                            <button id="wallet-copy-address" class="button button-quiet" type="button" disabled>COPY ADDRESS</button>
+                        </div>
+                        <div class="wallet-status wallet-deposit-status">
+                            <span>DEPOSIT STATUS</span><b id="wallet-status-value">DISABLED</b>
+                        </div>
+                        <p id="wallet-api-status" class="wallet-api-status" tabindex="-1" role="status" aria-live="polite">Wallet linking and deposits are disabled until the owner-controlled treasury and backend verification are configured. Do not send CYFUR.</p>
+                        <p class="wallet-transfer-instructions">Only send after the backend marks deposits READY. Send CYFUR from the linked wallet to the treasury above, then paste the signature. The backend checks the sender, exact mint, recipient, finality, and duplicate status before crediting. Credits are floored per transfer; with 8 decimals, at least 0.0001 CYFUR is needed for 1 credit. Smaller transfers are not credited.</p>
+                        <form id="deposit-signature-form" class="deposit-signature-form">
+                            <label class="wallet-field-label" for="deposit-signature">SOLANA TRANSACTION SIGNATURE</label>
+                            <input id="deposit-signature" name="signature" type="text" inputmode="text" autocomplete="off" spellcheck="false" maxlength="100" placeholder="Paste transaction signature" required disabled>
+                            <button id="deposit-verify-button" class="button button-quiet" type="submit" disabled>VERIFY &amp; CREDIT</button>
+                        </form>
+                        <div class="wallet-history-heading">
+                            <span class="wallet-field-label">DEPOSIT HISTORY</span>
+                            <button id="wallet-refresh" class="wallet-refresh" type="button">REFRESH</button>
+                        </div>
+                        <ol id="wallet-history" class="wallet-history" aria-label="Deposit history">
+                            <li class="wallet-history-empty">No verified deposits recorded.</li>
+                        </ol>
+                    </div>
+                </article>
+
                 <section class="bottom-panels">
                     <article class="info-card how-card">
                         <span class="eyebrow"><span class="guide-signal"></span> FIELD GUIDE // 03 STEPS</span>
@@ -103,30 +164,6 @@
                             <li><b>03</b><span><strong>POWER THE GRID</strong><small>Press POWER SOURCE and guide the beam into the battery.</small></span></li>
                         </ol>
                     </article>
-                    <article class="info-card wallet-card">
-                        <div class="wallet-emblem" aria-hidden="true"><i></i><b>F</b></div>
-                        <span class="eyebrow"><span class="wallet-signal"></span> PILOT RESOURCES // PLANNED</span>
-                        <h2>Wallet</h2>
-                        <p>CYFUR wallet features are being prepared. No wallet is connected and no funds or credits are handled yet.</p>
-                        <div class="wallet-status"><span>CONNECTION STATUS</span><b>NOT ENABLED</b></div>
-                        <button id="wallet-placeholder" class="button button-quiet" type="button" disabled>WALLET INTEGRATION COMING SOON</button>
-                    </article>
-                </section>
-
-                <section class="level-section" aria-labelledby="level-heading">
-                    <div class="section-heading">
-                        <div>
-                            <span class="eyebrow">THE CAMPAIGN</span>
-                            <h2 id="level-heading">Select a sector</h2>
-                            <p>Every sector is a distinct route challenge. Clear one to unlock the next.</p>
-                        </div>
-                        <div class="campaign-progress-card">
-                            <span>CAMPAIGN PROGRESS</span>
-                            <b id="campaign-progress">01 / 99</b>
-                            <i><span id="campaign-progress-fill"></span></i>
-                        </div>
-                    </div>
-                    <ol id="level-list" class="level-list" aria-label="Levels"></ol>
                 </section>
 
                 <footer class="site-footer"><span>FLUXGRID <i>LIGHT PROTOCOL</i></span><span>PLAYER PROGRESS · SYNCED TO SUPABASE WHEN CONNECTED</span></footer>
@@ -205,6 +242,35 @@
                     <button id="reset-game" class="game-button secondary" type="button">RESET</button>
                     <button id="trace-beam" class="game-button primary" type="button"><span>▶</span> POWER SOURCE</button>
                 </div>
+                <section id="completion-summary" class="completion-summary" aria-label="Level completion reward preview" aria-live="polite" hidden>
+                    <div class="completion-heading">
+                        <span class="hud-kicker">MISSION RESULT</span>
+                        <strong>Battery connected</strong>
+                        <small>Credit amounts are previews only. No entry fee was charged and no credits were added.</small>
+                    </div>
+                    <div class="completion-metrics">
+                        <div class="completion-metric completion-rating">
+                            <span>STAR RATING</span>
+                            <strong id="completion-stars">—</strong>
+                            <small id="completion-star-icons" aria-hidden="true"></small>
+                        </div>
+                        <div class="completion-metric">
+                            <span>SOLVE TIME</span>
+                            <strong id="completion-time">—</strong>
+                            <small id="completion-time-thresholds">Time targets unavailable</small>
+                        </div>
+                        <div class="completion-metric">
+                            <span>ENTRY COST</span>
+                            <strong id="completion-entry-cost">—</strong>
+                            <small>Preview · not charged</small>
+                        </div>
+                        <div class="completion-metric">
+                            <span id="completion-reward-label">PAYOUT / REFUND</span>
+                            <strong id="completion-reward">—</strong>
+                            <small id="completion-reward-note">Preview · not credited</small>
+                        </div>
+                    </div>
+                </section>
             </section>
             <p id="load-error" class="load-error" hidden></p>
         </section>

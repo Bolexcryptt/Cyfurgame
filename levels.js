@@ -1,5 +1,31 @@
 const ROWS = 6;
 const COLS = 8;
+export const CYFUR_CREDITS_PER_TOKEN = 10000;
+export const STAR_TIME_CONFIG = Object.freeze({
+    threeStarBaseSeconds: 25,
+    threeStarSecondsPerMirror: 10,
+    twoStarBaseSeconds: 60,
+    twoStarSecondsPerMirror: 20
+});
+export const LEVEL_STAR_TIME_OVERRIDES = Object.freeze({});
+
+export function getLevelStarTimeTargets(level) {
+    const complexity = Math.max(1, level?.par ?? 1);
+    const defaults = {
+        threeSeconds: STAR_TIME_CONFIG.threeStarBaseSeconds + complexity * STAR_TIME_CONFIG.threeStarSecondsPerMirror,
+        twoSeconds: STAR_TIME_CONFIG.twoStarBaseSeconds + complexity * STAR_TIME_CONFIG.twoStarSecondsPerMirror
+    };
+    const overrides = LEVEL_STAR_TIME_OVERRIDES[level?.number] ?? {};
+    const targets = {
+        threeSeconds: overrides.threeSeconds ?? defaults.threeSeconds,
+        twoSeconds: overrides.twoSeconds ?? defaults.twoSeconds
+    };
+    if (!Number.isFinite(targets.threeSeconds) || !Number.isFinite(targets.twoSeconds) ||
+        targets.threeSeconds < 0 || targets.twoSeconds <= targets.threeSeconds) {
+        throw new RangeError(`Invalid star-time thresholds for level ${level?.number ?? "unknown"}.`);
+    }
+    return targets;
+}
 const DIRECTIONS = [
     { row: -1, col: 0 },
     { row: 0, col: 1 },
@@ -125,6 +151,9 @@ function makeLevel(number, usedLayouts) {
         if (usedLayouts.has(layoutKey)) continue;
 
         usedLayouts.add(layoutKey);
+        const par = solutionMirrors.length;
+        const entryCost = Math.floor(100 * Math.pow(1.08, number - 1));
+        const starTimeTargets = getLevelStarTimeTargets({ number, par });
         return Object.freeze({
             number,
             title: `SECTOR ${String(number).padStart(2, "0")}`,
@@ -134,11 +163,70 @@ function makeLevel(number, usedLayouts) {
             solutionMirrors: Object.freeze(solutionMirrors.map(Object.freeze)),
             obstacles: Object.freeze(obstacles.map(Object.freeze)),
             route: Object.freeze(route.map(Object.freeze)),
-            par: solutionMirrors.length
+            par,
+            economy: Object.freeze({
+                entryCostCredits: entryCost,
+                threeStarPayoutCredits: Math.floor(entryCost * 1.6),
+                twoStarRefundCredits: Math.floor(entryCost * 0.4),
+                oneStarPayoutCredits: 0
+            }),
+            starTimeTargets: Object.freeze(starTimeTargets)
         });
     }
 
     throw new Error(`Unable to generate a unique solvable layout for level ${number}.`);
+}
+
+export function getLevelEconomy(levelNumber) {
+    if (!Number.isInteger(levelNumber) || levelNumber < 1 || levelNumber > 99) {
+        throw new Error(`Level ${levelNumber} is outside the FluxGrid campaign.`);
+    }
+    const entryCostCredits = Math.floor(100 * Math.pow(1.08, levelNumber - 1));
+    return {
+        entryCostCredits,
+        threeStarPayoutCredits: Math.floor(entryCostCredits * 1.6),
+        twoStarRefundCredits: Math.floor(entryCostCredits * 0.4),
+        oneStarPayoutCredits: 0
+    };
+}
+
+export function evaluateLevelStars(level, elapsedMilliseconds, connected = true) {
+    if (!level || !Number.isFinite(elapsedMilliseconds) || elapsedMilliseconds < 0 || !connected) {
+        return { stars: 0, rewardCredits: 0, status: "fail" };
+    }
+    const timeTargets = level.starTimeTargets ?? getLevelStarTimeTargets(level);
+    if (!Number.isFinite(timeTargets.threeSeconds) || !Number.isFinite(timeTargets.twoSeconds) ||
+        timeTargets.threeSeconds < 0 || timeTargets.twoSeconds <= timeTargets.threeSeconds) {
+        throw new RangeError(`Invalid star-time thresholds for level ${level.number ?? "unknown"}.`);
+    }
+    const elapsedSeconds = elapsedMilliseconds / 1000;
+    let stars = 0;
+    let rewardCredits = 0;
+    if (elapsedSeconds <= timeTargets.threeSeconds) {
+        stars = 3;
+        rewardCredits = level.economy?.threeStarPayoutCredits ?? 0;
+    } else if (elapsedSeconds <= timeTargets.twoSeconds) {
+        stars = 2;
+        rewardCredits = level.economy?.twoStarRefundCredits ?? 0;
+    } else {
+        stars = 1;
+        rewardCredits = 0;
+    }
+    return { stars, rewardCredits, status: "completed" };
+}
+
+export function calculateSolveTimeMilliseconds(startedAt, connectedAt, batteryConnected) {
+    if (!batteryConnected || !Number.isFinite(startedAt) || !Number.isFinite(connectedAt) || connectedAt < startedAt) {
+        return null;
+    }
+    return connectedAt - startedAt;
+}
+
+export function claimLevelCompletion(levelNumber, seenLevels) {
+    if (!Number.isInteger(levelNumber) || levelNumber < 1 || levelNumber > 99) return false;
+    if (!(seenLevels instanceof Set) || seenLevels.has(levelNumber)) return false;
+    seenLevels.add(levelNumber);
+    return true;
 }
 
 const layouts = new Set();

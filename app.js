@@ -1,4 +1,4 @@
-import { levels } from "./levels.js";
+import { CYFUR_CREDITS_PER_TOKEN, getLevelEconomy, levels, claimLevelCompletion } from "./levels.js";
 import { supabase, supabaseConfigured } from "./supabase.js";
 
 const storageKey = "fluxgrid.player.v1";
@@ -17,6 +17,8 @@ const videoSkip = document.getElementById("video-skip-button");
 const videoCaption = document.getElementById("video-caption");
 const backgroundMusic = document.getElementById("background-music");
 const playerNameInput = document.getElementById("player-name");
+document.getElementById("wallet-exchange-rate").textContent =
+    `1 CYFUR = ${CYFUR_CREDITS_PER_TOKEN.toLocaleString("en-US")} CREDITS`;
 
 function readPlayer() {
     const saved = localStorage.getItem(storageKey);
@@ -58,7 +60,12 @@ function readPlayer() {
 
 let player = readPlayer();
 let pendingLevel = null;
+let activeWalletLevelSessionId = null;
+let walletTimerStartPromise = Promise.resolve(false);
 let transitionNextLevel = null;
+const processedLevelCompletions = new Set();
+const pendingLevelEntryRequests = new Map();
+let levelEntryRequestInProgress = false;
 let introFinished = false;
 let musicStarted = false;
 let authUser = null;
@@ -74,6 +81,12 @@ function nextUnlockedLevel(completedLevels) {
     let next = 1;
     while (completed.has(next) && next < 99) next++;
     return next;
+}
+
+function getContinueLevel() {
+    return player.completedLevels.includes(player.lastLevel)
+        ? player.unlockedLevel
+        : Math.min(player.lastLevel, player.unlockedLevel);
 }
 
 async function refreshOwnProgress() {
@@ -313,17 +326,19 @@ function statCard(label, value) {
 function renderLevels() {
     const list = document.getElementById("level-list");
     const fragment = document.createDocumentFragment();
+    const continueLevel = getContinueLevel();
     for (const level of levels) {
+        const entryCostCredits = getLevelEconomy(level.number).entryCostCredits;
         const completed = player.completedLevels.includes(level.number);
         const unlocked = level.number <= player.unlockedLevel;
+        const current = level.number === continueLevel && unlocked && !completed;
         const item = document.createElement("li");
         const button = document.createElement("button");
         button.style.setProperty("--card-index", String((level.number - 1) % 12));
-        button.className = `level-card${completed ? " is-complete" : ""}${unlocked ? " is-unlocked" : " is-locked"}`;
+        button.className = `level-card${completed ? " is-complete" : ""}${unlocked ? " is-unlocked" : " is-locked"}${current ? " is-current" : ""}`;
         button.type = "button";
         button.disabled = !unlocked;
         button.dataset.level = String(level.number);
-        button.setAttribute("aria-label", `Level ${level.number}, ${completed ? "completed" : unlocked ? "unlocked" : "locked"}`);
 
         const number = document.createElement("span");
         number.className = "level-number";
@@ -334,12 +349,22 @@ function renderLevels() {
         title.textContent = level.title;
         const meta = document.createElement("small");
         meta.textContent = `${level.par} MIRROR${level.par === 1 ? "" : "S"} REQUIRED · TIER ${level.band}`;
+        const entryCost = document.createElement("small");
+        entryCost.className = "level-cost";
+        entryCost.textContent = `${entryCostCredits.toLocaleString("en-US")} CREDITS`;
         detail.append(title, meta);
         const badge = document.createElement("span");
         badge.className = "level-state";
-        badge.textContent = completed ? "CLEARED" : unlocked ? (level.number === player.lastLevel ? "CONTINUE" : "OPEN") : "LOCKED";
-        button.append(number, detail, badge);
-        button.addEventListener("click", () => startLevel(level.number));
+        badge.textContent = completed ? "CLEARED" : current ? "CONTINUE" : unlocked ? "UNLOCKED" : "LOCKED";
+        const cost = document.createElement("span");
+        cost.className = "level-entry-cost";
+        cost.append(entryCost);
+        button.append(number, detail, cost, badge);
+        button.setAttribute(
+            "aria-label",
+            `Level ${level.number}, entry cost ${entryCostCredits} credits, ${completed ? "completed" : unlocked ? "progress unlocked" : "locked"}`
+        );
+        button.addEventListener("click", () => void startLevel(level.number));
         item.append(button);
         fragment.append(item);
     }
@@ -350,6 +375,382 @@ function renderHome() {
     renderProfile();
     renderLevels();
     showScreen("home-screen");
+    void refreshWallet();
+}
+
+function formatCredits(value) {
+    if (typeof value !== "string" && typeof value !== "number") return "Unavailable";
+    try {
+        return BigInt(value).toLocaleString("en-US");
+    } catch (error) {
+        console.error("Wallet API returned an invalid credit balance.", error);
+        return "Unavailable";
+    }
+}
+
+function setLevelEntryMessage(message, state = "disabled") {
+        const status = document.getElementById("level-entry-status");
+        status.textContent = message;
+        status.dataset.state = state;
+    }
+
+async function requestLevelEntry(levelNumber) {
+        if (levelEntryRequestInProgress) return null;
+        if (!supabaseConfigured || !supabase) {
+            setLevelEntryMessage("Cannot start a paid mission: player authentication and wallet verification are unavailable.", "error");
+            return null;
+        }
+
+        levelEntryRequestInProgress = true;
+        setLevelEntryMessage("Checking campaign access and verified credits with the backend…", "pending");
+        try {
+            const { data, error } = await supabase.auth.getSession();
+            if (error) throw error;
+            const accessToken = data.session?.access_token;
+            if (!accessToken) {
+                setLevelEntryMessage("Sign in before starting a paid mission. No credits were checked or charged.", "error");
+                return null;
+            }
+            const requestId = pendingLevelEntryRequests.get(levelNumber) ?? crypto.randomUUID();
+            pendingLevelEntryRequests.set(levelNumber, requestId);
+
+            const response = await fetch("/api/level-entry", {
+                method: "POST",
+                headers: {
+                    Authorization: `Bearer ${accessToken}`,
+                    "Content-Type": "application/json"
+                },
+                body: JSON.stringify({ levelNumber, requestId }),
+                cache: "no-store"
+            });
+            const result = await response.json().catch(() => ({}));
+            if (!response.ok && response.status < 500) pendingLevelEntryRequests.delete(levelNumber);
+
+            if (result.balanceVerified === true && /^\d+$/.test(String(result.balanceCredits))) {
+                const balance = document.getElementById("wallet-balance");
+                balance.textContent = formatCredits(result.balanceCredits);
+                document.getElementById("wallet-balance-state").textContent = "CREDITS · BACKEND VERIFIED";
+            }
+
+            if (response.status === 402 && result.error === "insufficient_balance") {
+                const balanceMessage = /^\d+$/.test(String(result.balanceCredits))
+                    ? `Your verified balance is ${formatCredits(result.balanceCredits)}.`
+                    : "Your balance changed while entry was reserved; refresh the wallet and try again.";
+                const costMessage = /^\d+$/.test(String(result.entryCostCredits))
+                    ? `Level ${levelNumber} requires ${formatCredits(result.entryCostCredits)} credits.`
+                    : `Level ${levelNumber} could not be charged.`;
+                setLevelEntryMessage(`Insufficient verified credits. ${costMessage} ${balanceMessage}`, "error");
+                return null;
+            }
+            if (response.status === 403 && result.error === "level_locked") {
+                setLevelEntryMessage(`This sector is campaign-locked. Complete the currently available level first.`, "error");
+                return null;
+            }
+            if (result.error === "paid_gameplay_disabled") {
+                setLevelEntryMessage(
+                    `Level ${levelNumber} requires ${formatCredits(result.entryCostCredits)} credits, and the backend confirms your balance. Paid gameplay is still disabled, so this level cannot start.`,
+                    "disabled"
+                );
+                return null;
+            }
+            if (result.error === "wallet_schema_not_installed") {
+                setLevelEntryMessage("Cannot start a paid mission: apply supabase-wallet.sql and deploy the wallet API before balance checks are available.", "error");
+                return null;
+            }
+            if (result.error === "verified_balance_unavailable") {
+                setLevelEntryMessage("Cannot start a paid mission: the backend has no verified credit balance for this player.", "error");
+                return null;
+            }
+            if (result.error === "wallet_api_not_configured") {
+                setLevelEntryMessage("Cannot start a paid mission: server wallet credentials are not configured.", "error");
+                return null;
+            }
+            if (result.error === "authentication_required") {
+                setLevelEntryMessage("Cannot start a paid mission: the backend could not authenticate this player.", "error");
+                return null;
+            }
+            if (response.status === 404 || response.status === 501) {
+                setLevelEntryMessage("Cannot start a paid mission: this preview host does not run the Vercel balance-check API. No level was started.", "error");
+                return null;
+            }
+            if (response.ok && result.allowed === true && result.balanceVerified === true &&
+                typeof result.sessionId === "string") {
+                pendingLevelEntryRequests.delete(levelNumber);
+                return result;
+            }
+
+            throw new Error(result.error || `Level entry check failed (${response.status}).`);
+        } catch (error) {
+            console.error("Paid level entry check failed closed.", error);
+            setLevelEntryMessage(`Cannot start a paid mission: backend balance verification failed. ${error.message}`, "error");
+            return null;
+        } finally {
+            levelEntryRequestInProgress = false;
+    }
+}
+
+function formatTokenAmount(rawAmount, decimals) {
+    if (!/^\d+$/.test(String(rawAmount)) || !Number.isInteger(decimals) || decimals < 0 || decimals > 18) {
+        return "Amount unavailable";
+    }
+    const digits = String(rawAmount).padStart(decimals + 1, "0");
+    if (decimals === 0) return digits;
+    const whole = digits.slice(0, -decimals);
+    const fraction = digits.slice(-decimals).replace(/0+$/, "");
+    return fraction ? `${whole}.${fraction}` : whole;
+}
+
+function setWalletMessage(message, state = "") {
+    const status = document.getElementById("wallet-api-status");
+    status.textContent = message;
+    status.dataset.state = state;
+}
+
+function renderWalletHistory(deposits) {
+    const history = document.getElementById("wallet-history");
+    if (!Array.isArray(deposits)) {
+        history.replaceChildren();
+        const empty = document.createElement("li");
+        empty.className = "wallet-history-empty";
+        empty.textContent = "Deposit history is unavailable.";
+        history.append(empty);
+        return;
+    }
+
+    const fragment = document.createDocumentFragment();
+    for (const deposit of deposits) {
+        const item = document.createElement("li");
+        item.className = "wallet-history-item";
+        const detail = document.createElement("span");
+        detail.className = "wallet-history-detail";
+        const amount = document.createElement("b");
+        amount.textContent = `${formatTokenAmount(deposit.amount_raw, deposit.token_decimals)} CYFUR`;
+        const signature = document.createElement("small");
+        signature.textContent = typeof deposit.transaction_signature === "string"
+            ? `${deposit.transaction_signature.slice(0, 8)}…${deposit.transaction_signature.slice(-8)}`
+            : "Transaction reference unavailable";
+        detail.append(amount, signature);
+
+        const state = document.createElement("span");
+        state.className = "wallet-history-state";
+        state.dataset.state = ["pending", "confirmed", "failed"].includes(deposit.status)
+            ? deposit.status
+            : "unknown";
+        state.textContent = state.dataset.state.toUpperCase();
+        item.append(detail, state);
+        fragment.append(item);
+    }
+    if (!deposits.length) {
+        const empty = document.createElement("li");
+        empty.className = "wallet-history-empty";
+        empty.textContent = "No verified deposits recorded.";
+        fragment.append(empty);
+    }
+    history.replaceChildren(fragment);
+}
+
+async function refreshWallet() {
+    const address = document.getElementById("wallet-address");
+    const copyButton = document.getElementById("wallet-copy-address");
+    const signatureInput = document.getElementById("deposit-signature");
+    const signatureSubmit = document.getElementById("deposit-verify-button");
+    const balance = document.getElementById("wallet-balance");
+    const status = document.getElementById("wallet-status-value");
+    const refreshButton = document.getElementById("wallet-refresh");
+    refreshButton.disabled = true;
+    refreshButton.textContent = "LOADING";
+    copyButton.disabled = true;
+    address.textContent = "Not configured";
+    status.textContent = "DISABLED";
+    balance.textContent = "Unavailable";
+    document.getElementById("wallet-balance-state").textContent = "CREDITS · NOT VERIFIED";
+    signatureInput.disabled = true;
+    signatureSubmit.disabled = true;
+    renderWalletHistory(null);
+
+    try {
+        if (!supabaseConfigured || !supabase) {
+            setWalletMessage("Supabase is not configured; wallet data is unavailable and deposits remain disabled.", "error");
+            return;
+        }
+        const { data, error } = await supabase.auth.getSession();
+        if (error) throw error;
+        const accessToken = data.session?.access_token;
+        if (!accessToken) {
+            setWalletMessage("Sign in to view wallet data. Deposits remain disabled.", "error");
+            return;
+        }
+
+        const response = await fetch("/api/wallet", {
+            headers: { Authorization: `Bearer ${accessToken}` },
+            cache: "no-store"
+        });
+        const result = await response.json().catch(() => ({}));
+        if (!response.ok) {
+            if (result.error === "wallet_schema_not_installed") {
+                setWalletMessage("Apply the wallet and direct-treasury Supabase migrations, then deploy the Vercel API.", "error");
+                return;
+            }
+            if (result.error === "wallet_api_not_configured") {
+                setWalletMessage("Vercel wallet API is missing SUPABASE_URL and/or SUPABASE_PUBLISHABLE_KEY. Configure both as server-side Vercel environment variables; deposits remain disabled.", "error");
+                return;
+            }
+            if (result.error === "authentication_required") {
+                setWalletMessage("Your FluxGrid identity could not be authenticated by the wallet API.", "error");
+                return;
+            }
+            if (response.status === 404 || response.status === 501) {
+                setWalletMessage("The wallet API is not available on this host. Deploy the Vercel project with its /api routes before wallet status can be checked. Deposits remain disabled; do not send CYFUR.", "error");
+                return;
+            }
+            throw new Error(result.error || `Wallet request failed (${response.status}).`);
+        }
+
+        if (result.treasuryAddress) {
+            address.textContent = result.treasuryAddress;
+            copyButton.disabled = false;
+        }
+        document.getElementById("fund-account-button").textContent =
+            result.linkedWalletAddress ? "RELINK SOLANA WALLET" : "CONNECT SOLANA WALLET";
+        signatureInput.disabled = result.depositsEnabled !== true || !result.linkedWalletAddress;
+        signatureSubmit.disabled = result.depositsEnabled !== true || !result.linkedWalletAddress;
+        balance.textContent = result.balanceCredits === null
+            ? "Unavailable"
+            : formatCredits(result.balanceCredits);
+        document.getElementById("wallet-balance-state").textContent =
+            result.balanceVerified === true ? "CREDITS · BACKEND VERIFIED" : "CREDITS · NOT VERIFIED";
+        status.textContent = result.depositsEnabled === true
+            ? `READY${result.network ? ` · ${result.network.toUpperCase()}` : ""}`
+            : result.linkedWalletAddress ? "WALLET LINKED · VERIFICATION OFF" : "DISABLED";
+        renderWalletHistory(result.deposits);
+        setWalletMessage(
+            result.depositsEnabled === true
+                ? "Deposit service is enabled by the server."
+                : result.disabledMessage || "Funding is disabled by the server. No transfer will be accepted or credited; do not send CYFUR.",
+            result.depositsEnabled === true ? "ready" : "disabled"
+        );
+    } catch (error) {
+        console.error("Wallet data could not be refreshed.", error);
+        setWalletMessage(`Wallet data is unavailable. Deposits remain disabled. ${error.message}`, "error");
+    } finally {
+        refreshButton.disabled = false;
+        refreshButton.textContent = "REFRESH";
+    }
+
+}
+
+async function connectSolanaWallet() {
+    if (!supabaseConfigured || !supabase) {
+        setWalletMessage("Supabase authentication is unavailable. No wallet was linked.", "error");
+        return;
+    }
+    const walletProvider = window.solana;
+    if (!walletProvider?.isPhantom || typeof walletProvider.connect !== "function" ||
+        typeof walletProvider.signMessage !== "function") {
+        setWalletMessage("Open FluxGrid in a browser with Phantom Wallet installed to prove wallet ownership. No transfer has been made.", "error");
+        return;
+    }
+    const button = document.getElementById("fund-account-button");
+    button.disabled = true;
+    button.textContent = "CONNECTING WALLET…";
+    setWalletMessage("Approve the wallet connection, then sign a one-time ownership challenge. Signing does not send a transaction or pay a fee.", "pending");
+    try {
+        const { data, error } = await supabase.auth.getSession();
+        if (error) throw error;
+        const accessToken = data.session?.access_token;
+        if (!accessToken) throw new Error("Sign in before linking a Solana wallet.");
+        const connected = await walletProvider.connect();
+        const walletAddress = connected.publicKey?.toString();
+        if (!walletAddress) throw new Error("Phantom did not return a public wallet address.");
+        const headers = {
+            Authorization: `Bearer ${accessToken}`,
+            "Content-Type": "application/json"
+        };
+        const challengeResponse = await fetch("/api/wallet-link", {
+            method: "POST",
+            headers,
+            body: JSON.stringify({ action: "challenge", walletAddress }),
+            cache: "no-store"
+        });
+        const challengeResult = await challengeResponse.json().catch(() => ({}));
+        if (!challengeResponse.ok || typeof challengeResult.challenge !== "string") {
+            throw new Error(challengeResult.message || challengeResult.error || `Wallet proof request failed (${challengeResponse.status}).`);
+        }
+        const signed = await walletProvider.signMessage(
+            new TextEncoder().encode(challengeResult.challenge),
+            "utf8"
+        );
+        if (!signed?.signature || signed.signature.length !== 64) {
+            throw new Error("Phantom returned an invalid wallet signature.");
+        }
+        const signature = btoa(Array.from(signed.signature, (byte) => String.fromCharCode(byte)).join(""));
+        const linkResponse = await fetch("/api/wallet-link", {
+            method: "POST",
+            headers,
+            body: JSON.stringify({ action: "verify", walletAddress, signature }),
+            cache: "no-store"
+        });
+        const linkResult = await linkResponse.json().catch(() => ({}));
+        if (!linkResponse.ok || linkResult.linked !== true) {
+            throw new Error(linkResult.message || linkResult.error || `Wallet verification failed (${linkResponse.status}).`);
+        }
+        setWalletMessage("Solana wallet ownership is verified and linked. Deposits remain disabled until the treasury and backend checks are ready.", "disabled");
+        await refreshWallet();
+    } catch (error) {
+        console.error("Solana wallet could not be linked.", error);
+        setWalletMessage(`Wallet was not linked. ${error.message}`, "error");
+    } finally {
+        button.disabled = false;
+        button.textContent = "CONNECT SOLANA WALLET";
+    }
+}
+
+async function verifyDepositSignature(signature) {
+    if (!supabaseConfigured || !supabase) throw new Error("Supabase authentication is unavailable.");
+    const { data, error } = await supabase.auth.getSession();
+    if (error) throw error;
+    const accessToken = data.session?.access_token;
+    if (!accessToken) throw new Error("Sign in before submitting a transaction signature.");
+    const response = await fetch("/api/deposits", {
+        method: "POST",
+        headers: {
+            Authorization: `Bearer ${accessToken}`,
+            "Content-Type": "application/json"
+        },
+        body: JSON.stringify({ signature }),
+        cache: "no-store"
+    });
+    const result = await response.json().catch(() => ({}));
+    if (response.status === 202) {
+        setWalletMessage("Transaction is not finalized yet. Wait a little and submit the same signature again; no credits have been added.", "pending");
+        return;
+    }
+    if (!response.ok) {
+        const messages = {
+            transaction_not_found: "Transaction was not found on the configured Solana network.",
+            transaction_failed: "Solana reports this transaction failed. No credits were added.",
+            wrong_token_or_destination: "This transfer does not match your linked sender wallet, the treasury, and approved CYFUR mint. No credits were added.",
+            mainnet_deposits_disabled: "Mainnet deposits are not enabled. Do not send CYFUR.",
+            deposits_disabled: result.message || "Deposit verification is disabled. Do not send CYFUR.",
+            direct_treasury_not_ready: result.message,
+            solana_wallet_not_linked: result.message,
+            wallet_configuration_incomplete: result.message
+        };
+        throw new Error(messages[result.error] || result.message || result.error || `Deposit verification failed (${response.status}).`);
+    }
+    if (result.status !== "confirmed" || !/^\d+$/.test(String(result.creditAmountCredits)) ||
+        !/^\d+$/.test(String(result.balanceCredits))) {
+        throw new Error("Backend did not return a confirmed deposit and verified balance.");
+    }
+    document.getElementById("wallet-balance").textContent = formatCredits(result.balanceCredits);
+    document.getElementById("wallet-balance-state").textContent = "CREDITS · BACKEND VERIFIED";
+    setWalletMessage(
+        result.alreadyProcessed
+            ? `This finalized deposit was already credited. Current verified balance: ${formatCredits(result.balanceCredits)} credits.`
+            : `Deposit finalized and credited: ${formatCredits(result.creditAmountCredits)} credits. Current verified balance: ${formatCredits(result.balanceCredits)} credits.`,
+        "ready"
+    );
+    await refreshWallet();
 }
 
 function showNameOrHome() {
@@ -446,6 +847,14 @@ function showOpeningIntro() {
     introVideo.hidden = false;
     introVideo.muted = false;
     videoSkip.hidden = true;
+    videoSkip.onclick = () => {
+        introVideo.pause();
+        transitionVideo.pause();
+        introVideo.hidden = true;
+        transitionVideo.hidden = true;
+        videoSkip.hidden = true;
+        showNameOrHome();
+    };
     introFinished = false;
     videoAction.hidden = true;
     videoCaption.textContent = "A new signal is waiting.";
@@ -489,9 +898,13 @@ function showOpeningIntro() {
     }
 }
 
-function startLevel(number, resumeMusic = false) {
+async function startLevel(number, resumeMusic = false) {
     const level = levels[number - 1];
     if (!level || number > player.unlockedLevel) return;
+    const entry = await requestLevelEntry(number);
+    if (!entry) return;
+    activeWalletLevelSessionId = entry.sessionId;
+    walletTimerStartPromise = Promise.resolve(false);
     player.lastLevel = number;
     pendingLevel = level;
     savePlayer();
@@ -500,7 +913,9 @@ function startLevel(number, resumeMusic = false) {
     showScreen("play-screen");
     window.setTimeout(() => {
         window.fluxGridSceneResize?.();
-        window.dispatchEvent(new CustomEvent("fluxgrid:load-level", { detail: level }));
+        window.dispatchEvent(new CustomEvent("fluxgrid:load-level", {
+            detail: { level, walletSessionId: activeWalletLevelSessionId }
+        }));
     }, 0);
     if (resumeMusic || !musicStarted) startMusic();
 }
@@ -576,7 +991,7 @@ document.getElementById("name-form").addEventListener("submit", async (event) =>
 });
 
 document.getElementById("continue-game").addEventListener("click", () => {
-    startLevel(Math.min(player.lastLevel, player.unlockedLevel));
+    startLevel(getContinueLevel());
 });
 document.getElementById("leaderboard-open").addEventListener("click", () => {
     showScreen("leaderboard-screen");
@@ -584,6 +999,53 @@ document.getElementById("leaderboard-open").addEventListener("click", () => {
 });
 document.getElementById("leaderboard-refresh").addEventListener("click", () => {
     void refreshLeaderboard();
+});
+document.getElementById("wallet-refresh").addEventListener("click", () => {
+    void refreshWallet();
+});
+document.getElementById("fund-account-button").addEventListener("click", () => {
+    document.getElementById("wallet-api-status").scrollIntoView({ behavior: "smooth", block: "center" });
+    document.getElementById("wallet-api-status").focus({ preventScroll: true });
+    void connectSolanaWallet();
+});
+document.getElementById("wallet-copy-address").addEventListener("click", async () => {
+    const address = document.getElementById("wallet-address").textContent.trim();
+    if (!address || address === "Not configured") {
+        setWalletMessage("The owner-controlled treasury is not configured. Do not send tokens.", "disabled");
+        return;
+    }
+    try {
+        await navigator.clipboard.writeText(address);
+        const depositsReady = document.getElementById("wallet-status-value").textContent.startsWith("READY");
+        setWalletMessage(
+            depositsReady
+                ? "Treasury copied. Send only the approved CYFUR mint from the linked wallet."
+                : "Treasury address copied for setup only. Deposit verification is not READY; do not send CYFUR.",
+            depositsReady ? "ready" : "disabled"
+        );
+    } catch (error) {
+        console.error("Deposit address could not be copied.", error);
+        setWalletMessage(`Address copy failed. Select and copy it manually. ${error.message}`, "error");
+    }
+});
+document.getElementById("deposit-signature-form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const input = document.getElementById("deposit-signature");
+    const button = document.getElementById("deposit-verify-button");
+    const signature = input.value.trim();
+    if (!signature) return;
+    button.disabled = true;
+    button.textContent = "VERIFYING…";
+    setWalletMessage("Checking transaction status, token mint, recipient, and finality with the backend…", "pending");
+    try {
+        await verifyDepositSignature(signature);
+    } catch (error) {
+        console.error("Deposit signature verification failed.", error);
+        setWalletMessage(error.message, "error");
+    } finally {
+        button.disabled = document.getElementById("wallet-status-value").textContent.startsWith("READY") === false;
+        button.textContent = "VERIFY & CREDIT";
+    }
 });
 document.getElementById("profile-open").addEventListener("click", () => {
     renderProfile();
@@ -596,6 +1058,7 @@ document.querySelectorAll("[data-home]").forEach((button) => button.addEventList
 async function saveLevelCompletion(number) {
     if (authUser && supabaseConfigured) {
         try {
+            await backendReady;
             const { error } = await supabase.rpc("record_level_completion", {
                 p_level_number: number
             });
@@ -621,13 +1084,107 @@ async function saveLevelCompletion(number) {
     }
 }
 
-window.addEventListener("fluxgrid:level-complete", (event) => {
-    const number = event.detail?.number;
+async function saveWalletLevelCompletion(detail) {
+    const { data, error } = await supabase.auth.getSession();
+    if (error) throw error;
+    const accessToken = data.session?.access_token;
+    if (!accessToken) throw new Error("Player authentication expired before completion was saved.");
+    await walletTimerStartPromise;
+    const response = await fetch("/api/level-completion", {
+        method: "POST",
+        headers: {
+            Authorization: `Bearer ${accessToken}`,
+            "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+            sessionId: detail.walletSessionId,
+            mirrors: detail.mirrors,
+            launchDirection: detail.launchDirection
+        }),
+        cache: "no-store"
+    });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok || result.status !== "confirmed") {
+        throw new Error(result.error || `Secure completion failed (${response.status}).`);
+    }
+
+    document.getElementById("completion-stars").textContent = `${result.stars} / 3`;
+    document.getElementById("completion-star-icons").textContent =
+        `${"★".repeat(result.stars)}${"☆".repeat(3 - result.stars)}`;
+    if (Number.isFinite(result.elapsedMilliseconds) && result.elapsedMilliseconds >= 0) {
+        document.getElementById("completion-time").textContent =
+            `${(result.elapsedMilliseconds / 1000).toFixed(1)} s`;
+    }
+    document.getElementById("wallet-balance").textContent = formatCredits(result.balanceCredits);
+    document.getElementById("wallet-balance-state").textContent = "CREDITS · BACKEND VERIFIED";
+    const rewardLabel = document.getElementById("completion-reward-label");
+    const reward = document.getElementById("completion-reward");
+    const rewardNote = document.getElementById("completion-reward-note");
+    rewardLabel.textContent = result.rewardCredits === "0" ? "NO REWARD" : "CONFIRMED CREDIT REWARD";
+    reward.textContent = `${formatCredits(result.rewardCredits)} credits`;
+    rewardNote.textContent = result.duplicate
+        ? "Level already cleared · repeat reward prevented"
+        : "Verified and credited by the server";
+
+    await refreshOwnProgress();
+    backendStatus = "Connected to the FluxGrid leaderboard.";
+    return result;
+}
+
+window.addEventListener("fluxgrid:level-timer-start", (event) => {
+    const sessionId = event.detail?.walletSessionId;
+    if (!sessionId || sessionId !== activeWalletLevelSessionId) return;
+    walletTimerStartPromise = (async () => {
+        const { data, error } = await supabase.auth.getSession();
+        if (error) throw error;
+        const accessToken = data.session?.access_token;
+        if (!accessToken) throw new Error("Player authentication expired before the timer started.");
+        const response = await fetch("/api/level-session", {
+            method: "POST",
+            headers: {
+                Authorization: `Bearer ${accessToken}`,
+                "Content-Type": "application/json"
+            },
+            body: JSON.stringify({ sessionId }),
+            cache: "no-store"
+        });
+        const result = await response.json().catch(() => ({}));
+        if (!response.ok || !result.startedAt) {
+            throw new Error(result.error || `Server timer could not start (${response.status}).`);
+        }
+        return true;
+    })();
+    void walletTimerStartPromise.catch((error) => {
+        console.error("Server-authoritative level timer did not start.", error);
+        document.getElementById("game-status").textContent =
+            "Server timer could not start. Completion will not be credited; please retry after checking your connection.";
+    });
+});
+
+window.addEventListener("fluxgrid:level-complete", async (event) => {
+    const detail = event.detail ?? {};
+    const number = detail.number;
     if (!Number.isInteger(number) || number < 1 || number > 99) {
-        console.error("Invalid completed-level event received.", event.detail);
+        console.error("Invalid completed-level event received.", detail);
         return;
     }
-    void saveLevelCompletion(number);
+
+    if (detail.walletSessionId) {
+        try {
+            const result = await saveWalletLevelCompletion(detail);
+            setLevelEntryMessage(
+                `Level ${number} saved. ${result.rewardCredits} credits ${result.rewardCredits === "0" ? "awarded" : "confirmed"}; balance is backend verified.`,
+                "success"
+            );
+        } catch (error) {
+            console.error("Server-verified level completion could not be saved.", error);
+            document.getElementById("game-status").textContent =
+                `Level ${number} is not recorded and no reward was credited: ${error.message}`;
+            return;
+        }
+    } else if (claimLevelCompletion(number, processedLevelCompletions)) {
+        await saveLevelCompletion(number);
+    }
 
     const nextLevel = number + 1;
     if (nextLevel <= 99) {
