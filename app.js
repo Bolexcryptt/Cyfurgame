@@ -510,6 +510,11 @@ function setWalletMessage(message, state = "") {
     status.dataset.state = state;
 }
 
+function getPhantomProvider() {
+    const provider = window.phantom?.solana ?? window.solana;
+    return provider?.isPhantom ? provider : null;
+}
+
 function renderWalletHistory(deposits) {
     const history = document.getElementById("wallet-history");
     if (!Array.isArray(deposits)) {
@@ -727,9 +732,9 @@ async function sendCyfurDeposit() {
         setWalletMessage("The server has not marked deposits READY. No token transfer was started.", "disabled");
         return;
     }
-    const provider = window.solana;
-    if (!provider?.isPhantom || typeof provider.sendTransaction !== "function") {
-        setWalletMessage("Install or open Phantom in this browser to approve the CYFUR transfer.", "error");
+    const provider = getPhantomProvider();
+    if (!provider || typeof provider.sendTransaction !== "function") {
+        setWalletMessage("Phantom was not detected in this browser tab. Open this site in the browser where Phantom is installed, unlock it, and reload the page.", "error");
         return;
     }
 
@@ -831,10 +836,10 @@ async function connectSolanaWallet() {
         setWalletMessage("Supabase authentication is unavailable. No wallet was linked.", "error");
         return;
     }
-    const walletProvider = window.solana;
-    if (!walletProvider?.isPhantom || typeof walletProvider.connect !== "function" ||
+    const walletProvider = getPhantomProvider();
+    if (!walletProvider || typeof walletProvider.connect !== "function" ||
         typeof walletProvider.signMessage !== "function") {
-        setWalletMessage("Open FluxGrid in a browser with Phantom Wallet installed to prove wallet ownership. No transfer has been made.", "error");
+        setWalletMessage("Phantom was not detected in this browser tab. Open the deployed FluxGrid site in the browser where Phantom is installed, unlock Phantom, and reload the page. No wallet was linked or token transfer made.", "error");
         return;
     }
     const button = document.getElementById("fund-account-button");
