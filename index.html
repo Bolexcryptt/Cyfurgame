@@ -73,10 +73,15 @@
                         <span class="hero-version">FLUXGRID <b>·</b> CAMPAIGN 01</span>
                     </div>
                     <div class="hero-copy">
-                        <span class="eyebrow hero-current-sector">YOUR NEXT SIGNAL <b id="hero-next-level">SECTOR 01</b></span>
                         <h1>Route the light.<br><em>Restore the grid.</em></h1>
                         <p>Place reflectors, read the route, and guide the beam into the dormant power core.</p>
-                        <button id="continue-game" class="button button-primary" type="button">CONTINUE MISSION <span>→</span></button>
+                        <div class="hero-mission-actions">
+                            <button id="home-levels-toggle" class="button button-quiet" type="button" aria-controls="level-section" aria-expanded="false">LEVELS <span aria-hidden="true">↓</span></button>
+                            <button id="continue-game" class="button button-primary" type="button">
+                                <span class="mission-button-label">START MISSION<small id="hero-next-level">LEVEL 01 / 99</small></span>
+                                <span aria-hidden="true">→</span>
+                            </button>
+                        </div>
                     </div>
                     <div class="hero-art" aria-hidden="true">
                         <div class="hero-radar-sweep"></div>
@@ -93,7 +98,7 @@
                     </div>
                 </section>
 
-                <section class="level-section" aria-labelledby="level-heading">
+                <section id="level-section" class="level-section" aria-labelledby="level-heading" hidden>
                     <div class="section-heading">
                         <div>
                             <span class="eyebrow">THE CAMPAIGN</span>

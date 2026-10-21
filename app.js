@@ -184,10 +184,12 @@ function renderProfile() {
     if (progressFill) {
         progressFill.style.width = `${Math.min(100, (player.unlockedLevel - 1) / 99 * 100)}%`;
     }
-    const nextLevel = levels[player.unlockedLevel - 1];
+    const nextLevel = levels[getContinueLevel() - 1];
     const nextLevelLabel = document.getElementById("hero-next-level");
     if (nextLevelLabel) {
-        nextLevelLabel.textContent = nextLevel ? `SECTOR ${String(nextLevel.number).padStart(2, "0")}` : "CAMPAIGN COMPLETE";
+        nextLevelLabel.textContent = nextLevel
+            ? `LEVEL ${String(nextLevel.number).padStart(2, "0")} / 99`
+            : "CAMPAIGN COMPLETE";
     }
 
     const profileDetails = document.getElementById("profile-details");
@@ -992,6 +994,16 @@ document.getElementById("name-form").addEventListener("submit", async (event) =>
 
 document.getElementById("continue-game").addEventListener("click", () => {
     startLevel(getContinueLevel());
+});
+document.getElementById("home-levels-toggle").addEventListener("click", (event) => {
+    const button = event.currentTarget;
+    const section = document.getElementById("level-section");
+    const expanded = button.getAttribute("aria-expanded") === "true";
+    section.hidden = expanded;
+    button.setAttribute("aria-expanded", String(!expanded));
+    if (!expanded) {
+        section.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
 });
 document.getElementById("leaderboard-open").addEventListener("click", () => {
     showScreen("leaderboard-screen");

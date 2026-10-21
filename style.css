@@ -1566,3 +1566,37 @@ button { -webkit-tap-highlight-color: transparent; }
     .level-detail { grid-column: 2; grid-row: 1; }
     .level-detail small { font-size: 7px; }
 }
+
+.hero-mission-actions {
+    display: grid;
+    justify-items: start;
+    gap: 8px;
+}
+.hero-mission-actions #home-levels-toggle {
+    min-height: 31px;
+    padding-inline: 11px;
+    font: 700 9px "Consolas", monospace;
+    letter-spacing: .12em;
+}
+.hero-mission-actions #home-levels-toggle span {
+    display: inline-block;
+    margin-left: 5px;
+    transition: transform .2s ease;
+}
+.hero-mission-actions #home-levels-toggle[aria-expanded="true"] span { transform: rotate(180deg); }
+.hero-mission-actions #continue-game {
+    display: flex;
+    min-width: 218px;
+    align-items: center;
+    justify-content: space-between;
+    gap: 22px;
+    text-align: left;
+}
+.mission-button-label { display: grid; gap: 4px; font-size: 10px !important; font-weight: 800; letter-spacing: .08em; }
+.mission-button-label small { font: 700 8px "Consolas", monospace; letter-spacing: .1em; }
+#level-section { scroll-margin-top: 18px; }
+
+@media (max-width: 680px) {
+    .hero-mission-actions { gap: 7px; }
+    .hero-mission-actions #continue-game { min-width: min(218px, 100%); }
+}
