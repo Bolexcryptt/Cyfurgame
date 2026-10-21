@@ -1,6 +1,20 @@
 import { CYFUR_CREDITS_PER_TOKEN, getLevelEconomy, levels, claimLevelCompletion } from "./levels.js";
 import { supabase, supabaseConfigured } from "./supabase.js";
-import { createPhantomBrowseUrl, isMobileBrowser, waitForPhantomProvider } from "./wallet-provider.mjs";
+import {
+    bytesToWalletBase64,
+    clearPhantomMobileSession,
+    connectPhantom,
+    decodeWalletBytes,
+    decryptPhantomMobileResponse,
+    encodeWalletBytes,
+    getConnectedPhantomWallet,
+    getPhantomProvider,
+    isMobileBrowser,
+    readPhantomMobileCallback,
+    savePhantomMobileSession,
+    setPhantomMobilePendingAction,
+    startPhantomMobileConnect
+} from "./wallet-provider.mjs";
 
 const storageKey = "fluxgrid.player.v1";
 const screens = [
@@ -511,36 +525,42 @@ function setWalletMessage(message, state = "") {
     status.dataset.state = state;
 }
 
-function setPhantomOpenAction(visible) {
-    const action = document.getElementById("wallet-open-phantom");
-    if (visible && isMobileBrowser()) {
-        action.href = createPhantomBrowseUrl(window.location.href);
-        action.hidden = false;
-        return;
+function renderWalletConnectionState() {
+    const connectedAddress = getConnectedPhantomWallet(window)?.publicKey ?? null;
+    const linkedAddress = walletStatusSnapshot?.linkedWalletAddress ?? null;
+    const addressElement = document.getElementById("wallet-player-address");
+    const stateElement = document.getElementById("wallet-player-state");
+    const button = document.getElementById("fund-account-button");
+    addressElement.textContent = linkedAddress ?? "No wallet linked";
+    addressElement.closest(".wallet-data-panel").hidden = !linkedAddress;
+    if (connectedAddress && connectedAddress === linkedAddress) {
+        stateElement.textContent = "PHANTOM CONNECTED · LINK VERIFIED";
+        button.textContent = "PHANTOM CONNECTED";
+    } else if (connectedAddress) {
+        stateElement.textContent = "PHANTOM CONNECTED · LINK THIS WALLET";
+        button.textContent = "LINK CONNECTED WALLET";
+    } else if (linkedAddress) {
+        stateElement.textContent = "WALLET LINKED · PHANTOM NOT CONNECTED IN THIS TAB";
+        button.textContent = "CONNECT LINKED WALLET";
+    } else {
+        stateElement.textContent = "PHANTOM NOT CONNECTED";
+        button.textContent = "CONNECT SOLANA WALLET";
     }
-    action.hidden = true;
 }
 
 function showPhantomUnavailableMessage() {
     if (isMobileBrowser()) {
         if (window.location.protocol === "https:") {
-            const phantomUrl = createPhantomBrowseUrl(window.location.href);
-            const action = document.getElementById("wallet-open-phantom");
-            action.href = phantomUrl;
-            action.hidden = false;
-            const handoffAttempted = new URL(window.location.href).searchParams.has("phantom_handoff");
-            if (!handoffAttempted) {
-                setWalletMessage("Opening FluxGrid in Phantom's in-app browser so it can connect to your wallet. No transfer was made.", "pending");
-                window.location.assign(phantomUrl);
-                return;
+            try {
+                setWalletMessage("Opening Phantom's secure connection request. Approve wallet access; FluxGrid will return to this browser without sending tokens.", "pending");
+                startPhantomMobileConnect(window, walletStatusSnapshot?.network);
+            } catch (error) {
+                setWalletMessage(`Phantom mobile connection could not start. ${error.message}`, "error");
             }
-            setWalletMessage("This page is already in the Phantom handoff flow, but Phantom did not expose its wallet provider. Confirm the site is open inside Phantom's in-app browser, then reload. No transfer was made.", "error");
         } else {
-            setPhantomOpenAction(false);
-            setWalletMessage("Phantom mobile handoff requires the deployed HTTPS site. Open FluxGrid's production URL in Phantom's in-app browser. No transfer was made.", "error");
+            setWalletMessage("Phantom mobile connection requires the secure production HTTPS site.", "error");
         }
     } else {
-        setPhantomOpenAction(false);
         setWalletMessage("Phantom is not available to this page. Open FluxGrid in a normal Chrome or Edge tab where the Phantom extension is installed and allowed for this site—not an embedded preview—then reload. No transfer was made.", "error");
     }
 }
@@ -666,8 +686,10 @@ async function refreshWallet() {
             copyButton.disabled = false;
         }
         walletStatusSnapshot = result;
-        document.getElementById("fund-account-button").textContent =
-            result.linkedWalletAddress ? "WALLET LINKED" : "CONNECT SOLANA WALLET";
+        const linkedAddressElement = document.getElementById("wallet-player-address");
+        linkedAddressElement.textContent = result.linkedWalletAddress ?? "No wallet linked";
+        linkedAddressElement.closest(".wallet-data-panel").hidden = !result.linkedWalletAddress;
+        renderWalletConnectionState();
         transferButton.disabled = result.depositsEnabled !== true ||
             !result.linkedWalletAddress ||
             !result.officialMintAddress ||
@@ -770,23 +792,29 @@ async function sendCyfurDeposit() {
         setWalletMessage("The server has not marked deposits READY. No token transfer was started.", "disabled");
         return;
     }
-    const provider = await waitForPhantomProvider(window);
-    if (!provider || typeof provider.sendTransaction !== "function") {
-        showPhantomUnavailableMessage();
-        return;
-    }
-    setPhantomOpenAction(false);
-
     const transferButton = document.getElementById("wallet-transfer-button");
     const mainButton = document.getElementById("fund-account-button");
     const amountInput = document.getElementById("wallet-transfer-amount");
     let signature = "";
     try {
+        if (!getPhantomProvider(window)) {
+            showPhantomUnavailableMessage();
+            return;
+        }
+        const walletConnection = await withWalletTimeout(
+            connectPhantom(window),
+            "Phantom connection approval"
+        );
+        if (!walletConnection || typeof walletConnection.provider.sendTransaction !== "function") {
+            showPhantomUnavailableMessage();
+            return;
+        }
+        const { provider } = walletConnection;
+        renderWalletConnectionState();
         const rawAmount = parseTokenAmount(amountInput.value, config.tokenDecimals);
-        const connected = await provider.connect();
         const { PublicKey, Transaction, TransactionInstruction, Connection, clusterApiUrl } =
             await loadSolanaWeb3();
-        const payer = new PublicKey(connected.publicKey?.toString() ?? "");
+        const payer = new PublicKey(walletConnection.publicKey);
         if (payer.toString() !== config.linkedWalletAddress) {
             throw new Error("The connected Phantom account differs from the wallet linked to this game account. Relink the correct wallet first.");
         }
@@ -876,28 +904,37 @@ async function connectSolanaWallet() {
         setWalletMessage("Supabase authentication is unavailable. No wallet was linked.", "error");
         return;
     }
-    const walletProvider = await waitForPhantomProvider(window);
-    if (!walletProvider || typeof walletProvider.connect !== "function" ||
-        typeof walletProvider.signMessage !== "function") {
+    if (!getPhantomProvider(window)) {
         showPhantomUnavailableMessage();
         return;
     }
-    setPhantomOpenAction(false);
+    const walletConnectionPromise = withWalletTimeout(
+        connectPhantom(window),
+        "Phantom connection approval"
+    );
     const button = document.getElementById("fund-account-button");
     button.disabled = true;
     button.textContent = "CONNECTING WALLET…";
-    setWalletMessage("Waiting for Phantom to open. Approve the connection request; no token transfer will happen.", "pending");
     try {
         const { data, error } = await supabase.auth.getSession();
         if (error) throw error;
         const accessToken = data.session?.access_token;
         if (!accessToken) throw new Error("Sign in before linking a Solana wallet.");
-        const connected = await withWalletTimeout(
-            walletProvider.connect(),
-            "Phantom connection approval"
-        );
-        const walletAddress = connected.publicKey?.toString();
-        if (!walletAddress) throw new Error("Phantom did not return a public wallet address.");
+        setWalletMessage("Waiting for Phantom connection approval. No token transfer will happen.", "pending");
+        const walletConnection = await walletConnectionPromise;
+        if (!walletConnection) {
+            showPhantomUnavailableMessage();
+            return;
+        }
+        const { provider: walletProvider, publicKey: walletAddress } = walletConnection;
+        if (typeof walletProvider.signMessage !== "function") {
+            throw new Error("The connected Phantom provider cannot sign the wallet ownership proof.");
+        }
+        renderWalletConnectionState();
+        if (walletStatusSnapshot?.linkedWalletAddress === walletAddress) {
+            setWalletMessage("Phantom is connected and its address matches the wallet linked to this authenticated game account.", "ready");
+            return;
+        }
         button.textContent = "VERIFYING WALLET…";
         setWalletMessage("Wallet connected. Requesting an ownership challenge from the server; this signature does not transfer tokens.", "pending");
         const headers = {
@@ -943,9 +980,7 @@ async function connectSolanaWallet() {
         setWalletMessage(`Wallet was not linked. ${error.message}`, "error");
     } finally {
         button.disabled = false;
-        button.textContent = walletStatusSnapshot?.linkedWalletAddress && walletStatusSnapshot.depositsEnabled
-            ? "WALLET LINKED"
-            : walletStatusSnapshot?.linkedWalletAddress ? "RELINK SOLANA WALLET" : "CONNECT SOLANA WALLET";
+        renderWalletConnectionState();
     }
 }
 
@@ -969,6 +1004,7 @@ async function verifyDepositSignature(signature) {
         setWalletMessage("Transaction is not finalized yet. Wait a little and submit the same signature again; no credits have been added.", "pending");
         return;
     }
+
     if (!response.ok) {
         const messages = {
             transaction_not_found: "Transaction was not found on the configured Solana network.",
@@ -995,6 +1031,132 @@ async function verifyDepositSignature(signature) {
         "ready"
     );
     await refreshWallet();
+}
+
+async function getWalletAuthorizationHeaders() {
+    if (!supabaseConfigured || !supabase) throw new Error("Supabase authentication is unavailable.");
+    const { data, error } = await supabase.auth.getSession();
+    if (error) throw error;
+    const accessToken = data.session?.access_token;
+    if (!accessToken) throw new Error("Sign in before using Phantom.");
+    return {
+        Authorization: `Bearer ${accessToken}`,
+        "Content-Type": "application/json"
+    };
+}
+
+async function handlePhantomMobileCallback(callback) {
+    const state = callback.state;
+    let broadcastSignature = "";
+    try {
+        if (callback.error) throw callback.error;
+        await backendReady;
+        await refreshWallet();
+        if (state.action === "connect") {
+            const decrypted = decryptPhantomMobileResponse(window, state, callback.response, true);
+            const walletAddress = decrypted.data.public_key;
+            const session = decrypted.data.session;
+            if (typeof walletAddress !== "string" || typeof session !== "string") {
+                throw new Error("Phantom did not return the wallet address and session.");
+            }
+            savePhantomMobileSession(window, state, {
+                walletAddress,
+                session,
+                sharedSecret: decrypted.sharedSecret,
+                phantomPublicKey: decrypted.phantomPublicKey
+            });
+            const walletConnection = await connectPhantom(window);
+            if (!walletConnection || walletConnection.publicKey !== walletAddress) {
+                throw new Error("Phantom's returned wallet session did not match its public address.");
+            }
+            const headers = await getWalletAuthorizationHeaders();
+            const challengeResponse = await fetch("/api/wallet-link", {
+                method: "POST",
+                headers,
+                body: JSON.stringify({ action: "challenge", walletAddress }),
+                cache: "no-store"
+            });
+            const challenge = await challengeResponse.json().catch(() => ({}));
+            if (!challengeResponse.ok || typeof challenge.challenge !== "string") {
+                throw new Error(challenge.message || challenge.error || `Wallet proof request failed (${challengeResponse.status}).`);
+            }
+            const provider = walletConnection.provider;
+            if (!provider?.signMessage) throw new Error("The secure Phantom mobile session could not be restored.");
+            setWalletMessage("Phantom connected. Approve the ownership message in Phantom; this does not transfer tokens.", "pending");
+            await provider.signMessage(new TextEncoder().encode(challenge.challenge));
+            return;
+        }
+
+        const decrypted = decryptPhantomMobileResponse(window, state, callback.response);
+        if (state.action === "wallet-link-sign") {
+            const signature = decrypted.data.signature;
+            if (typeof signature !== "string") throw new Error("Phantom did not return the ownership signature.");
+            const headers = await getWalletAuthorizationHeaders();
+            const verifyResponse = await fetch("/api/wallet-link", {
+                method: "POST",
+                headers,
+                body: JSON.stringify({
+                    action: "verify",
+                    walletAddress: state.walletAddress,
+                    signature: bytesToWalletBase64(decodeWalletBytes(signature))
+                }),
+                cache: "no-store"
+            });
+            const verifyResult = await verifyResponse.json().catch(() => ({}));
+            if (!verifyResponse.ok || verifyResult.linked !== true) {
+                throw new Error(verifyResult.message || verifyResult.error || `Wallet verification failed (${verifyResponse.status}).`);
+            }
+            setPhantomMobilePendingAction(window, { action: "connected", challenge: undefined });
+            await refreshWallet();
+            const walletConnection = await connectPhantom(window);
+            if (walletConnection?.publicKey !== walletStatusSnapshot?.linkedWalletAddress) {
+                throw new Error("The Phantom session does not match the wallet linked to this game account.");
+            }
+            setWalletMessage("Phantom is connected and the wallet ownership proof is linked to this game account.", "ready");
+            renderWalletConnectionState();
+            return;
+        }
+
+        if (state.action === "deposit-sign") {
+            const config = walletStatusSnapshot;
+            if (!config?.depositsEnabled || config.network !== state.network) {
+                throw new Error("Deposit readiness or network changed while Phantom was open. No transaction was submitted.");
+            }
+            const walletConnection = await connectPhantom(window);
+            if (walletConnection?.publicKey !== config.linkedWalletAddress) {
+                throw new Error("The approved Phantom session does not match the linked game wallet. No transaction was submitted.");
+            }
+            if (typeof decrypted.data.transaction !== "string") {
+                throw new Error("Phantom did not return the signed transaction.");
+            }
+            const { Connection, clusterApiUrl } = await loadSolanaWeb3();
+            const connection = new Connection(clusterApiUrl(state.network), "confirmed");
+            const transactionBytes = decodeWalletBytes(decrypted.data.transaction);
+            broadcastSignature = await connection.sendRawTransaction(transactionBytes, {
+                preflightCommitment: "confirmed"
+            });
+            document.getElementById("deposit-signature").value = broadcastSignature;
+            setWalletMessage("Phantom approved the transaction. Waiting for the server to verify its finalized transfer before crediting.", "pending");
+            await verifyDepositSignature(broadcastSignature);
+            setPhantomMobilePendingAction(window, { action: "connected" });
+            await refreshWallet();
+            return;
+        }
+        throw new Error("The returned Phantom action is not recognized.");
+    } catch (error) {
+        console.error("Phantom mobile callback could not be completed.", error);
+        if (state?.session) {
+            setPhantomMobilePendingAction(window, { action: "connected" });
+        } else {
+            clearPhantomMobileSession(window);
+        }
+        if (broadcastSignature) {
+            document.getElementById("deposit-signature").value = broadcastSignature;
+            setWalletMessage(`Transaction was submitted, but credit verification did not complete. Keep the signature and use VERIFY & CREDIT. ${error.message}`, "error");
+        } else {
+            setWalletMessage(`Phantom returned to FluxGrid, but the requested action did not complete. ${error.message}`, "error");
+        }
+    }
 }
 
 function showNameOrHome() {
@@ -1086,6 +1248,14 @@ function continueAfterIntro() {
 }
 
 function showOpeningIntro() {
+    if (new URL(window.location.href).searchParams.has("phantom_handoff") && player.name) {
+        introVideo.pause();
+        transitionVideo.pause();
+        showNameOrHome();
+        document.getElementById("wallet-card").scrollIntoView({ behavior: "auto", block: "start" });
+        void backendReady.then(() => refreshWallet());
+        return;
+    }
     showScreen("video-screen");
     transitionVideo.hidden = true;
     introVideo.hidden = false;
@@ -1263,9 +1433,12 @@ document.getElementById("wallet-balance-refresh").addEventListener("click", () =
 document.getElementById("fund-account-button").addEventListener("click", () => {
     document.getElementById("wallet-api-status").scrollIntoView({ behavior: "smooth", block: "center" });
     document.getElementById("wallet-api-status").focus({ preventScroll: true });
-    if (walletStatusSnapshot?.linkedWalletAddress && walletStatusSnapshot.depositsEnabled === true) {
+    const connectedWallet = getConnectedPhantomWallet(window);
+    if (connectedWallet &&
+        connectedWallet.publicKey === walletStatusSnapshot?.linkedWalletAddress &&
+        walletStatusSnapshot?.depositsEnabled === true) {
         document.getElementById("wallet-transfer-amount").focus({ preventScroll: true });
-        setWalletMessage("Wallet linked to this game account. To deposit, enter an amount and choose DEPOSIT CYFUR; Phantom must be available in this browser to approve it.", "ready");
+        setWalletMessage("Phantom is connected to the same wallet linked to this game account. Enter an amount and choose DEPOSIT CYFUR to review the transaction in Phantom.", "ready");
     } else {
         void connectSolanaWallet();
     }
@@ -1465,4 +1638,14 @@ window.addEventListener("fluxgrid:level-complete", async (event) => {
 });
 
 backendReady = initializeBackend();
-showOpeningIntro();
+const phantomMobileCallback = readPhantomMobileCallback(window);
+if (phantomMobileCallback) {
+    showNameOrHome();
+    document.getElementById("wallet-card").scrollIntoView({ behavior: "auto", block: "start" });
+    void handlePhantomMobileCallback(phantomMobileCallback);
+} else if (new URL(window.location.href).searchParams.has("phantom_handoff") && player.name) {
+    showNameOrHome();
+    document.getElementById("wallet-card").scrollIntoView({ behavior: "auto", block: "start" });
+} else {
+    showOpeningIntro();
+}

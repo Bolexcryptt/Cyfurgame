@@ -1161,8 +1161,6 @@ button { -webkit-tap-highlight-color: transparent; }
 }
 .wallet-api-status[data-state="error"] { color: #ffba9e; }
 .wallet-api-status[data-state="ready"] { color: #9ce8ca; }
-.wallet-phantom-open { width: fit-content; min-height: 34px; margin: 0 0 12px; }
-.wallet-phantom-open[hidden] { display: none; }
 .wallet-history-heading {
     position: relative;
     z-index: 1;
@@ -1528,7 +1526,10 @@ button { -webkit-tap-highlight-color: transparent; }
 .wallet-home-overview .wallet-balance-panel { max-width: 480px; min-height: 94px; align-content: center; gap: 8px; }
 .wallet-home-overview .wallet-balance-panel > b { font-size: clamp(24px, 3vw, 32px); }
 .wallet-home-overview .wallet-balance-panel > small { font-size: 8px; }
-.wallet-fund-button { min-height: 42px; margin-top: 13px; }
+.wallet-player-address-panel { margin-top: 11px; padding: 9px 10px; }
+.wallet-player-address-panel code { display: block; margin-top: 6px; overflow-wrap: anywhere; color: #b7e8eb; font: 8px/1.5 "Consolas",monospace; }
+.wallet-player-state { min-height: 14px; margin: 9px 0 0; color: #9bb4c2; font: 700 8px/1.5 "Consolas",monospace; letter-spacing: .06em; }
+.wallet-fund-button { min-height: 42px; margin-top: 5px; }
 .wallet-home-details { min-width: 0; align-self: center; padding-left: clamp(0px, 2vw, 22px); border-left: 1px solid #9bb7cc21; }
 .wallet-home-details .wallet-gates { margin-top: 0; }
 .wallet-home-details .wallet-address-panel { margin-top: 13px; }

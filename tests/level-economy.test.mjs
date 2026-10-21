@@ -3,10 +3,25 @@ import { generateKeyPairSync, sign as signMessage } from "node:crypto";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 import { createRequire } from "node:module";
-import { createPhantomBrowseUrl, getPhantomProvider, isMobileBrowser, waitForPhantomProvider } from "../wallet-provider.mjs";
+import {
+    bytesToWalletBase64,
+    connectPhantom,
+    createPhantomBrowseUrl,
+    decodeWalletBytes,
+    decryptPhantomMobileResponse,
+    encodeWalletBytes,
+    getConnectedPhantomWallet,
+    getPhantomProvider,
+    isMobileBrowser,
+    readPhantomMobileCallback,
+    savePhantomMobileSession,
+    startPhantomMobileConnect,
+    waitForPhantomProvider
+} from "../wallet-provider.mjs";
 import { calculateSolveTimeMilliseconds, claimLevelCompletion, CYFUR_CREDITS_PER_TOKEN, evaluateLevelStars, getLevelEconomy, getLevelStarTimeTargets, levels } from "../levels.js";
 
 const require = createRequire(import.meta.url);
+const nacl = require("tweetnacl");
 const {
     CYFUR_CREDITS_PER_TOKEN: apiCreditsPerToken,
     getDepositCreditAmount,
@@ -94,6 +109,105 @@ test("Phantom provider discovery waits briefly for delayed extension injection",
     }, 20);
     const provider = await waitForPhantomProvider(target, 200);
     assert.equal(provider, target.phantom.solana);
+});
+
+test("connect and later wallet actions reuse the same connected provider and address", async () => {
+    const listeners = new Map();
+    let connectCount = 0;
+    const provider = {
+        isPhantom: true,
+        isConnected: true,
+        connect() {
+            connectCount += 1;
+            return Promise.resolve({ publicKey: { toString: () => "linked-public-address" } });
+        },
+        signMessage() {},
+        on(event, listener) { listeners.set(event, listener); }
+    };
+    const walletWindow = { phantom: { solana: provider } };
+    const first = await connectPhantom(walletWindow);
+    const second = await connectPhantom(walletWindow);
+    assert.equal(first.provider, provider);
+    assert.equal(second.provider, provider);
+    assert.equal(second.publicKey, "linked-public-address");
+    assert.deepEqual(getConnectedPhantomWallet(walletWindow), second);
+    assert.equal(connectCount, 1);
+    listeners.get("disconnect")();
+    assert.equal(getConnectedPhantomWallet(walletWindow), null);
+});
+
+test("Phantom mobile deeplink encrypts connect and message-sign requests and restores the browser session", async () => {
+    const storage = new Map();
+    let assignedUrl = "";
+    const walletWindow = {
+        nacl,
+        location: { href: "https://cyfur-game-mu.vercel.app/?screen=home", assign(url) { assignedUrl = url; } },
+        localStorage: {
+            getItem(key) { return storage.get(key) ?? null; },
+            setItem(key, value) { storage.set(key, value); },
+            removeItem(key) { storage.delete(key); }
+        },
+        history: {
+            replaceState(_state, _title, href) { walletWindow.location.href = href; }
+        }
+    };
+
+    startPhantomMobileConnect(walletWindow, "mainnet-beta");
+    const connectUrl = new URL(assignedUrl);
+    assert.equal(connectUrl.origin, "https://phantom.com");
+    assert.equal(connectUrl.pathname, "/ul/v1/connect");
+    assert.equal(connectUrl.searchParams.get("cluster"), "mainnet-beta");
+    const pendingState = JSON.parse(storage.get("fluxgrid.phantom.deeplink.v1"));
+    const phantomKeys = nacl.box.keyPair();
+    const sharedSecret = nacl.box.before(
+        decodeWalletBytes(connectUrl.searchParams.get("dapp_encryption_public_key")),
+        phantomKeys.secretKey
+    );
+    const connectNonce = nacl.randomBytes(nacl.box.nonceLength);
+    const connectData = nacl.box.after(
+        new TextEncoder().encode(JSON.stringify({
+            public_key: "mobile-wallet-address",
+            session: "phantom-session-token"
+        })),
+        connectNonce,
+        sharedSecret
+    );
+    const connectCallback = new URL(connectUrl.searchParams.get("redirect_link"));
+    connectCallback.searchParams.set("phantom_encryption_public_key", encodeWalletBytes(phantomKeys.publicKey));
+    connectCallback.searchParams.set("nonce", encodeWalletBytes(connectNonce));
+    connectCallback.searchParams.set("data", encodeWalletBytes(connectData));
+    walletWindow.location.href = connectCallback.toString();
+
+    const callback = readPhantomMobileCallback(walletWindow);
+    const decrypted = decryptPhantomMobileResponse(walletWindow, pendingState, callback.response, true);
+    assert.equal(decrypted.data.public_key, "mobile-wallet-address");
+    assert.equal(decrypted.data.session, "phantom-session-token");
+    savePhantomMobileSession(walletWindow, pendingState, {
+        walletAddress: decrypted.data.public_key,
+        session: decrypted.data.session,
+        sharedSecret: decrypted.sharedSecret,
+        phantomPublicKey: decrypted.phantomPublicKey
+    });
+    const connection = await connectPhantom(walletWindow);
+    assert.equal(connection.publicKey, "mobile-wallet-address");
+    assert.equal(getConnectedPhantomWallet(walletWindow).provider, connection.provider);
+
+    const signRequest = connection.provider.signMessage(new TextEncoder().encode("FluxGrid ownership challenge"));
+    void signRequest;
+    const signUrl = new URL(assignedUrl);
+    assert.equal(signUrl.pathname, "/ul/v1/signMessage");
+    const signPayload = nacl.box.open.after(
+        decodeWalletBytes(signUrl.searchParams.get("payload")),
+        decodeWalletBytes(signUrl.searchParams.get("nonce")),
+        sharedSecret
+    );
+    const parsedPayload = JSON.parse(new TextDecoder().decode(signPayload));
+    assert.equal(
+        new TextDecoder().decode(decodeWalletBytes(parsedPayload.message)),
+        "FluxGrid ownership challenge"
+    );
+    assert.equal(parsedPayload.session, "phantom-session-token");
+    assert.equal(JSON.parse(storage.get("fluxgrid.phantom.deeplink.v1")).action, "wallet-link-sign");
 });
 
 test("mobile browser detection recognizes phones and touch-enabled iPads", () => {

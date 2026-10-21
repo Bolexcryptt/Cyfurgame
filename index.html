@@ -14,6 +14,7 @@
             }
         }
     </script>
+    <script src="vendor/tweetnacl.min.js"></script>
     <script type="module" src="levels.js"></script>
     <script type="module" src="app.js"></script>
     <script type="module" src="script.js"></script>
@@ -128,6 +129,11 @@
                             <small id="wallet-balance-state">CREDITS · NOT VERIFIED</small>
                             <button id="wallet-balance-refresh" class="wallet-refresh" type="button">REFRESH BALANCE</button>
                         </div>
+                        <div class="wallet-data-panel wallet-player-address-panel" hidden>
+                            <span class="wallet-field-label">WALLET LINKED TO THIS GAME ACCOUNT</span>
+                            <code id="wallet-player-address">No wallet linked</code>
+                        </div>
+                        <p id="wallet-player-state" class="wallet-player-state" aria-live="polite">PHANTOM NOT CONNECTED</p>
                         <button id="fund-account-button" class="button button-primary wallet-fund-button" type="button" aria-controls="wallet-api-status">CONNECT SOLANA WALLET <span>→</span></button>
                     </div>
                     <div class="wallet-home-details">
@@ -144,7 +150,6 @@
                             <span>DEPOSIT STATUS</span><b id="wallet-status-value">DISABLED</b>
                         </div>
                         <p id="wallet-api-status" class="wallet-api-status" tabindex="-1" role="status" aria-live="polite">Wallet linking and deposits are disabled until the owner-controlled treasury and backend verification are configured. Do not send CYFUR.</p>
-                        <a id="wallet-open-phantom" class="button button-quiet wallet-phantom-open" hidden>OPEN THIS PAGE IN PHANTOM</a>
                         <p class="wallet-transfer-instructions">When the backend shows READY, enter an amount and approve the transfer in your connected wallet. FluxGrid verifies the linked sender, exact mint, treasury recipient, finalized status, and duplicate signature before crediting. Your wallet pays the Solana network fee. For an 8-decimal mint, transfers below 0.0001 CYFUR convert to zero credits and are rejected.</p>
                         <form id="wallet-transfer-form" class="wallet-transfer-form">
                             <label class="wallet-field-label" for="wallet-transfer-amount">CYFUR AMOUNT</label>

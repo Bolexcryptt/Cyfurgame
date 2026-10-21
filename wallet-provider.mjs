@@ -1,6 +1,188 @@
 const walletStandardRegistries = new WeakMap();
 const walletStandardAccounts = new WeakMap();
 const walletStandardAdapters = new WeakMap();
+const walletConnections = new WeakMap();
+const connectionListeners = new WeakSet();
+const mobileProviders = new WeakMap();
+const mobileStateKey = "fluxgrid.phantom.deeplink.v1";
+
+function getNacl(walletWindow) {
+    const nacl = walletWindow.nacl;
+    if (!nacl?.box?.keyPair || !nacl.box.open?.after) {
+        throw new Error("Secure Phantom mobile signing is unavailable. Reload the page and try again.");
+    }
+    return nacl;
+}
+
+function encodeBase58(bytes) {
+    const alphabet = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+    let value = 0n;
+    for (const byte of bytes) value = value * 256n + BigInt(byte);
+    let encoded = "";
+    while (value > 0n) {
+        encoded = alphabet[Number(value % 58n)] + encoded;
+        value /= 58n;
+    }
+    for (const byte of bytes) {
+        if (byte !== 0) break;
+        encoded = `1${encoded}`;
+    }
+    return encoded || "1";
+}
+
+function decodeBase58(value) {
+    const alphabet = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+    let number = 0n;
+    for (const character of value) {
+        const digit = alphabet.indexOf(character);
+        if (digit < 0) throw new Error("Phantom returned invalid encoded response data.");
+        number = number * 58n + BigInt(digit);
+    }
+    const bytes = [];
+    while (number > 0n) {
+        bytes.unshift(Number(number & 0xffn));
+        number >>= 8n;
+    }
+    for (const character of value) {
+        if (character !== "1") break;
+        bytes.unshift(0);
+    }
+    return Uint8Array.from(bytes);
+}
+
+function bytesToBase64(bytes) {
+    let binary = "";
+    for (const byte of bytes) binary += String.fromCharCode(byte);
+    return btoa(binary);
+}
+
+function base64ToBytes(value) {
+    return Uint8Array.from(atob(value), (character) => character.charCodeAt(0));
+}
+
+function readMobileState(walletWindow) {
+    const storage = walletWindow.localStorage;
+    if (!storage || typeof storage.getItem !== "function") return null;
+    const serialized = storage.getItem(mobileStateKey);
+    if (!serialized) return null;
+    try {
+        return JSON.parse(serialized);
+    } catch (error) {
+        storage.removeItem(mobileStateKey);
+        console.error("Stored Phantom deeplink state could not be read.", error);
+        return null;
+    }
+}
+
+function writeMobileState(walletWindow, state) {
+    walletWindow.localStorage.setItem(mobileStateKey, JSON.stringify(state));
+}
+
+function buildCallbackUrl(walletWindow, state) {
+    const callback = new URL(walletWindow.location.href);
+    callback.searchParams.set("phantom_callback", "1");
+    callback.searchParams.set("phantom_state", state);
+    return callback.toString();
+}
+
+function startPhantomMessageSign(walletWindow, { challenge, session, phantomPublicKey, sharedSecret, walletAddress }) {
+    const nacl = getNacl(walletWindow);
+    const stored = readMobileState(walletWindow);
+    if (!stored?.state || !sharedSecret) throw new Error("Reconnect Phantom before signing.");
+    const nonce = nacl.randomBytes(nacl.box.nonceLength);
+    const payload = nacl.box.after(
+        new TextEncoder().encode(JSON.stringify({
+            message: encodeBase58(new TextEncoder().encode(challenge)),
+            session,
+            display: "utf8"
+        })),
+        nonce,
+        base64ToBytes(sharedSecret)
+    );
+    const callbackUrl = buildCallbackUrl(walletWindow, stored.state);
+    writeMobileState(walletWindow, {
+        ...stored,
+        action: "wallet-link-sign",
+        challenge,
+        walletAddress
+    });
+    const url = new URL("https://phantom.com/ul/v1/signMessage");
+    url.searchParams.set("dapp_encryption_public_key", encodeBase58(base64ToBytes(stored.publicKey)));
+    url.searchParams.set("nonce", encodeBase58(nonce));
+    url.searchParams.set("redirect_link", callbackUrl);
+    url.searchParams.set("payload", encodeBase58(payload));
+    walletWindow.location.assign(url.toString());
+}
+
+function startPhantomTransactionSign(walletWindow, transaction, options = {}) {
+    const nacl = getNacl(walletWindow);
+    const stored = readMobileState(walletWindow);
+    if (!stored?.session || !stored?.sharedSecret) throw new Error("Connect Phantom before approving a deposit.");
+    const nonce = nacl.randomBytes(nacl.box.nonceLength);
+    const serialized = transaction.serialize({
+        requireAllSignatures: false,
+        verifySignatures: false
+    });
+    const payload = nacl.box.after(
+        new TextEncoder().encode(JSON.stringify({
+            transaction: encodeBase58(serialized),
+            session: stored.session
+        })),
+        nonce,
+        base64ToBytes(stored.sharedSecret)
+    );
+    const callbackUrl = buildCallbackUrl(walletWindow, stored.state);
+    writeMobileState(walletWindow, {
+        ...stored,
+        action: "deposit-sign",
+        network: options.chain ?? "mainnet-beta"
+    });
+    const url = new URL("https://phantom.com/ul/v1/signTransaction");
+    url.searchParams.set("dapp_encryption_public_key", encodeBase58(base64ToBytes(stored.publicKey)));
+    url.searchParams.set("nonce", encodeBase58(nonce));
+    url.searchParams.set("redirect_link", callbackUrl);
+    url.searchParams.set("payload", encodeBase58(payload));
+    walletWindow.location.assign(url.toString());
+}
+
+function createMobileProvider(walletWindow, stored) {
+    const existing = mobileProviders.get(walletWindow);
+    if (existing) return existing;
+    const provider = {
+        isPhantom: true,
+        isMobileDeepLink: true,
+        isConnected: true,
+        connect() {
+            return Promise.resolve({ publicKey: { toString: () => stored.walletAddress } });
+        },
+        signMessage(message) {
+            const challenge = new TextDecoder().decode(message);
+            startPhantomMessageSign(walletWindow, {
+                challenge,
+                session: stored.session,
+                phantomPublicKey: stored.phantomPublicKey,
+                sharedSecret: stored.sharedSecret,
+                walletAddress: stored.walletAddress
+            });
+            return new Promise(() => {});
+        },
+        sendTransaction(transaction, _connection, options) {
+            startPhantomTransactionSign(walletWindow, transaction, options);
+            return new Promise(() => {});
+        }
+    };
+    mobileProviders.set(walletWindow, provider);
+    return provider;
+}
+
+function getWalletConnection(walletWindow) {
+    let connection = walletConnections.get(walletWindow);
+    if (!connection) {
+        connection = { provider: null, publicKey: null };
+        walletConnections.set(walletWindow, connection);
+    }
+    return connection;
+}
 
 function getWalletStandardWallets(walletWindow) {
     const existing = walletStandardRegistries.get(walletWindow);
@@ -88,23 +270,9 @@ function getWalletStandardAdapter(wallet) {
     return adapter;
 }
 
-function encodeBase58(bytes) {
-    const alphabet = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
-    let value = 0n;
-    for (const byte of bytes) value = value * 256n + BigInt(byte);
-    let encoded = "";
-    while (value > 0n) {
-        encoded = alphabet[Number(value % 58n)] + encoded;
-        value /= 58n;
-    }
-    for (const byte of bytes) {
-        if (byte !== 0) break;
-        encoded = `1${encoded}`;
-    }
-    return encoded || "1";
-}
-
 export function getPhantomProvider(walletWindow = window) {
+    const connection = getWalletConnection(walletWindow);
+    if (connection.provider) return connection.provider;
     const injected = walletWindow.phantom?.solana;
     if (injected && typeof injected.connect === "function" &&
         typeof injected.signMessage === "function") return injected;
@@ -115,7 +283,170 @@ export function getPhantomProvider(walletWindow = window) {
         candidate.name === "Phantom" &&
         candidate.chains?.some((chain) => chain.startsWith("solana:"))
     );
-    return wallet ? getWalletStandardAdapter(wallet) : null;
+    if (wallet) return getWalletStandardAdapter(wallet);
+    const mobileSession = readMobileState(walletWindow);
+    return mobileSession?.session && mobileSession?.sharedSecret && mobileSession?.walletAddress
+        ? createMobileProvider(walletWindow, mobileSession)
+        : null;
+}
+
+export function getConnectedPhantomWallet(walletWindow = window) {
+    const connection = getWalletConnection(walletWindow);
+    return connection.provider && connection.publicKey
+        ? { provider: connection.provider, publicKey: connection.publicKey }
+        : null;
+}
+
+export function disconnectPhantom(walletWindow = window, provider = null) {
+    const connection = getWalletConnection(walletWindow);
+    if (!provider || connection.provider === provider) {
+        connection.provider = null;
+        connection.publicKey = null;
+    }
+}
+
+export async function connectPhantom(walletWindow = window, timeoutMs = 2000) {
+    const connection = getWalletConnection(walletWindow);
+    const provider = connection.provider ?? getPhantomProvider(walletWindow) ??
+        await waitForPhantomProvider(walletWindow, timeoutMs);
+    if (!provider || typeof provider.connect !== "function") return null;
+    if (connection.provider === provider && connection.publicKey &&
+        provider.isConnected !== false) {
+        return { provider, publicKey: connection.publicKey };
+    }
+    const result = await provider.connect();
+    const publicKey = result.publicKey?.toString();
+    if (!publicKey) throw new Error("Phantom did not return a connected Solana address.");
+    connection.provider = provider;
+    connection.publicKey = publicKey;
+    if (typeof provider.on === "function" && !connectionListeners.has(provider)) {
+        connectionListeners.add(provider);
+        provider.on("disconnect", () => disconnectPhantom(walletWindow, provider));
+        provider.on("accountChanged", (account) => {
+            const updatedAddress = account?.toString();
+            if (updatedAddress) connection.publicKey = updatedAddress;
+            else disconnectPhantom(walletWindow, provider);
+        });
+    }
+    return { provider, publicKey };
+}
+
+export function startPhantomMobileConnect(walletWindow = window, cluster = "mainnet-beta") {
+    const target = new URL(walletWindow.location.href);
+    if (target.protocol !== "https:") {
+        throw new Error("Phantom mobile connection requires the secure production HTTPS site.");
+    }
+    const nacl = getNacl(walletWindow);
+    const keyPair = nacl.box.keyPair();
+    const stateBytes = nacl.randomBytes(16);
+    const state = Array.from(stateBytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
+    writeMobileState(walletWindow, {
+        version: 1,
+        state,
+        action: "connect",
+        publicKey: bytesToBase64(keyPair.publicKey),
+        secretKey: bytesToBase64(keyPair.secretKey)
+    });
+    const url = new URL("https://phantom.com/ul/v1/connect");
+    url.searchParams.set("app_url", target.origin);
+    url.searchParams.set("dapp_encryption_public_key", encodeBase58(keyPair.publicKey));
+    url.searchParams.set("redirect_link", buildCallbackUrl(walletWindow, state));
+    if (cluster === "devnet" || cluster === "testnet" || cluster === "mainnet-beta") {
+        url.searchParams.set("cluster", cluster);
+    }
+    walletWindow.location.assign(url.toString());
+}
+
+export function readPhantomMobileCallback(walletWindow = window) {
+    const url = new URL(walletWindow.location.href);
+    if (url.searchParams.get("phantom_callback") !== "1") return null;
+    const response = Object.fromEntries(url.searchParams.entries());
+    const state = readMobileState(walletWindow);
+    const callbackState = url.searchParams.get("phantom_state");
+    for (const key of ["phantom_callback", "phantom_state", "data", "nonce",
+        "phantom_encryption_public_key", "errorCode", "errorMessage"]) {
+        url.searchParams.delete(key);
+    }
+    walletWindow.history.replaceState({}, "", url.toString());
+    if (!state || state.state !== callbackState) {
+        walletWindow.localStorage.removeItem(mobileStateKey);
+        return { error: new Error("Phantom returned to FluxGrid with an invalid connection state.") };
+    }
+    return { state, response };
+}
+
+export function decryptPhantomMobileResponse(walletWindow, state, response, isConnect = false) {
+    const nacl = getNacl(walletWindow);
+    if (response.errorCode) {
+        throw new Error(response.errorMessage || `Phantom rejected the request (${response.errorCode}).`);
+    }
+    if (!response.data || !response.nonce) {
+        throw new Error("Phantom returned an incomplete encrypted response.");
+    }
+    let sharedSecret;
+    let phantomPublicKey = state.phantomPublicKey;
+    if (isConnect) {
+        phantomPublicKey = response.phantom_encryption_public_key;
+        if (!phantomPublicKey) throw new Error("Phantom did not return its encryption key.");
+        sharedSecret = nacl.box.before(
+            decodeBase58(phantomPublicKey),
+            base64ToBytes(state.secretKey)
+        );
+    } else {
+        if (!state.sharedSecret) throw new Error("The Phantom encrypted session is missing.");
+        sharedSecret = base64ToBytes(state.sharedSecret);
+    }
+    const plaintext = nacl.box.open.after(
+        decodeBase58(response.data),
+        decodeBase58(response.nonce),
+        sharedSecret
+    );
+    if (!plaintext) throw new Error("Phantom response could not be authenticated.");
+    return {
+        data: JSON.parse(new TextDecoder().decode(plaintext)),
+        sharedSecret: bytesToBase64(sharedSecret),
+        phantomPublicKey
+    };
+}
+
+export function savePhantomMobileSession(walletWindow, state, sessionData) {
+    writeMobileState(walletWindow, {
+        ...state,
+        action: "connected",
+        walletAddress: sessionData.walletAddress,
+        session: sessionData.session,
+        sharedSecret: sessionData.sharedSecret,
+        phantomPublicKey: sessionData.phantomPublicKey,
+        secretKey: undefined
+    });
+    mobileProviders.delete(walletWindow);
+    const connection = getWalletConnection(walletWindow);
+    connection.provider = null;
+    connection.publicKey = null;
+}
+
+export function clearPhantomMobileSession(walletWindow = window) {
+    walletWindow.localStorage.removeItem(mobileStateKey);
+    mobileProviders.delete(walletWindow);
+    disconnectPhantom(walletWindow);
+}
+
+export function setPhantomMobilePendingAction(walletWindow, patch) {
+    const state = readMobileState(walletWindow);
+    if (!state?.session || !state?.sharedSecret) throw new Error("Connect Phantom before this action.");
+    writeMobileState(walletWindow, { ...state, ...patch });
+}
+
+export function encodeWalletBytes(bytes) {
+    return encodeBase58(bytes);
+}
+
+export function decodeWalletBytes(value) {
+    return decodeBase58(value);
+}
+
+export function bytesToWalletBase64(bytes) {
+    return bytesToBase64(bytes);
 }
 
 export async function waitForPhantomProvider(walletWindow = window, timeoutMs = 2000) {
