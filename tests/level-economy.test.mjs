@@ -3,7 +3,7 @@ import { generateKeyPairSync, sign as signMessage } from "node:crypto";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 import { createRequire } from "node:module";
-import { createPhantomBrowseUrl, getPhantomProvider, isMobileBrowser } from "../wallet-provider.mjs";
+import { createPhantomBrowseUrl, getPhantomProvider, isMobileBrowser, waitForPhantomProvider } from "../wallet-provider.mjs";
 import { calculateSolveTimeMilliseconds, claimLevelCompletion, CYFUR_CREDITS_PER_TOKEN, evaluateLevelStars, getLevelEconomy, getLevelStarTimeTargets, levels } from "../levels.js";
 
 const require = createRequire(import.meta.url);
@@ -32,10 +32,68 @@ function encodeBase58(bytes) {
 }
 
 test("Phantom provider detection supports current and legacy injection without accepting other wallets", () => {
-    const currentProvider = { isPhantom: true };
+    const currentProvider = { isPhantom: true, connect() {}, signMessage() {} };
     assert.equal(getPhantomProvider({ phantom: { solana: currentProvider } }), currentProvider);
     assert.equal(getPhantomProvider({ solana: currentProvider }), currentProvider);
-    assert.equal(getPhantomProvider({ solana: { isPhantom: false } }), null);
+    assert.equal(getPhantomProvider({ solana: { isPhantom: false, connect() {}, signMessage() {} } }), null);
+});
+
+test("Phantom Wallet Standard registration supports connect, ownership signing, and transaction approval", async () => {
+    const events = new EventTarget();
+    const account = { address: "wallet-address", chains: ["solana:mainnet"] };
+    const signatureBytes = Uint8Array.from([1, 2, 3]);
+    let connected = false;
+    let messageSigned = false;
+    let transactionApproved = false;
+    const wallet = {
+        name: "Phantom",
+        chains: ["solana:mainnet"],
+        features: {
+            "standard:connect": {
+                async connect() { connected = true; return { accounts: [account] }; }
+            },
+            "solana:signMessage": {
+                async signMessage(input) {
+                    messageSigned = input.account === account;
+                    return [{ signature: signatureBytes }];
+                }
+            },
+            "solana:signAndSendTransaction": {
+                async signAndSendTransaction(input) {
+                    transactionApproved = input.account === account &&
+                        input.chain === "solana:mainnet" &&
+                        input.transaction[0] === 7;
+                    return [{ signature: signatureBytes }];
+                }
+            }
+        }
+    };
+    events.addEventListener("wallet-standard:app-ready", (event) => {
+        event.detail.register(wallet);
+    });
+
+    const provider = getPhantomProvider(events);
+    assert.ok(provider);
+    assert.equal((await provider.connect()).publicKey.toString(), account.address);
+    assert.equal((await provider.signMessage(new Uint8Array([9]))).signature, signatureBytes);
+    const result = await provider.sendTransaction(
+        { serialize: () => Uint8Array.from([7]) },
+        {},
+        { chain: "mainnet-beta" }
+    );
+    assert.equal(result.signature, encodeBase58(signatureBytes));
+    assert.equal(connected, true);
+    assert.equal(messageSigned, true);
+    assert.equal(transactionApproved, true);
+});
+
+test("Phantom provider discovery waits briefly for delayed extension injection", async () => {
+    const target = {};
+    setTimeout(() => {
+        target.phantom = { solana: { isPhantom: true, connect() {}, signMessage() {} } };
+    }, 20);
+    const provider = await waitForPhantomProvider(target, 200);
+    assert.equal(provider, target.phantom.solana);
 });
 
 test("mobile browser detection recognizes phones and touch-enabled iPads", () => {

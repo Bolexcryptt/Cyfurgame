@@ -1,6 +1,6 @@
 import { CYFUR_CREDITS_PER_TOKEN, getLevelEconomy, levels, claimLevelCompletion } from "./levels.js";
 import { supabase, supabaseConfigured } from "./supabase.js";
-import { createPhantomBrowseUrl, getPhantomProvider, isMobileBrowser } from "./wallet-provider.mjs";
+import { createPhantomBrowseUrl, isMobileBrowser, waitForPhantomProvider } from "./wallet-provider.mjs";
 
 const storageKey = "fluxgrid.player.v1";
 const screens = [
@@ -770,7 +770,7 @@ async function sendCyfurDeposit() {
         setWalletMessage("The server has not marked deposits READY. No token transfer was started.", "disabled");
         return;
     }
-    const provider = getPhantomProvider(window);
+    const provider = await waitForPhantomProvider(window);
     if (!provider || typeof provider.sendTransaction !== "function") {
         showPhantomUnavailableMessage();
         return;
@@ -848,7 +848,8 @@ async function sendCyfurDeposit() {
         mainButton.disabled = true;
         setWalletMessage("Review the CYFUR amount and recipient in Phantom, then approve the transfer. FluxGrid will verify it before crediting.", "pending");
         const result = await provider.sendTransaction(transaction, connection, {
-            preflightCommitment: "confirmed"
+            preflightCommitment: "confirmed",
+            ...(provider.isWalletStandard ? { chain: config.network } : {})
         });
         signature = typeof result === "string" ? result : result.signature;
         if (!signature) throw new Error("Phantom did not return a transaction signature.");
@@ -875,7 +876,7 @@ async function connectSolanaWallet() {
         setWalletMessage("Supabase authentication is unavailable. No wallet was linked.", "error");
         return;
     }
-    const walletProvider = getPhantomProvider(window);
+    const walletProvider = await waitForPhantomProvider(window);
     if (!walletProvider || typeof walletProvider.connect !== "function" ||
         typeof walletProvider.signMessage !== "function") {
         showPhantomUnavailableMessage();
