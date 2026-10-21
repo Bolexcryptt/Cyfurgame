@@ -179,7 +179,7 @@ function makeLevel(number, usedLayouts) {
 
 export function getLevelEconomy(levelNumber) {
     if (!Number.isInteger(levelNumber) || levelNumber < 1 || levelNumber > 99) {
-        throw new Error(`Level ${levelNumber} is outside the FluxGrid campaign.`);
+        throw new Error(`Level ${levelNumber} is outside the RelicGrid campaign.`);
     }
     const entryCostCredits = Math.floor(100 * Math.pow(1.08, levelNumber - 1));
     return {

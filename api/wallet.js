@@ -97,7 +97,7 @@ module.exports = async function wallet(request, response) {
             disabledReason: depositsEnabled ? null : "direct_treasury_setup_incomplete",
             readinessChecks,
             disabledMessage: depositsEnabled
-                ? "Deposit verification is ready. Approve a CYFUR transfer from your linked Solana wallet; FluxGrid will verify the finalized transaction before crediting."
+                ? "Deposit verification is ready. Approve a CYFUR transfer from your linked Solana wallet; RelicGrid will verify the finalized transaction before crediting."
                 : `${readinessChecks.join(" ")} Do not send CYFUR until status is READY.`,
             exchangeRateCreditsPerToken: CYFUR_CREDITS_PER_TOKEN,
             treasuryAddress,

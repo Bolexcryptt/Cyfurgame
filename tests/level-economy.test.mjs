@@ -192,7 +192,7 @@ test("Phantom mobile deeplink encrypts connect and message-sign requests and res
     assert.equal(connection.publicKey, "mobile-wallet-address");
     assert.equal(getConnectedPhantomWallet(walletWindow).provider, connection.provider);
 
-    const signRequest = connection.provider.signMessage(new TextEncoder().encode("FluxGrid ownership challenge"));
+    const signRequest = connection.provider.signMessage(new TextEncoder().encode("RelicGrid ownership challenge"));
     void signRequest;
     const signUrl = new URL(assignedUrl);
     assert.equal(signUrl.pathname, "/ul/v1/signMessage");
@@ -204,7 +204,7 @@ test("Phantom mobile deeplink encrypts connect and message-sign requests and res
     const parsedPayload = JSON.parse(new TextDecoder().decode(signPayload));
     assert.equal(
         new TextDecoder().decode(decodeWalletBytes(parsedPayload.message)),
-        "FluxGrid ownership challenge"
+        "RelicGrid ownership challenge"
     );
     assert.equal(parsedPayload.session, "phantom-session-token");
     assert.equal(JSON.parse(storage.get("fluxgrid.phantom.deeplink.v1")).action, "wallet-link-sign");
@@ -328,6 +328,19 @@ test("free gameplay testing does not request paid level entry or change wallet c
     );
 });
 
+test("RelicGrid branding is used in the game and hidden scenes stop rendering", () => {
+    const html = readFileSync(new URL("../index.html", import.meta.url), "utf8");
+    assert.match(html, /<title>RelicGrid/);
+    assert.doesNotMatch(html, /FluxGrid/i);
+
+    const scene = readFileSync(new URL("../script.js", import.meta.url), "utf8");
+    assert.match(scene, /antialias: !mobileQuality/);
+    assert.match(scene, /mobileQuality \? 0\.75 : 1\.35/);
+    assert.match(scene, /configureQualityLight/);
+    assert.match(scene, /if \(document\.hidden \|\| canvas\.clientWidth === 0 \|\| canvas\.clientHeight === 0\) return;/);
+    assert.match(scene, /cancelAnimationFrame\(renderRequest\)/);
+});
+
 test("deposit conversion uses precise integer arithmetic and requires explicit rounding", () => {
     assert.equal(getDepositCreditAmount("100000000", 8, "reject_fraction"), "10000");
     assert.equal(getDepositCreditAmount("10000", 8, "reject_fraction"), "1");
@@ -371,7 +384,7 @@ test("direct treasury migration binds deposits to linked wallets and leaves paym
 test("wallet ownership proof verifies Ed25519 signatures and rejects altered messages", () => {
     const { publicKey, privateKey } = generateKeyPairSync("ed25519");
     const walletAddress = encodeBase58(publicKey.export({ format: "der", type: "spki" }).subarray(-32));
-    const challenge = "FluxGrid Solana wallet ownership proof\nNonce: test";
+    const challenge = "RelicGrid Solana wallet ownership proof\nNonce: test";
     const signature = signMessage(null, Buffer.from(challenge), privateKey).toString("base64");
     assert.equal(verifyWalletSignature(walletAddress, challenge, signature), true);
     assert.equal(verifyWalletSignature(walletAddress, `${challenge}\nchanged`, signature), false);

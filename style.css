@@ -451,7 +451,7 @@ button { -webkit-tap-highlight-color: transparent; }
     min-height: 100svh;
     background: radial-gradient(ellipse at 52% 0, #122231 0, #080d15 42%, #060a10 75%);
 }
-.home-screen { position: relative; isolation: isolate; }
+.home-screen { position: relative; isolation: isolate; overflow-x: clip; }
 .home-screen::before {
     position: absolute;
     z-index: 0;
@@ -790,7 +790,7 @@ button { -webkit-tap-highlight-color: transparent; }
     transition: transform .65s cubic-bezier(.2,.7,.2,1);
 }
 .button:hover::after { transform: rotate(24deg) translateX(780%); }
-.button-primary { animation: focus-breathe 3.8s ease-in-out infinite; }
+.button-primary { animation: none; }
 .profile-chip { transition: transform .2s ease, border-color .2s ease, box-shadow .2s ease; }
 .profile-chip:hover { transform: translateY(-2px); border-color: #80e8ef7a; box-shadow: 0 8px 22px #0005, 0 0 18px #49dced14; }
 .profile-avatar { transition: transform .3s ease, box-shadow .3s ease; }
@@ -1568,6 +1568,47 @@ button { -webkit-tap-highlight-color: transparent; }
     .level-state { grid-column: 3; grid-row: 1 / span 2; min-width: 60px; max-width: 78px; font-size: 6px; line-height: 1.4; }
     .level-detail { grid-column: 2; grid-row: 1; }
     .level-detail small { font-size: 7px; }
+}
+
+.brand {
+    gap: 12px;
+    font-family: "Segoe UI", Arial, sans-serif;
+    font-size: 13px;
+    font-weight: 800;
+    letter-spacing: .16em;
+}
+.brand img { width: 52px; height: 38px; }
+.site-header { min-height: 80px; }
+.home-content { width: min(100% - 48px, 1120px); padding-top: 32px; }
+.hero-panel {
+    min-height: 360px;
+    border-radius: 12px;
+    background:
+        radial-gradient(ellipse at 76% 50%, #39c6dc14, transparent 42%),
+        linear-gradient(112deg, #132332f5 0%, #0b1723f2 62%, #0a131df0 100%);
+}
+.hero-copy h1 { max-width: 560px; line-height: 1.02; }
+.hero-copy p { max-width: 440px; font-size: 15px; }
+.hero-mission-actions #continue-game { min-height: 54px; border-radius: 7px; }
+.section-heading { align-items: center; }
+.campaign-progress-card { min-width: 188px; }
+.level-card { border-radius: 8px; }
+.wallet-home-card { border-radius: 12px; }
+
+@media (max-width: 680px) {
+    .site-header { min-height: 68px; gap: 8px; padding-inline: 12px; }
+    .brand { gap: 7px; font-size: 10px; letter-spacing: .12em; }
+    .brand img { width: 42px; height: 32px; }
+    .header-actions { gap: 6px; }
+    .header-actions > .button { min-height: 34px; padding-inline: 9px; font-size: 7px; }
+    .profile-chip { min-width: 0; gap: 6px; padding: 5px 7px; }
+    .profile-avatar { width: 29px; height: 29px; }
+    .home-content { width: calc(100% - 24px); padding-top: 14px; }
+    .hero-panel { min-height: 410px; border-radius: 10px; }
+    .hero-copy p { max-width: 310px; font-size: 13px; }
+    .hero-mission-actions #continue-game { min-height: 50px; }
+    .section-heading { align-items: stretch; }
+    .campaign-progress-card { min-width: 0; }
 }
 
 .hero-mission-actions {

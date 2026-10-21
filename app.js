@@ -61,7 +61,7 @@ function readPlayer() {
             lastLevel: Math.min(99, Math.max(1, Number(parsed.lastLevel) || 1))
         };
     } catch (error) {
-        console.warn("Saved FluxGrid profile could not be read; starting a fresh local profile.", error);
+        console.warn("Saved RelicGrid profile could not be read; starting a fresh local profile.", error);
         return {
             name: "",
             playerId: "",
@@ -153,7 +153,7 @@ async function initializeBackend() {
         }
 
         await refreshOwnProgress();
-        backendStatus = "Connected to the FluxGrid leaderboard.";
+        backendStatus = "Connected to the RelicGrid leaderboard.";
         savePlayer();
         renderProfile();
         return true;
@@ -548,7 +548,7 @@ function showPhantomUnavailableMessage() {
     if (isMobileBrowser()) {
         if (window.location.protocol === "https:") {
             try {
-                setWalletMessage("Opening Phantom's secure connection request. Approve wallet access; FluxGrid will return to this browser without sending tokens.", "pending");
+                setWalletMessage("Opening Phantom's secure connection request. Approve wallet access; RelicGrid will return to this browser without sending tokens.", "pending");
                 startPhantomMobileConnect(window, walletStatusSnapshot?.network);
             } catch (error) {
                 setWalletMessage(`Phantom mobile connection could not start. ${error.message}`, "error");
@@ -557,7 +557,7 @@ function showPhantomUnavailableMessage() {
             setWalletMessage("Phantom mobile connection requires the secure production HTTPS site.", "error");
         }
     } else {
-        setWalletMessage("Phantom is not available to this page. Open FluxGrid in a normal Chrome or Edge tab where the Phantom extension is installed and allowed for this site—not an embedded preview—then reload. No transfer was made.", "error");
+        setWalletMessage("Phantom is not available to this page. Open RelicGrid in a normal Chrome or Edge tab where the Phantom extension is installed and allowed for this site—not an embedded preview—then reload. No transfer was made.", "error");
     }
 }
 
@@ -668,7 +668,7 @@ async function refreshWallet() {
                 return;
             }
             if (result.error === "authentication_required") {
-                setWalletMessage("Your FluxGrid identity could not be authenticated by the wallet API.", "error");
+                setWalletMessage("Your RelicGrid identity could not be authenticated by the wallet API.", "error");
                 return;
             }
             if (response.status === 404 || response.status === 501) {
@@ -871,7 +871,7 @@ async function sendCyfurDeposit() {
         const connection = new Connection(clusterApiUrl(config.network), "confirmed");
         transferButton.disabled = true;
         mainButton.disabled = true;
-        setWalletMessage("Review the CYFUR amount and recipient in Phantom, then approve the transfer. FluxGrid will verify it before crediting.", "pending");
+        setWalletMessage("Review the CYFUR amount and recipient in Phantom, then approve the transfer. RelicGrid will verify it before crediting.", "pending");
         const result = await provider.sendTransaction(transaction, connection, {
             preflightCommitment: "confirmed",
             ...(provider.isWalletStandard ? { chain: config.network } : {})
@@ -949,7 +949,7 @@ async function connectSolanaWallet() {
             throw new Error(challengeResult.message || challengeResult.error || `Wallet proof request failed (${challengeResponse.status}).`);
         }
         button.textContent = "SIGN IN PHANTOM…";
-        setWalletMessage("Approve the FluxGrid ownership message in Phantom. It proves wallet ownership and does not send tokens or pay a network fee.", "pending");
+        setWalletMessage("Approve the RelicGrid ownership message in Phantom. It proves wallet ownership and does not send tokens or pay a network fee.", "pending");
         const signed = await withWalletTimeout(walletProvider.signMessage(
             new TextEncoder().encode(challengeResult.challenge),
             "utf8"
@@ -1164,7 +1164,7 @@ async function handlePhantomMobileCallback(callback) {
             document.getElementById("deposit-signature").value = broadcastSignature;
             setWalletMessage(`Transaction was submitted, but credit verification did not complete. Keep the signature and use VERIFY & CREDIT. ${error.message}`, "error");
         } else {
-            setWalletMessage(`Phantom returned to FluxGrid, but the requested action did not complete. ${error.message}`, "error");
+            setWalletMessage(`Phantom returned to RelicGrid, but the requested action did not complete. ${error.message}`, "error");
         }
     }
 }
@@ -1512,7 +1512,7 @@ async function saveLevelCompletion(number) {
             });
             if (error) throw error;
             await refreshOwnProgress();
-            backendStatus = "Connected to the FluxGrid leaderboard.";
+            backendStatus = "Connected to the RelicGrid leaderboard.";
         } catch (error) {
             console.error("Level completion could not be saved to Supabase.", error);
             if (!player.completedLevels.includes(number)) player.completedLevels.push(number);
@@ -1575,7 +1575,7 @@ async function saveWalletLevelCompletion(detail) {
         : "Verified and credited by the server";
 
     await refreshOwnProgress();
-    backendStatus = "Connected to the FluxGrid leaderboard.";
+    backendStatus = "Connected to the RelicGrid leaderboard.";
     return result;
 }
 

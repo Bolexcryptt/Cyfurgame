@@ -370,7 +370,7 @@ export function readPhantomMobileCallback(walletWindow = window) {
     walletWindow.history.replaceState({}, "", url.toString());
     if (!state || state.state !== callbackState) {
         walletWindow.localStorage.removeItem(mobileStateKey);
-        return { error: new Error("Phantom returned to FluxGrid with an invalid connection state.") };
+        return { error: new Error("Phantom returned to RelicGrid with an invalid connection state.") };
     }
     return { state, response };
 }
@@ -468,7 +468,7 @@ export function isMobileBrowser(navigatorObject = navigator) {
 export function createPhantomBrowseUrl(pageUrl) {
     const target = new URL(pageUrl);
     if (target.protocol !== "https:" || target.username || target.password) {
-        throw new Error("Phantom can only open a secure HTTPS FluxGrid page.");
+        throw new Error("Phantom can only open a secure HTTPS RelicGrid page.");
     }
     target.searchParams.set("phantom_handoff", "1");
     return `https://phantom.com/ul/browse/${encodeURIComponent(target.toString())}?ref=${encodeURIComponent(target.origin)}`;

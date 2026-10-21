@@ -29,7 +29,7 @@ module.exports = async function walletLink(request, response) {
             }
             const expiresAt = new Date(Date.now() + 5 * 60 * 1000);
             const challenge = [
-                "FluxGrid Solana wallet ownership proof",
+                "RelicGrid Solana wallet ownership proof",
                 `Wallet: ${walletAddress}`,
                 `Nonce: ${randomBytes(32).toString("hex")}`,
                 `Expires: ${expiresAt.toISOString()}`

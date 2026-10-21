@@ -34,17 +34,22 @@ function startScene() {
     scene.fog = new THREE.FogExp2(0x05080d, 0.014);
 
     const camera = new THREE.PerspectiveCamera(37, 1, 0.1, 160);
+    const mobileQuality = window.innerWidth < 620;
     const renderer = new THREE.WebGLRenderer({
         canvas,
-        antialias: true,
+        antialias: !mobileQuality,
         powerPreference: "high-performance"
     });
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.35));
-    renderer.shadowMap.enabled = window.innerWidth >= 620;
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, mobileQuality ? 0.75 : 1.35));
+    renderer.shadowMap.enabled = !mobileQuality;
     renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
     renderer.toneMappingExposure = 1;
     renderer.outputColorSpace = THREE.SRGBColorSpace;
+    const configureQualityLight = (light) => {
+        light.visible = !mobileQuality;
+        return light;
+    };
 
     const composer = new EffectComposer(renderer);
     composer.addPass(new RenderPass(scene, camera));
@@ -65,13 +70,13 @@ function startScene() {
     moonLight.shadow.bias = -0.00035;
     scene.add(moonLight);
 
-    const warmLight = new THREE.PointLight(0xff7134, 17, 12, 2);
+    const warmLight = configureQualityLight(new THREE.PointLight(0xff7134, 17, 12, 2));
     warmLight.position.set(-3.8, 2.7, 1.7);
     scene.add(warmLight);
-    const magentaLight = new THREE.PointLight(colors.pink, 10, 9, 2);
+    const magentaLight = configureQualityLight(new THREE.PointLight(colors.pink, 10, 9, 2));
     magentaLight.position.set(-4.7, 1.5, -1.5);
     scene.add(magentaLight);
-    const blueLight = new THREE.PointLight(colors.blue, 15, 12, 2);
+    const blueLight = configureQualityLight(new THREE.PointLight(colors.blue, 15, 12, 2));
     blueLight.position.set(3.4, 2.2, 2.7);
     scene.add(blueLight);
     const coreLight = new THREE.PointLight(colors.cold, 8, 8, 2);
@@ -127,6 +132,7 @@ function startScene() {
     let traceStartedAt = 0;
     let levelStartedAt = null;
     let traceResult = null;
+    let renderRequest = 0;
 
     const cameraState = {
         azimuth: 0.53,
@@ -255,8 +261,7 @@ function startScene() {
         bumpMap.needsUpdate = true;
         return makeMaterial(color, 0.96, 0.015, {
             map,
-            bumpMap,
-            bumpScale: 0.11,
+            ...(!mobileQuality ? { bumpMap, bumpScale: 0.11 } : {}),
             ...extra
         });
     };
@@ -418,7 +423,7 @@ function startScene() {
             platform.add(mesh);
         });
 
-        const underglow = new THREE.PointLight(0x274867, 20, 14, 2);
+        const underglow = configureQualityLight(new THREE.PointLight(0x274867, 20, 14, 2));
         underglow.position.set(0, -1.8, 0);
         platform.add(underglow);
         createFracturedFloor();
@@ -753,7 +758,7 @@ function startScene() {
         addBox(panel, [0.075, 0.75, 0.12], [-0.31, 0, 0], frameMaterial);
         addBox(panel, [0.075, 0.75, 0.12], [0.31, 0, 0], frameMaterial);
 
-        const mount = new THREE.PointLight(0x42d7ff, 2, 1.4, 2);
+        const mount = configureQualityLight(new THREE.PointLight(0x42d7ff, 2, 1.4, 2));
         mount.position.set(0, 0.35, 0);
         group.add(mount);
 
@@ -930,7 +935,7 @@ function startScene() {
     function loadLevel(levelDetails) {
         const level = levelDetails?.level ?? levelDetails;
         if (!level || !Number.isInteger(level.number) || level.number < 1 || level.number > levels.length) {
-            console.error("Cannot load an invalid FluxGrid level.", level);
+            console.error("Cannot load an invalid RelicGrid level.", level);
             return;
         }
         activeLevel = level;
@@ -1343,7 +1348,12 @@ function startScene() {
         group.add(crystal);
         addBox(group, [0.36 * scale, 0.08, 0.36 * scale], [0, 0.35 + shaftHeight, 0], whiteMaterial);
 
-        const pointLight = new THREE.PointLight(color, type === "beacon" ? 7 : 3, type === "beacon" ? 3.8 : 2.4, 2);
+        const pointLight = configureQualityLight(new THREE.PointLight(
+            color,
+            type === "beacon" ? 7 : 3,
+            type === "beacon" ? 3.8 : 2.4,
+            2
+        ));
         pointLight.position.set(0, 0.85 + shaftHeight, 0);
         group.add(pointLight);
         if (type === "beacon") group.userData.beaconLight = pointLight;
@@ -1437,7 +1447,7 @@ function startScene() {
             { x: 0.02, z: -0.82, color: colors.pink },
             { x: 2.82, z: -3.75, color: colors.blue }
         ].forEach(({ x, z, color }) => {
-            const lamp = new THREE.PointLight(color, 3.5, 4.5, 2);
+            const lamp = configureQualityLight(new THREE.PointLight(color, 3.5, 4.5, 2));
             lamp.position.set(x, 0.48, z);
             platform.add(lamp);
         });
@@ -1501,7 +1511,7 @@ function startScene() {
             );
             inset.rotation.y = -angle;
             if (i % 3 === 0) {
-                const light = new THREE.PointLight(colors.blue, 1.1, 1.8, 2);
+                const light = configureQualityLight(new THREE.PointLight(colors.blue, 1.1, 1.8, 2));
                 light.position.set(x + Math.cos(angle) * r, 0.85, z + Math.sin(angle) * r);
                 platform.add(light);
             }
@@ -1672,7 +1682,8 @@ function startScene() {
         const width = Math.max(1, canvas.clientWidth);
         const height = Math.max(1, canvas.clientHeight);
         const mobileQuality = width < 620;
-        renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, mobileQuality ? 1 : 1.35));
+        const pixelRatio = Math.min(window.devicePixelRatio || 1, mobileQuality ? 0.75 : 1.35);
+        if (renderer.getPixelRatio() !== pixelRatio) renderer.setPixelRatio(pixelRatio);
         renderer.shadowMap.enabled = !mobileQuality;
         moonLight.castShadow = !mobileQuality;
         renderer.setSize(width, height, false);
@@ -1682,6 +1693,7 @@ function startScene() {
         camera.updateProjectionMatrix();
         bloom.setSize(width, height);
         resetCamera();
+        scheduleRender();
     }
     window.fluxGridSceneResize = resize;
 
@@ -1780,9 +1792,15 @@ function startScene() {
     window.addEventListener("fluxgrid:load-level", (event) => loadLevel(event.detail));
 
     const clock = new THREE.Clock();
+    function scheduleRender() {
+        if (!document.hidden && canvas.clientWidth > 0 && canvas.clientHeight > 0 && !renderRequest) {
+            renderRequest = requestAnimationFrame(render);
+        }
+    }
     function render() {
-        requestAnimationFrame(render);
+        renderRequest = 0;
         if (document.hidden || canvas.clientWidth === 0 || canvas.clientHeight === 0) return;
+        renderRequest = requestAnimationFrame(render);
         const time = clock.getElapsedTime();
         if (tracing && traceResult) {
             const duration = Math.max(650, traceResult.segments.length * 175);
@@ -1863,6 +1881,14 @@ function startScene() {
         if (renderer.shadowMap.enabled) composer.render();
         else renderer.render(scene, camera);
     }
-    render();
+    document.addEventListener("visibilitychange", () => {
+        if (document.hidden) {
+            cancelAnimationFrame(renderRequest);
+            renderRequest = 0;
+        } else {
+            scheduleRender();
+        }
+    });
+    scheduleRender();
     window.addEventListener("resize", resize);
 }
