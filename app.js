@@ -627,6 +627,7 @@ async function refreshWallet() {
     const status = document.getElementById("wallet-status-value");
     const refreshButton = document.getElementById("wallet-refresh");
     const balanceRefreshButton = document.getElementById("wallet-balance-refresh");
+    const amountInput = document.getElementById("wallet-transfer-amount");
     const transferButton = document.getElementById("wallet-transfer-button");
     walletStatusSnapshot = null;
     refreshButton.disabled = true;
@@ -690,11 +691,13 @@ async function refreshWallet() {
         linkedAddressElement.textContent = result.linkedWalletAddress ?? "No wallet linked";
         linkedAddressElement.closest(".wallet-data-panel").hidden = !result.linkedWalletAddress;
         renderWalletConnectionState();
-        transferButton.disabled = result.depositsEnabled !== true ||
-            !result.linkedWalletAddress ||
-            !result.officialMintAddress ||
-            !result.tokenProgramId ||
-            !Number.isInteger(result.tokenDecimals);
+        const depositReady = result.depositsEnabled === true &&
+            Boolean(result.linkedWalletAddress) &&
+            Boolean(result.officialMintAddress) &&
+            Boolean(result.tokenProgramId) &&
+            Number.isInteger(result.tokenDecimals);
+        amountInput.disabled = !depositReady;
+        transferButton.disabled = !depositReady;
         signatureInput.disabled = result.depositsEnabled !== true || !result.linkedWalletAddress;
         signatureSubmit.disabled = result.depositsEnabled !== true || !result.linkedWalletAddress;
         balance.textContent = result.balanceCredits === null
