@@ -826,12 +826,9 @@ async function sendCyfurDeposit() {
         const tokenProgramId = new PublicKey(config.tokenProgramId);
         const senderTokenAccount = getAssociatedTokenAddress(PublicKey, payer, mint, tokenProgramId);
         const treasuryTokenAccount = getAssociatedTokenAddress(PublicKey, treasury, mint, tokenProgramId);
-        const connection = new Connection(clusterApiUrl(config.network), "confirmed");
-        const [senderInfo, treasuryInfo, latestBlockhash] = await Promise.all([
-            connection.getAccountInfo(senderTokenAccount, "confirmed"),
-            connection.getAccountInfo(treasuryTokenAccount, "confirmed"),
-            connection.getLatestBlockhash("confirmed")
-        ]);
+        const preparation = await requestDepositTransaction("prepare");
+        const senderInfo = preparation.senderTokenAccounts.includes(senderTokenAccount.toString());
+        const treasuryInfo = preparation.treasuryTokenAccounts.includes(treasuryTokenAccount.toString());
         const instructions = [];
         if (!senderInfo) {
             instructions.push(createAssociatedTokenAccountInstruction(
@@ -873,8 +870,9 @@ async function sendCyfurDeposit() {
         }));
         const transaction = new Transaction({
             feePayer: payer,
-            recentBlockhash: latestBlockhash.blockhash
+            recentBlockhash: preparation.blockhash
         }).add(...instructions);
+        const connection = new Connection(clusterApiUrl(config.network), "confirmed");
         transferButton.disabled = true;
         mainButton.disabled = true;
         setWalletMessage("Review the CYFUR amount and recipient in Phantom, then approve the transfer. FluxGrid will verify it before crediting.", "pending");
@@ -1048,6 +1046,20 @@ async function getWalletAuthorizationHeaders() {
     };
 }
 
+async function requestDepositTransaction(action, payload = {}) {
+    const response = await fetch("/api/deposit-transaction", {
+        method: "POST",
+        headers: await getWalletAuthorizationHeaders(),
+        body: JSON.stringify({ action, ...payload }),
+        cache: "no-store"
+    });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok) {
+        throw new Error(result.message || result.error || `Deposit transaction request failed (${response.status}).`);
+    }
+    return result;
+}
+
 async function handlePhantomMobileCallback(callback) {
     const state = callback.state;
     let broadcastSignature = "";
@@ -1132,12 +1144,11 @@ async function handlePhantomMobileCallback(callback) {
             if (typeof decrypted.data.transaction !== "string") {
                 throw new Error("Phantom did not return the signed transaction.");
             }
-            const { Connection, clusterApiUrl } = await loadSolanaWeb3();
-            const connection = new Connection(clusterApiUrl(state.network), "confirmed");
             const transactionBytes = decodeWalletBytes(decrypted.data.transaction);
-            broadcastSignature = await connection.sendRawTransaction(transactionBytes, {
-                preflightCommitment: "confirmed"
+            const broadcast = await requestDepositTransaction("broadcast", {
+                transaction: bytesToWalletBase64(transactionBytes)
             });
+            broadcastSignature = broadcast.signature;
             document.getElementById("deposit-signature").value = broadcastSignature;
             setWalletMessage("Phantom approved the transaction. Waiting for the server to verify its finalized transfer before crediting.", "pending");
             await verifyDepositSignature(broadcastSignature);

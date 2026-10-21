@@ -1068,6 +1068,137 @@ test("deposit API remains disabled unless the explicit server flag is enabled", 
     }
 });
 
+test("deposit transaction API prepares and broadcasts through the authenticated server RPC", async () => {
+    const envNames = [
+        "SUPABASE_URL",
+        "SUPABASE_PUBLISHABLE_KEY",
+        "SUPABASE_SERVICE_ROLE_KEY",
+        "SOLANA_RPC_URL",
+        "SOLANA_NETWORK",
+        "SOLANA_TREASURY_ADDRESS",
+        "WALLET_DIRECT_TREASURY_READY",
+        "WALLET_DEPOSITS_ENABLED"
+    ];
+    const previous = Object.fromEntries(envNames.map((name) => [name, process.env[name]]));
+    Object.assign(process.env, {
+        SUPABASE_URL: "https://example.supabase.co",
+        SUPABASE_PUBLISHABLE_KEY: "public-test-key",
+        SUPABASE_SERVICE_ROLE_KEY: "server-only-test-key",
+        SOLANA_RPC_URL: "https://solana.example/rpc",
+        SOLANA_NETWORK: "devnet",
+        SOLANA_TREASURY_ADDRESS: "11111111111111111111111111111112",
+        WALLET_DIRECT_TREASURY_READY: "true",
+        WALLET_DEPOSITS_ENABLED: "true"
+    });
+    delete process.env.WALLET_MAINNET_DEPOSITS_ENABLED;
+
+    const linkedWallet = "11111111111111111111111111111111";
+    const senderTokenAccount = "11111111111111111111111111111113";
+    const treasuryTokenAccount = "11111111111111111111111111111114";
+    const signature = "1".repeat(64);
+    const rpcCalls = [];
+    let denyRpc = false;
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = async (url, options = {}) => {
+        const target = String(url);
+        if (target.includes("/auth/v1/user")) {
+            return new Response(JSON.stringify({ id: "test-player" }), { status: 200 });
+        }
+        if (target.includes("/rest/v1/wallet_system_config")) {
+            return new Response(JSON.stringify([{
+                deposits_enabled: true,
+                network: "devnet",
+                official_mint_address: "11111111111111111111111111111115",
+                token_program_id: "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+                token_decimals: 8,
+                credits_per_token: 10000,
+                rounding_policy: "floor",
+                treasury_address: process.env.SOLANA_TREASURY_ADDRESS
+            }]), { status: 200 });
+        }
+        if (target.includes("/rest/v1/player_solana_wallets")) {
+            return new Response(JSON.stringify([{ wallet_address: linkedWallet }]), { status: 200 });
+        }
+        if (target === process.env.SOLANA_RPC_URL) {
+            if (denyRpc) return new Response("", { status: 403 });
+            const call = JSON.parse(options.body);
+            rpcCalls.push(call);
+            const results = {
+                getGenesisHash: "EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG",
+                getTokenAccountsByOwner: {
+                    value: [{ pubkey: call.params[0] === linkedWallet
+                        ? senderTokenAccount
+                        : treasuryTokenAccount }]
+                },
+                getLatestBlockhash: {
+                    value: {
+                        blockhash: "11111111111111111111111111111116",
+                        lastValidBlockHeight: 123
+                    }
+                },
+                sendTransaction: signature
+            };
+            return new Response(JSON.stringify({ result: results[call.method] }), { status: 200 });
+        }
+        throw new Error(`Unexpected test request: ${target}`);
+    };
+
+    const endpoint = require("../api/deposit-transaction.js");
+    const invoke = async (body) => {
+        const response = {
+            statusCode: 200,
+            status(code) { this.statusCode = code; return this; },
+            setHeader() {},
+            json(payload) { this.payload = payload; }
+        };
+        await endpoint({
+            method: "POST",
+            headers: { authorization: "Bearer test-access-token" },
+            body
+        }, response);
+        return response;
+    };
+
+    try {
+        const prepared = await invoke({ action: "prepare" });
+        assert.equal(prepared.statusCode, 200);
+        assert.equal(prepared.payload.blockhash, "11111111111111111111111111111116");
+        assert.deepEqual(prepared.payload.senderTokenAccounts, [senderTokenAccount]);
+        assert.deepEqual(prepared.payload.treasuryTokenAccounts, [treasuryTokenAccount]);
+        assert.deepEqual(rpcCalls.map((call) => call.method), [
+            "getGenesisHash",
+            "getTokenAccountsByOwner",
+            "getTokenAccountsByOwner",
+            "getLatestBlockhash"
+        ]);
+
+        const broadcast = await invoke({
+            action: "broadcast",
+            transaction: Buffer.from([1, 2, 3]).toString("base64")
+        });
+        assert.equal(broadcast.statusCode, 200);
+        assert.equal(broadcast.payload.signature, signature);
+        assert.equal(rpcCalls.at(-1).method, "sendTransaction");
+        assert.equal(rpcCalls.at(-1).params[1].encoding, "base64");
+
+        const invalid = await invoke({ action: "broadcast", transaction: "not base64!" });
+        assert.equal(invalid.statusCode, 400);
+        assert.equal(invalid.payload.error, "invalid_signed_transaction");
+
+        denyRpc = true;
+        const forbidden = await invoke({ action: "prepare" });
+        assert.equal(forbidden.statusCode, 502);
+        assert.equal(forbidden.payload.error, "solana_rpc_forbidden");
+        assert.match(forbidden.payload.message, /HTTP 403/);
+    } finally {
+        globalThis.fetch = originalFetch;
+        for (const [name, value] of Object.entries(previous)) {
+            if (value === undefined) delete process.env[name];
+            else process.env[name] = value;
+        }
+    }
+});
+
 test("each connected star outcome uses its configured time threshold and payout", () => {
     for (const level of levels) {
         const { threeSeconds, twoSeconds } = level.starTimeTargets;
