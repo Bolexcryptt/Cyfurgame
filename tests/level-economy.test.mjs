@@ -48,7 +48,7 @@ test("mobile browser detection recognizes phones and touch-enabled iPads", () =>
 test("Phantom mobile browse link opens the secure current page and rejects insecure URLs", () => {
     const browseUrl = new URL(createPhantomBrowseUrl("https://cyfur-game-mu.vercel.app/?ignored=1"));
     assert.equal(browseUrl.origin, "https://phantom.com");
-    assert.equal(browseUrl.pathname, `/ul/browse/${encodeURIComponent("https://cyfur-game-mu.vercel.app/?ignored=1")}`);
+    assert.equal(browseUrl.pathname, `/ul/browse/${encodeURIComponent("https://cyfur-game-mu.vercel.app/?ignored=1&phantom_handoff=1")}`);
     assert.equal(browseUrl.searchParams.get("ref"), "https://cyfur-game-mu.vercel.app");
     assert.throws(() => createPhantomBrowseUrl("http://example.com"), /secure HTTPS/);
 });

@@ -524,8 +524,17 @@ function setPhantomOpenAction(visible) {
 function showPhantomUnavailableMessage() {
     if (isMobileBrowser()) {
         if (window.location.protocol === "https:") {
-            setPhantomOpenAction(true);
-            setWalletMessage("Phantom is not connected to this browser tab. Open this page in Phantom's in-app browser, then tap CONNECT SOLANA WALLET there. No transfer was made.", "error");
+            const phantomUrl = createPhantomBrowseUrl(window.location.href);
+            const action = document.getElementById("wallet-open-phantom");
+            action.href = phantomUrl;
+            action.hidden = false;
+            const handoffAttempted = new URL(window.location.href).searchParams.has("phantom_handoff");
+            if (!handoffAttempted) {
+                setWalletMessage("Opening FluxGrid in Phantom's in-app browser so it can connect to your wallet. No transfer was made.", "pending");
+                window.location.assign(phantomUrl);
+                return;
+            }
+            setWalletMessage("This page is already in the Phantom handoff flow, but Phantom did not expose its wallet provider. Confirm the site is open inside Phantom's in-app browser, then reload. No transfer was made.", "error");
         } else {
             setPhantomOpenAction(false);
             setWalletMessage("Phantom mobile handoff requires the deployed HTTPS site. Open FluxGrid's production URL in Phantom's in-app browser. No transfer was made.", "error");
@@ -658,9 +667,7 @@ async function refreshWallet() {
         }
         walletStatusSnapshot = result;
         document.getElementById("fund-account-button").textContent =
-            result.linkedWalletAddress && result.depositsEnabled === true
-                ? "WALLET CONNECTED"
-                : result.linkedWalletAddress ? "RELINK SOLANA WALLET" : "CONNECT SOLANA WALLET";
+            result.linkedWalletAddress ? "WALLET LINKED" : "CONNECT SOLANA WALLET";
         transferButton.disabled = result.depositsEnabled !== true ||
             !result.linkedWalletAddress ||
             !result.officialMintAddress ||
@@ -936,7 +943,7 @@ async function connectSolanaWallet() {
     } finally {
         button.disabled = false;
         button.textContent = walletStatusSnapshot?.linkedWalletAddress && walletStatusSnapshot.depositsEnabled
-            ? "WALLET CONNECTED"
+            ? "WALLET LINKED"
             : walletStatusSnapshot?.linkedWalletAddress ? "RELINK SOLANA WALLET" : "CONNECT SOLANA WALLET";
     }
 }
@@ -1257,7 +1264,7 @@ document.getElementById("fund-account-button").addEventListener("click", () => {
     document.getElementById("wallet-api-status").focus({ preventScroll: true });
     if (walletStatusSnapshot?.linkedWalletAddress && walletStatusSnapshot.depositsEnabled === true) {
         document.getElementById("wallet-transfer-amount").focus({ preventScroll: true });
-        setWalletMessage("Enter the CYFUR amount below and choose DEPOSIT CYFUR to review and approve the transfer in Phantom.", "ready");
+        setWalletMessage("Wallet linked to this game account. To deposit, enter an amount and choose DEPOSIT CYFUR; Phantom must be available in this browser to approve it.", "ready");
     } else {
         void connectSolanaWallet();
     }

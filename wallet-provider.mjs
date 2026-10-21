@@ -14,5 +14,6 @@ export function createPhantomBrowseUrl(pageUrl) {
     if (target.protocol !== "https:" || target.username || target.password) {
         throw new Error("Phantom can only open a secure HTTPS FluxGrid page.");
     }
+    target.searchParams.set("phantom_handoff", "1");
     return `https://phantom.com/ul/browse/${encodeURIComponent(target.toString())}?ref=${encodeURIComponent(target.origin)}`;
 }
