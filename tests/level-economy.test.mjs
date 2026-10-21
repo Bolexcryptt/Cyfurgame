@@ -42,8 +42,21 @@ test("Level 1 economy keeps star ratings separate from credit amounts", () => {
 });
 
 test("wallet API publishes the same exchange rate and keeps deposits disabled", async () => {
-    const previousUrl = process.env.SUPABASE_URL;
-    const previousKey = process.env.SUPABASE_PUBLISHABLE_KEY;
+    const envNames = [
+        "SUPABASE_URL",
+        "SUPABASE_PUBLISHABLE_KEY",
+        "SUPABASE_SERVICE_ROLE_KEY",
+        "SOLANA_NETWORK",
+        "SOLANA_RPC_URL",
+        "SOLANA_TREASURY_ADDRESS",
+        "WALLET_DIRECT_TREASURY_READY",
+        "WALLET_DEPOSITS_ENABLED",
+        "WALLET_MAINNET_DEPOSITS_ENABLED"
+    ];
+    const previousEnvironment = Object.fromEntries(
+        envNames.map((name) => [name, process.env[name]])
+    );
+    for (const name of envNames) delete process.env[name];
     process.env.SUPABASE_URL = "https://example.supabase.co";
     process.env.SUPABASE_PUBLISHABLE_KEY = "public-test-key";
     const originalFetch = globalThis.fetch;
@@ -76,15 +89,18 @@ test("wallet API publishes the same exchange rate and keeps deposits disabled", 
         assert.equal(response.payload.paidGameplayEnabled, false);
         assert.equal(response.payload.fundingStatus, "disabled");
         assert.equal(response.payload.disabledReason, "direct_treasury_setup_incomplete");
+        assert.ok(response.payload.readinessChecks.includes("Connect and verify your Solana wallet."));
+        assert.ok(response.payload.readinessChecks.includes("Set SUPABASE_SERVICE_ROLE_KEY in Vercel."));
+        assert.ok(response.payload.readinessChecks.includes("Set WALLET_DEPOSITS_ENABLED=true in Vercel after approval."));
         assert.match(response.payload.disabledMessage, /Do not send CYFUR/);
         assert.equal(response.payload.balanceCredits, "250");
         assert.equal(response.payload.balanceVerified, true);
     } finally {
         globalThis.fetch = originalFetch;
-        if (previousUrl === undefined) delete process.env.SUPABASE_URL;
-        else process.env.SUPABASE_URL = previousUrl;
-        if (previousKey === undefined) delete process.env.SUPABASE_PUBLISHABLE_KEY;
-        else process.env.SUPABASE_PUBLISHABLE_KEY = previousKey;
+        for (const [name, value] of Object.entries(previousEnvironment)) {
+            if (value === undefined) delete process.env[name];
+            else process.env[name] = value;
+        }
     }
 });
 

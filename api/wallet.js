@@ -45,26 +45,42 @@ module.exports = async function wallet(request, response) {
         const network = process.env.SOLANA_NETWORK;
         const linkedWalletAddress = linkedWallets[0]?.wallet_address ?? null;
         const treasuryAddress = config?.treasury_address ?? null;
-        const verifierConfigured = Boolean(
-            config?.official_mint_address &&
-            config.token_program_id &&
-            Number.isInteger(config.token_decimals) &&
-            String(config.credits_per_token) === String(CYFUR_CREDITS_PER_TOKEN) &&
-            config.rounding_policy === "floor" &&
-            config.network === network &&
-            process.env.SUPABASE_SERVICE_ROLE_KEY?.trim() &&
-            process.env.SOLANA_RPC_URL?.trim() &&
-            process.env.SOLANA_TREASURY_ADDRESS?.trim() === treasuryAddress &&
-            process.env.WALLET_DIRECT_TREASURY_READY === "true"
-        );
-        const depositsEnabled =
-            Boolean(linkedWalletAddress) &&
-            Boolean(treasuryAddress) &&
-            verifierConfigured &&
-            config?.deposits_enabled === true &&
-            process.env.WALLET_DEPOSITS_ENABLED === "true" &&
-            (network !== "mainnet-beta" ||
-                process.env.WALLET_MAINNET_DEPOSITS_ENABLED === "true");
+        const readinessChecks = [];
+        if (!linkedWalletAddress) readinessChecks.push("Connect and verify your Solana wallet.");
+        if (!config ||
+            !config.official_mint_address ||
+            !config.token_program_id ||
+            !Number.isInteger(config.token_decimals) ||
+            String(config.credits_per_token) !== String(CYFUR_CREDITS_PER_TOKEN) ||
+            config.rounding_policy !== "floor" ||
+            config.network !== network ||
+            !treasuryAddress) {
+            readinessChecks.push("Supabase wallet configuration must match the selected Solana network and CYFUR settings.");
+        }
+        if (!process.env.SUPABASE_SERVICE_ROLE_KEY?.trim()) {
+            readinessChecks.push("Set SUPABASE_SERVICE_ROLE_KEY in Vercel.");
+        }
+        if (!process.env.SOLANA_RPC_URL?.trim()) {
+            readinessChecks.push("Set SOLANA_RPC_URL in Vercel.");
+        }
+        if (!process.env.SOLANA_TREASURY_ADDRESS?.trim() ||
+            process.env.SOLANA_TREASURY_ADDRESS !== treasuryAddress) {
+            readinessChecks.push("SOLANA_TREASURY_ADDRESS must exactly match Supabase treasury_address.");
+        }
+        if (process.env.WALLET_DIRECT_TREASURY_READY !== "true") {
+            readinessChecks.push("Set WALLET_DIRECT_TREASURY_READY=true in Vercel.");
+        }
+        if (config?.deposits_enabled !== true) {
+            readinessChecks.push("Set wallet_system_config.deposits_enabled=true in Supabase after approval.");
+        }
+        if (process.env.WALLET_DEPOSITS_ENABLED !== "true") {
+            readinessChecks.push("Set WALLET_DEPOSITS_ENABLED=true in Vercel after approval.");
+        }
+        if (network === "mainnet-beta" &&
+            process.env.WALLET_MAINNET_DEPOSITS_ENABLED !== "true") {
+            readinessChecks.push("Set WALLET_MAINNET_DEPOSITS_ENABLED=true in Vercel after mainnet approval.");
+        }
+        const depositsEnabled = readinessChecks.length === 0;
         const balance = accounts[0]?.balance_credits;
         const balanceVerified = (typeof balance === "string" && /^\d+$/.test(balance)) ||
             (typeof balance === "number" && Number.isSafeInteger(balance) && balance >= 0);
@@ -79,11 +95,10 @@ module.exports = async function wallet(request, response) {
             fundingStatus: depositsEnabled ? "ready" : "disabled",
             network: network ?? null,
             disabledReason: depositsEnabled ? null : "direct_treasury_setup_incomplete",
+            readinessChecks,
             disabledMessage: depositsEnabled
                 ? "Deposit verification is ready. Approve a CYFUR transfer from your linked Solana wallet; FluxGrid will verify the finalized transaction before crediting."
-                : !linkedWalletAddress
-                    ? "Connect and verify your Solana wallet first. Deposits remain disabled until the direct treasury verifier is configured. Do not send CYFUR."
-                    : "Funding is disabled until the owner-controlled treasury, finalized verifier, database migration, and server activation checks are complete. Do not send CYFUR.",
+                : `${readinessChecks.join(" ")} Do not send CYFUR until status is READY.`,
             exchangeRateCreditsPerToken: CYFUR_CREDITS_PER_TOKEN,
             treasuryAddress,
             officialMintAddress: config?.official_mint_address ?? null,
