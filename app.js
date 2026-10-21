@@ -515,6 +515,16 @@ function getPhantomProvider() {
     return provider?.isPhantom ? provider : null;
 }
 
+function withWalletTimeout(promise, operation, timeoutMs = 30000) {
+    let timeoutId;
+    const timeout = new Promise((_, reject) => {
+        timeoutId = window.setTimeout(() => {
+            reject(new Error(`${operation} timed out. Check that Phantom is unlocked and allowed to connect to this site, then retry.`));
+        }, timeoutMs);
+    });
+    return Promise.race([promise, timeout]).finally(() => window.clearTimeout(timeoutId));
+}
+
 function renderWalletHistory(deposits) {
     const history = document.getElementById("wallet-history");
     if (!Array.isArray(deposits)) {
@@ -845,15 +855,20 @@ async function connectSolanaWallet() {
     const button = document.getElementById("fund-account-button");
     button.disabled = true;
     button.textContent = "CONNECTING WALLET…";
-    setWalletMessage("Approve the wallet connection, then sign a one-time ownership challenge. Signing does not send a transaction or pay a fee.", "pending");
+    setWalletMessage("Waiting for Phantom to open. Approve the connection request; no token transfer will happen.", "pending");
     try {
         const { data, error } = await supabase.auth.getSession();
         if (error) throw error;
         const accessToken = data.session?.access_token;
         if (!accessToken) throw new Error("Sign in before linking a Solana wallet.");
-        const connected = await walletProvider.connect();
+        const connected = await withWalletTimeout(
+            walletProvider.connect(),
+            "Phantom connection approval"
+        );
         const walletAddress = connected.publicKey?.toString();
         if (!walletAddress) throw new Error("Phantom did not return a public wallet address.");
+        button.textContent = "VERIFYING WALLET…";
+        setWalletMessage("Wallet connected. Requesting an ownership challenge from the server; this signature does not transfer tokens.", "pending");
         const headers = {
             Authorization: `Bearer ${accessToken}`,
             "Content-Type": "application/json"
@@ -868,14 +883,18 @@ async function connectSolanaWallet() {
         if (!challengeResponse.ok || typeof challengeResult.challenge !== "string") {
             throw new Error(challengeResult.message || challengeResult.error || `Wallet proof request failed (${challengeResponse.status}).`);
         }
-        const signed = await walletProvider.signMessage(
+        button.textContent = "SIGN IN PHANTOM…";
+        setWalletMessage("Approve the FluxGrid ownership message in Phantom. It proves wallet ownership and does not send tokens or pay a network fee.", "pending");
+        const signed = await withWalletTimeout(walletProvider.signMessage(
             new TextEncoder().encode(challengeResult.challenge),
             "utf8"
-        );
+        ), "Phantom ownership signature");
         if (!signed?.signature || signed.signature.length !== 64) {
             throw new Error("Phantom returned an invalid wallet signature.");
         }
         const signature = btoa(Array.from(signed.signature, (byte) => String.fromCharCode(byte)).join(""));
+        button.textContent = "SAVING WALLET…";
+        setWalletMessage("Wallet signature received. Saving the wallet link securely on the server…", "pending");
         const linkResponse = await fetch("/api/wallet-link", {
             method: "POST",
             headers,
