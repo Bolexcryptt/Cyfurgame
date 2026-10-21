@@ -3,6 +3,7 @@ import { generateKeyPairSync, sign as signMessage } from "node:crypto";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 import { createRequire } from "node:module";
+import { createPhantomBrowseUrl, getPhantomProvider, isMobileBrowser } from "../wallet-provider.mjs";
 import { calculateSolveTimeMilliseconds, claimLevelCompletion, CYFUR_CREDITS_PER_TOKEN, evaluateLevelStars, getLevelEconomy, getLevelStarTimeTargets, levels } from "../levels.js";
 
 const require = createRequire(import.meta.url);
@@ -29,6 +30,28 @@ function encodeBase58(bytes) {
     }
     return encoded;
 }
+
+test("Phantom provider detection supports current and legacy injection without accepting other wallets", () => {
+    const currentProvider = { isPhantom: true };
+    assert.equal(getPhantomProvider({ phantom: { solana: currentProvider } }), currentProvider);
+    assert.equal(getPhantomProvider({ solana: currentProvider }), currentProvider);
+    assert.equal(getPhantomProvider({ solana: { isPhantom: false } }), null);
+});
+
+test("mobile browser detection recognizes phones and touch-enabled iPads", () => {
+    assert.equal(isMobileBrowser({ userAgent: "Mozilla/5.0 (iPhone)", platform: "iPhone", maxTouchPoints: 1 }), true);
+    assert.equal(isMobileBrowser({ userAgent: "Mozilla/5.0 (Linux; Android 14)", platform: "Linux", maxTouchPoints: 1 }), true);
+    assert.equal(isMobileBrowser({ userAgent: "Mozilla/5.0 (Macintosh)", platform: "MacIntel", maxTouchPoints: 5 }), true);
+    assert.equal(isMobileBrowser({ userAgent: "Mozilla/5.0 (Windows NT 10.0)", platform: "Win32", maxTouchPoints: 0 }), false);
+});
+
+test("Phantom mobile browse link opens the secure current page and rejects insecure URLs", () => {
+    const browseUrl = new URL(createPhantomBrowseUrl("https://cyfur-game-mu.vercel.app/?ignored=1"));
+    assert.equal(browseUrl.origin, "https://phantom.com");
+    assert.equal(browseUrl.pathname, `/ul/browse/${encodeURIComponent("https://cyfur-game-mu.vercel.app/?ignored=1")}`);
+    assert.equal(browseUrl.searchParams.get("ref"), "https://cyfur-game-mu.vercel.app");
+    assert.throws(() => createPhantomBrowseUrl("http://example.com"), /secure HTTPS/);
+});
 
 test("Level 1 economy keeps star ratings separate from credit amounts", () => {
     assert.equal(CYFUR_CREDITS_PER_TOKEN, 10000);

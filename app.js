@@ -1,5 +1,6 @@
 import { CYFUR_CREDITS_PER_TOKEN, getLevelEconomy, levels, claimLevelCompletion } from "./levels.js";
 import { supabase, supabaseConfigured } from "./supabase.js";
+import { createPhantomBrowseUrl, getPhantomProvider, isMobileBrowser } from "./wallet-provider.mjs";
 
 const storageKey = "fluxgrid.player.v1";
 const screens = [
@@ -510,9 +511,29 @@ function setWalletMessage(message, state = "") {
     status.dataset.state = state;
 }
 
-function getPhantomProvider() {
-    const provider = window.phantom?.solana ?? window.solana;
-    return provider?.isPhantom ? provider : null;
+function setPhantomOpenAction(visible) {
+    const action = document.getElementById("wallet-open-phantom");
+    if (visible && isMobileBrowser()) {
+        action.href = createPhantomBrowseUrl(window.location.href);
+        action.hidden = false;
+        return;
+    }
+    action.hidden = true;
+}
+
+function showPhantomUnavailableMessage() {
+    if (isMobileBrowser()) {
+        if (window.location.protocol === "https:") {
+            setPhantomOpenAction(true);
+            setWalletMessage("Phantom is not connected to this browser tab. Open this page in Phantom's in-app browser, then tap CONNECT SOLANA WALLET there. No transfer was made.", "error");
+        } else {
+            setPhantomOpenAction(false);
+            setWalletMessage("Phantom mobile handoff requires the deployed HTTPS site. Open FluxGrid's production URL in Phantom's in-app browser. No transfer was made.", "error");
+        }
+    } else {
+        setPhantomOpenAction(false);
+        setWalletMessage("Phantom is not available to this page. Open FluxGrid in a normal Chrome or Edge tab where the Phantom extension is installed and allowed for this site—not an embedded preview—then reload. No transfer was made.", "error");
+    }
 }
 
 function withWalletTimeout(promise, operation, timeoutMs = 30000) {
@@ -742,11 +763,12 @@ async function sendCyfurDeposit() {
         setWalletMessage("The server has not marked deposits READY. No token transfer was started.", "disabled");
         return;
     }
-    const provider = getPhantomProvider();
+    const provider = getPhantomProvider(window);
     if (!provider || typeof provider.sendTransaction !== "function") {
-        setWalletMessage("Phantom was not detected in this browser tab. Open this site in the browser where Phantom is installed, unlock it, and reload the page.", "error");
+        showPhantomUnavailableMessage();
         return;
     }
+    setPhantomOpenAction(false);
 
     const transferButton = document.getElementById("wallet-transfer-button");
     const mainButton = document.getElementById("fund-account-button");
@@ -846,12 +868,13 @@ async function connectSolanaWallet() {
         setWalletMessage("Supabase authentication is unavailable. No wallet was linked.", "error");
         return;
     }
-    const walletProvider = getPhantomProvider();
+    const walletProvider = getPhantomProvider(window);
     if (!walletProvider || typeof walletProvider.connect !== "function" ||
         typeof walletProvider.signMessage !== "function") {
-        setWalletMessage("Phantom was not detected in this browser tab. Open the deployed FluxGrid site in the browser where Phantom is installed, unlock Phantom, and reload the page. No wallet was linked or token transfer made.", "error");
+        showPhantomUnavailableMessage();
         return;
     }
+    setPhantomOpenAction(false);
     const button = document.getElementById("fund-account-button");
     button.disabled = true;
     button.textContent = "CONNECTING WALLET…";

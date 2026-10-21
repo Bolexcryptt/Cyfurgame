@@ -1161,6 +1161,8 @@ button { -webkit-tap-highlight-color: transparent; }
 }
 .wallet-api-status[data-state="error"] { color: #ffba9e; }
 .wallet-api-status[data-state="ready"] { color: #9ce8ca; }
+.wallet-phantom-open { width: fit-content; min-height: 34px; margin: 0 0 12px; }
+.wallet-phantom-open[hidden] { display: none; }
 .wallet-history-heading {
     position: relative;
     z-index: 1;
