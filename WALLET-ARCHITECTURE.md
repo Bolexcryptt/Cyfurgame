@@ -8,7 +8,7 @@ The server verifies the linked sender, treasury recipient, configured CYFUR mint
 
 **Deposits and paid gameplay remain disabled.** The new migration explicitly sets both database switches false. Do not enable any deposit or paid-gameplay flags until the owner confirms the treasury, the deployed configuration matches Supabase, the new migration is applied, and devnet plus production-readiness checks pass. No real transfer or live Supabase write has been verified in this workspace.
 
-The campaign remains before the wallet panel on the home page. Wallet linking uses Phantom's `connect` and `signMessage`; signing proves account ownership and does not send a transaction or pay a fee. The user must submit the transfer signature after a deposit. A transfer from any other wallet, to any other destination, using another mint, or not yet finalized receives no credit.
+The campaign remains before the wallet panel on the home page. Wallet linking uses Phantom's `connect` and `signMessage`; signing proves account ownership and does not send a transaction or pay a fee. When the backend reports deposits READY, the player enters a CYFUR amount and approves an SPL `transferChecked` transaction in Phantom. FluxGrid submits its signature to the same server verifier and displays credits only after the verifier and atomic ledger RPC confirm the finalized transfer. The player pays the Solana network fee. A manual signature submission remains available for recovery. A transfer from any other wallet, to any other destination, using another mint, or not yet finalized receives no credit.
 
 ## Required setup
 

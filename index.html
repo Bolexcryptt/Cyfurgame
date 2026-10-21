@@ -120,12 +120,13 @@
                         <div class="wallet-emblem" aria-hidden="true"><i></i><b>F</b></div>
                         <span class="eyebrow"><span class="wallet-signal"></span> PILOT RESOURCES // ACCOUNT REQUIRED</span>
                         <h2 id="wallet-heading">Wallet &amp; balance</h2>
-                        <p class="wallet-description">Connect your own Solana wallet, send CYFUR to the owner-controlled treasury, then submit the transaction signature for server verification.</p>
+                        <p class="wallet-description">Connect your Solana wallet, approve a CYFUR transfer to the owner-controlled treasury, and see credits only after server verification.</p>
                         <p class="wallet-exchange-rate">EXCHANGE RATE <b id="wallet-exchange-rate">1 CYFUR = 10,000 CREDITS</b> · DISPLAY ONLY</p>
                         <div class="wallet-data-panel wallet-balance-panel">
                             <span class="wallet-field-label">VERIFIED IN-GAME BALANCE</span>
                             <b id="wallet-balance">Unavailable</b>
                             <small id="wallet-balance-state">CREDITS · NOT VERIFIED</small>
+                            <button id="wallet-balance-refresh" class="wallet-refresh" type="button">REFRESH BALANCE</button>
                         </div>
                         <button id="fund-account-button" class="button button-primary wallet-fund-button" type="button" aria-controls="wallet-api-status">CONNECT SOLANA WALLET <span>→</span></button>
                     </div>
@@ -143,7 +144,14 @@
                             <span>DEPOSIT STATUS</span><b id="wallet-status-value">DISABLED</b>
                         </div>
                         <p id="wallet-api-status" class="wallet-api-status" tabindex="-1" role="status" aria-live="polite">Wallet linking and deposits are disabled until the owner-controlled treasury and backend verification are configured. Do not send CYFUR.</p>
-                        <p class="wallet-transfer-instructions">Only send after the backend marks deposits READY. Send CYFUR from the linked wallet to the treasury above, then paste the signature. The backend checks the sender, exact mint, recipient, finality, and duplicate status before crediting. Credits are floored per transfer; with 8 decimals, at least 0.0001 CYFUR is needed for 1 credit. Smaller transfers are not credited.</p>
+                        <p class="wallet-transfer-instructions">When the backend shows READY, enter an amount and approve the transfer in your connected wallet. FluxGrid verifies the linked sender, exact mint, treasury recipient, finalized status, and duplicate signature before crediting. Your wallet pays the Solana network fee. For an 8-decimal mint, transfers below 0.0001 CYFUR convert to zero credits and are rejected.</p>
+                        <form id="wallet-transfer-form" class="wallet-transfer-form">
+                            <label class="wallet-field-label" for="wallet-transfer-amount">CYFUR AMOUNT</label>
+                            <div class="wallet-transfer-controls">
+                                <input id="wallet-transfer-amount" name="amount" type="number" inputmode="decimal" min="0.0001" step="0.00000001" placeholder="0.0001" required disabled>
+                                <button id="wallet-transfer-button" class="button button-primary" type="submit" disabled>DEPOSIT CYFUR</button>
+                            </div>
+                        </form>
                         <form id="deposit-signature-form" class="deposit-signature-form">
                             <label class="wallet-field-label" for="deposit-signature">SOLANA TRANSACTION SIGNATURE</label>
                             <input id="deposit-signature" name="signature" type="text" inputmode="text" autocomplete="off" spellcheck="false" maxlength="100" placeholder="Paste transaction signature" required disabled>

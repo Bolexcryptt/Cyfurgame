@@ -80,12 +80,15 @@ module.exports = async function wallet(request, response) {
             network: network ?? null,
             disabledReason: depositsEnabled ? null : "direct_treasury_setup_incomplete",
             disabledMessage: depositsEnabled
-                ? "Deposit verification is ready. Send CYFUR from your linked Solana wallet to the owner-controlled treasury, then submit the transaction signature."
+                ? "Deposit verification is ready. Approve a CYFUR transfer from your linked Solana wallet; FluxGrid will verify the finalized transaction before crediting."
                 : !linkedWalletAddress
                     ? "Connect and verify your Solana wallet first. Deposits remain disabled until the direct treasury verifier is configured. Do not send CYFUR."
                     : "Funding is disabled until the owner-controlled treasury, finalized verifier, database migration, and server activation checks are complete. Do not send CYFUR.",
             exchangeRateCreditsPerToken: CYFUR_CREDITS_PER_TOKEN,
             treasuryAddress,
+            officialMintAddress: config?.official_mint_address ?? null,
+            tokenProgramId: config?.token_program_id ?? null,
+            tokenDecimals: Number.isInteger(config?.token_decimals) ? config.token_decimals : null,
             linkedWalletAddress,
             balanceCredits: balanceVerified ? String(balance) : null,
             balanceVerified,

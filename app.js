@@ -71,6 +71,8 @@ let musicStarted = false;
 let authUser = null;
 let backendStatus = supabaseConfigured ? "Connecting to Supabase…" : "Supabase is not configured.";
 let backendReady;
+let walletStatusSnapshot = null;
+let solanaWeb3ModulePromise = null;
 
 function savePlayer() {
     localStorage.setItem(storageKey, JSON.stringify(player));
@@ -559,8 +561,14 @@ async function refreshWallet() {
     const balance = document.getElementById("wallet-balance");
     const status = document.getElementById("wallet-status-value");
     const refreshButton = document.getElementById("wallet-refresh");
+    const balanceRefreshButton = document.getElementById("wallet-balance-refresh");
+    const transferButton = document.getElementById("wallet-transfer-button");
+    walletStatusSnapshot = null;
     refreshButton.disabled = true;
     refreshButton.textContent = "LOADING";
+    balanceRefreshButton.disabled = true;
+    balanceRefreshButton.textContent = "CHECKING BALANCE…";
+    transferButton.disabled = true;
     copyButton.disabled = true;
     address.textContent = "Not configured";
     status.textContent = "DISABLED";
@@ -612,8 +620,16 @@ async function refreshWallet() {
             address.textContent = result.treasuryAddress;
             copyButton.disabled = false;
         }
+        walletStatusSnapshot = result;
         document.getElementById("fund-account-button").textContent =
-            result.linkedWalletAddress ? "RELINK SOLANA WALLET" : "CONNECT SOLANA WALLET";
+            result.linkedWalletAddress && result.depositsEnabled === true
+                ? "WALLET CONNECTED"
+                : result.linkedWalletAddress ? "RELINK SOLANA WALLET" : "CONNECT SOLANA WALLET";
+        transferButton.disabled = result.depositsEnabled !== true ||
+            !result.linkedWalletAddress ||
+            !result.officialMintAddress ||
+            !result.tokenProgramId ||
+            !Number.isInteger(result.tokenDecimals);
         signatureInput.disabled = result.depositsEnabled !== true || !result.linkedWalletAddress;
         signatureSubmit.disabled = result.depositsEnabled !== true || !result.linkedWalletAddress;
         balance.textContent = result.balanceCredits === null
@@ -637,8 +653,177 @@ async function refreshWallet() {
     } finally {
         refreshButton.disabled = false;
         refreshButton.textContent = "REFRESH";
+        balanceRefreshButton.disabled = false;
+        balanceRefreshButton.textContent = "REFRESH BALANCE";
     }
 
+}
+
+function parseTokenAmount(amountText, decimals) {
+    const value = amountText.trim();
+    if (!Number.isInteger(decimals) || decimals < 0 || decimals > 18 ||
+        !/^(?:0|[1-9]\d*)(?:\.\d+)?$/.test(value)) {
+        throw new Error("Enter a valid positive CYFUR amount.");
+    }
+    const [whole, fraction = ""] = value.split(".");
+    if (fraction.length > decimals) {
+        throw new Error(`This CYFUR mint supports at most ${decimals} decimal places.`);
+    }
+    const scale = 10n ** BigInt(decimals);
+    const rawAmount = BigInt(whole) * scale +
+        BigInt((fraction + "0".repeat(decimals)).slice(0, decimals) || "0");
+    if (rawAmount <= 0n || rawAmount * BigInt(CYFUR_CREDITS_PER_TOKEN) / scale <= 0n) {
+        throw new Error("This amount converts to less than 1 credit and will not be accepted.");
+    }
+    if (rawAmount > 18446744073709551615n) {
+        throw new Error("This amount is too large for a single Solana token transfer.");
+    }
+    return rawAmount;
+}
+
+async function loadSolanaWeb3() {
+    if (!solanaWeb3ModulePromise) {
+        solanaWeb3ModulePromise = import("https://esm.sh/@solana/web3.js@1.98.4?bundle");
+    }
+    return solanaWeb3ModulePromise;
+}
+
+function getAssociatedTokenAddress(PublicKey, owner, mint, tokenProgramId) {
+    const associatedTokenProgram = new PublicKey("ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL");
+    return PublicKey.findProgramAddressSync(
+        [owner.toBuffer(), tokenProgramId.toBuffer(), mint.toBuffer()],
+        associatedTokenProgram
+    )[0];
+}
+
+function createAssociatedTokenAccountInstruction(
+    TransactionInstruction,
+    PublicKey,
+    payer,
+    associatedToken,
+    owner,
+    mint,
+    tokenProgramId
+) {
+    return new TransactionInstruction({
+        programId: new PublicKey("ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"),
+        keys: [
+            { pubkey: payer, isSigner: true, isWritable: true },
+            { pubkey: associatedToken, isSigner: false, isWritable: true },
+            { pubkey: owner, isSigner: false, isWritable: false },
+            { pubkey: mint, isSigner: false, isWritable: false },
+            { pubkey: new PublicKey("11111111111111111111111111111111"), isSigner: false, isWritable: false },
+            { pubkey: tokenProgramId, isSigner: false, isWritable: false }
+        ],
+        data: Uint8Array.of(1)
+    });
+}
+
+async function sendCyfurDeposit() {
+    const config = walletStatusSnapshot;
+    if (!config?.depositsEnabled || !config.linkedWalletAddress ||
+        !config.treasuryAddress || !config.officialMintAddress ||
+        !config.tokenProgramId || !Number.isInteger(config.tokenDecimals)) {
+        setWalletMessage("The server has not marked deposits READY. No token transfer was started.", "disabled");
+        return;
+    }
+    const provider = window.solana;
+    if (!provider?.isPhantom || typeof provider.sendTransaction !== "function") {
+        setWalletMessage("Install or open Phantom in this browser to approve the CYFUR transfer.", "error");
+        return;
+    }
+
+    const transferButton = document.getElementById("wallet-transfer-button");
+    const mainButton = document.getElementById("fund-account-button");
+    const amountInput = document.getElementById("wallet-transfer-amount");
+    let signature = "";
+    try {
+        const rawAmount = parseTokenAmount(amountInput.value, config.tokenDecimals);
+        const connected = await provider.connect();
+        const { PublicKey, Transaction, TransactionInstruction, Connection, clusterApiUrl } =
+            await loadSolanaWeb3();
+        const payer = new PublicKey(connected.publicKey?.toString() ?? "");
+        if (payer.toString() !== config.linkedWalletAddress) {
+            throw new Error("The connected Phantom account differs from the wallet linked to this game account. Relink the correct wallet first.");
+        }
+        const treasury = new PublicKey(config.treasuryAddress);
+        const mint = new PublicKey(config.officialMintAddress);
+        const tokenProgramId = new PublicKey(config.tokenProgramId);
+        const senderTokenAccount = getAssociatedTokenAddress(PublicKey, payer, mint, tokenProgramId);
+        const treasuryTokenAccount = getAssociatedTokenAddress(PublicKey, treasury, mint, tokenProgramId);
+        const connection = new Connection(clusterApiUrl(config.network), "confirmed");
+        const [senderInfo, treasuryInfo, latestBlockhash] = await Promise.all([
+            connection.getAccountInfo(senderTokenAccount, "confirmed"),
+            connection.getAccountInfo(treasuryTokenAccount, "confirmed"),
+            connection.getLatestBlockhash("confirmed")
+        ]);
+        const instructions = [];
+        if (!senderInfo) {
+            instructions.push(createAssociatedTokenAccountInstruction(
+                TransactionInstruction,
+                PublicKey,
+                payer,
+                senderTokenAccount,
+                payer,
+                mint,
+                tokenProgramId
+            ));
+        }
+        if (!treasuryInfo) {
+            instructions.push(createAssociatedTokenAccountInstruction(
+                TransactionInstruction,
+                PublicKey,
+                payer,
+                treasuryTokenAccount,
+                treasury,
+                mint,
+                tokenProgramId
+            ));
+        }
+        const transferData = new Uint8Array(10);
+        transferData[0] = 12;
+        for (let index = 0; index < 8; index += 1) {
+            transferData[index + 1] = Number((rawAmount >> BigInt(index * 8)) & 0xffn);
+        }
+        transferData[9] = config.tokenDecimals;
+        instructions.push(new TransactionInstruction({
+            programId: tokenProgramId,
+            keys: [
+                { pubkey: senderTokenAccount, isSigner: false, isWritable: true },
+                { pubkey: mint, isSigner: false, isWritable: false },
+                { pubkey: treasuryTokenAccount, isSigner: false, isWritable: true },
+                { pubkey: payer, isSigner: true, isWritable: false }
+            ],
+            data: transferData
+        }));
+        const transaction = new Transaction({
+            feePayer: payer,
+            recentBlockhash: latestBlockhash.blockhash
+        }).add(...instructions);
+        transferButton.disabled = true;
+        mainButton.disabled = true;
+        setWalletMessage("Review the CYFUR amount and recipient in Phantom, then approve the transfer. FluxGrid will verify it before crediting.", "pending");
+        const result = await provider.sendTransaction(transaction, connection, {
+            preflightCommitment: "confirmed"
+        });
+        signature = typeof result === "string" ? result : result.signature;
+        if (!signature) throw new Error("Phantom did not return a transaction signature.");
+        document.getElementById("deposit-signature").value = signature;
+        setWalletMessage("Transfer submitted. Waiting for the backend to verify successful finalized confirmation; no credits are shown until it confirms.", "pending");
+        await verifyDepositSignature(signature);
+        amountInput.value = "";
+    } catch (error) {
+        console.error("Wallet transfer could not be completed or verified.", error);
+        if (signature) {
+            document.getElementById("deposit-signature").value = signature;
+            setWalletMessage(`Transfer was submitted, but credit verification did not complete. Keep this signature and use VERIFY & CREDIT after the transaction finalizes. ${error.message}`, "error");
+        } else {
+            setWalletMessage(`Transfer was not completed. ${error.message}`, "error");
+        }
+    } finally {
+        transferButton.disabled = walletStatusSnapshot?.depositsEnabled !== true;
+        mainButton.disabled = false;
+    }
 }
 
 async function connectSolanaWallet() {
@@ -703,7 +888,9 @@ async function connectSolanaWallet() {
         setWalletMessage(`Wallet was not linked. ${error.message}`, "error");
     } finally {
         button.disabled = false;
-        button.textContent = "CONNECT SOLANA WALLET";
+        button.textContent = walletStatusSnapshot?.linkedWalletAddress && walletStatusSnapshot.depositsEnabled
+            ? "WALLET CONNECTED"
+            : walletStatusSnapshot?.linkedWalletAddress ? "RELINK SOLANA WALLET" : "CONNECT SOLANA WALLET";
     }
 }
 
@@ -1015,10 +1202,22 @@ document.getElementById("leaderboard-refresh").addEventListener("click", () => {
 document.getElementById("wallet-refresh").addEventListener("click", () => {
     void refreshWallet();
 });
+document.getElementById("wallet-balance-refresh").addEventListener("click", () => {
+    void refreshWallet();
+});
 document.getElementById("fund-account-button").addEventListener("click", () => {
     document.getElementById("wallet-api-status").scrollIntoView({ behavior: "smooth", block: "center" });
     document.getElementById("wallet-api-status").focus({ preventScroll: true });
-    void connectSolanaWallet();
+    if (walletStatusSnapshot?.linkedWalletAddress && walletStatusSnapshot.depositsEnabled === true) {
+        document.getElementById("wallet-transfer-amount").focus({ preventScroll: true });
+        setWalletMessage("Enter the CYFUR amount below and choose DEPOSIT CYFUR to review and approve the transfer in Phantom.", "ready");
+    } else {
+        void connectSolanaWallet();
+    }
+});
+document.getElementById("wallet-transfer-form").addEventListener("submit", (event) => {
+    event.preventDefault();
+    void sendCyfurDeposit();
 });
 document.getElementById("wallet-copy-address").addEventListener("click", async () => {
     const address = document.getElementById("wallet-address").textContent.trim();
