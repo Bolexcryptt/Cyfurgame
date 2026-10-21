@@ -1,4 +1,4 @@
-import { CYFUR_CREDITS_PER_TOKEN, getLevelEconomy, levels, claimLevelCompletion } from "./levels.js";
+import { CYFUR_CREDITS_PER_TOKEN, levels, claimLevelCompletion } from "./levels.js";
 import { supabase, supabaseConfigured } from "./supabase.js";
 import {
     bytesToWalletBase64,
@@ -347,7 +347,6 @@ function renderLevels() {
     const fragment = document.createDocumentFragment();
     const continueLevel = getContinueLevel();
     for (const level of levels) {
-        const entryCostCredits = getLevelEconomy(level.number).entryCostCredits;
         const completed = player.completedLevels.includes(level.number);
         const unlocked = level.number <= player.unlockedLevel;
         const current = level.number === continueLevel && unlocked && !completed;
@@ -370,7 +369,7 @@ function renderLevels() {
         meta.textContent = `${level.par} MIRROR${level.par === 1 ? "" : "S"} REQUIRED · TIER ${level.band}`;
         const entryCost = document.createElement("small");
         entryCost.className = "level-cost";
-        entryCost.textContent = `${entryCostCredits.toLocaleString("en-US")} CREDITS`;
+        entryCost.textContent = "FREE PLAY";
         detail.append(title, meta);
         const badge = document.createElement("span");
         badge.className = "level-state";
@@ -379,10 +378,7 @@ function renderLevels() {
         cost.className = "level-entry-cost";
         cost.append(entryCost);
         button.append(number, detail, cost, badge);
-        button.setAttribute(
-            "aria-label",
-            `Level ${level.number}, entry cost ${entryCostCredits} credits, ${completed ? "completed" : unlocked ? "progress unlocked" : "locked"}`
-        );
+        button.setAttribute("aria-label", `Level ${level.number}, free play, ${completed ? "completed" : unlocked ? "progress unlocked" : "locked"}`);
         button.addEventListener("click", () => void startLevel(level.number));
         item.append(button);
         fragment.append(item);
@@ -1329,10 +1325,9 @@ function showOpeningIntro() {
 async function startLevel(number, resumeMusic = false) {
     const level = levels[number - 1];
     if (!level || number > player.unlockedLevel) return;
-    const entry = await requestLevelEntry(number);
-    if (!entry) return;
-    activeWalletLevelSessionId = entry.sessionId;
+    activeWalletLevelSessionId = null;
     walletTimerStartPromise = Promise.resolve(false);
+    setLevelEntryMessage("Free gameplay testing is enabled. No credits are charged or awarded.", "ready");
     player.lastLevel = number;
     pendingLevel = level;
     savePlayer();

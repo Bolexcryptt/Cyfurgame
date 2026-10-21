@@ -307,6 +307,27 @@ test("backend level entry costs match the campaign economy for all 99 levels", (
     assert.equal(getLevelEntryCostCredits(100), null);
 });
 
+test("free gameplay testing does not request paid level entry or change wallet credits", () => {
+    const app = readFileSync(new URL("../app.js", import.meta.url), "utf8");
+    const startIndex = app.indexOf("async function startLevel");
+    const endIndex = app.indexOf("\nfunction leaveGameplay", startIndex);
+    const startLevel = app.slice(startIndex, endIndex);
+    assert.ok(startIndex >= 0);
+    assert.ok(endIndex > startIndex);
+    assert.doesNotMatch(startLevel, /requestLevelEntry/);
+    assert.match(startLevel, /activeWalletLevelSessionId = null/);
+    assert.match(app, /entryCost\.textContent = "FREE PLAY"/);
+
+    const scene = readFileSync(new URL("../script.js", import.meta.url), "utf8");
+    assert.match(scene, /reward\.textContent = "0 credits"/);
+    assert.match(scene, /Testing mode · no credits changed/);
+    assert.match(scene, /const mirror = placedMirrors\.get\(gridKey\(row, col\)\);[\s\S]*?else if \(isObstacle\)/);
+    assert.doesNotMatch(
+        scene.slice(scene.indexOf("function placeOrRotateMirror"), scene.indexOf("function toggleLaunchDirection")),
+        /That tile is blocked by a structure/
+    );
+});
+
 test("deposit conversion uses precise integer arithmetic and requires explicit rounding", () => {
     assert.equal(getDepositCreditAmount("100000000", 8, "reject_fraction"), "10000");
     assert.equal(getDepositCreditAmount("10000", 8, "reject_fraction"), "1");

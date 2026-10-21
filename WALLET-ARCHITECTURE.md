@@ -35,7 +35,7 @@ Configure these Vercel **server-side** variables:
 
 Never set a variable beginning with `NEXT_PUBLIC_` for these values. Do not configure CDP keys or treasury signing keys; this flow does not need them. The owner receives transfers directly in the owner's treasury wallet, so no in-game custody service or automated sweep is involved.
 
-Paid gameplay remains a separate feature gate: both `WALLET_PAID_GAMEPLAY_ENABLED=true` and `wallet_system_config.paid_gameplay_enabled=true` are required by the server, and both remain off until payment and game-economy testing is complete.
+Free gameplay testing is currently enabled in the client: selecting an unlocked level does not call the paid-entry API, charge credits, or award wallet credits. Campaign progress is still saved through the existing local/leaderboard completion path. Paid gameplay remains server-gated: both `WALLET_PAID_GAMEPLAY_ENABLED=true` and `wallet_system_config.paid_gameplay_enabled=true` are required by the server, and both remain off until payment and game-economy testing is complete.
 
 ## Wallet link and deposit flow
 

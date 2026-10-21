@@ -3,7 +3,7 @@ import { EffectComposer } from "three/addons/postprocessing/EffectComposer.js";
 import { RenderPass } from "three/addons/postprocessing/RenderPass.js";
 import { UnrealBloomPass } from "three/addons/postprocessing/UnrealBloomPass.js";
 import { OutputPass } from "three/addons/postprocessing/OutputPass.js";
-import { levels, calculateSolveTimeMilliseconds, evaluateLevelStars, getLevelEconomy } from "./levels.js";
+import { levels, calculateSolveTimeMilliseconds, evaluateLevelStars } from "./levels.js";
 
 const canvas = document.getElementById("scene-canvas");
 const errorPanel = document.getElementById("load-error");
@@ -39,8 +39,8 @@ function startScene() {
         antialias: true,
         powerPreference: "high-performance"
     });
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.65));
-    renderer.shadowMap.enabled = true;
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.35));
+    renderer.shadowMap.enabled = window.innerWidth >= 620;
     renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
     renderer.toneMappingExposure = 1;
@@ -56,8 +56,8 @@ function startScene() {
 
     const moonLight = new THREE.DirectionalLight(0xb5c6dc, 4);
     moonLight.position.set(-7, 15, -4);
-    moonLight.castShadow = true;
-    moonLight.shadow.mapSize.set(2048, 2048);
+    moonLight.castShadow = window.innerWidth >= 620;
+    moonLight.shadow.mapSize.set(1024, 1024);
     moonLight.shadow.camera.left = -14;
     moonLight.shadow.camera.right = 14;
     moonLight.shadow.camera.top = 14;
@@ -111,6 +111,7 @@ function startScene() {
     const raycaster = new THREE.Raycaster();
     const pointerNdc = new THREE.Vector2();
     const beamSegments = [];
+    const animatedObjects = [];
     let activeLevel = levels[0];
     let previewRoute = null;
     let sourcePylon = null;
@@ -721,7 +722,13 @@ function startScene() {
 
     function createPlayerMirror(row, col, slash = true) {
         const group = new THREE.Group();
-        group.position.set(gridX(col), 0.2, gridZ(row));
+        const obstacleIndex = activeLevel.obstacles.findIndex(
+            (cell) => cell.row === row && cell.col === col
+        );
+        const obstacleTop = obstacleIndex < 0
+            ? 0.2
+            : 0.19 + 0.52 + (obstacleIndex % 2) * 0.16 + 0.06;
+        group.position.set(gridX(col), obstacleTop, gridZ(row));
         const baseMaterial = makeMaterial(0x26313d, 0.38, 0.82);
         const frameMaterial = makeMaterial(0x778995, 0.31, 0.8);
         const glassMaterial = new THREE.MeshStandardMaterial({
@@ -826,6 +833,7 @@ function startScene() {
             col = nextCol;
             finalCell = { row, col };
             const isTarget = row === GRID.target.row && col === GRID.target.col;
+            const mirror = placedMirrors.get(gridKey(row, col));
             const isObstacle = activeLevel.obstacles.some((cell) => cell.row === row && cell.col === col);
             const to = isTarget
                 ? new THREE.Vector3(gridX(col), 1.17, gridZ(row))
@@ -837,18 +845,15 @@ function startScene() {
                 outcome = "powered";
                 break;
             }
-            if (isObstacle) {
-                outcome = "blocked";
-                break;
-            }
-
-            const mirror = placedMirrors.get(gridKey(row, col));
             if (mirror) {
                 direction = mirror.slash
                     ? slashReflection[direction]
                     : backslashReflection[direction];
                 reflections++;
                 colorIndex++;
+            } else if (isObstacle) {
+                outcome = "blocked";
+                break;
             }
         }
 
@@ -976,7 +981,6 @@ function startScene() {
     }
 
     function showCompletionSummary(level, elapsedMilliseconds, result) {
-        const economy = getLevelEconomy(level.number);
         const timeTargets = level.starTimeTargets;
         const stars = result.stars;
         document.getElementById("completion-stars").textContent = `${stars} / 3`;
@@ -984,24 +988,14 @@ function startScene() {
         document.getElementById("completion-time").textContent = `${(elapsedMilliseconds / 1000).toFixed(1)} s`;
         document.getElementById("completion-time-thresholds").textContent =
             `3★ ≤ ${timeTargets.threeSeconds}s · 2★ ≤ ${timeTargets.twoSeconds}s`;
-        document.getElementById("completion-entry-cost").textContent = `${economy.entryCostCredits.toLocaleString("en-US")} credits`;
+        document.getElementById("completion-entry-cost").textContent = "FREE";
 
         const rewardLabel = document.getElementById("completion-reward-label");
         const reward = document.getElementById("completion-reward");
         const rewardNote = document.getElementById("completion-reward-note");
-        if (stars === 3) {
-            rewardLabel.textContent = "3-STAR PAYOUT";
-            reward.textContent = `${economy.threeStarPayoutCredits.toLocaleString("en-US")} credits`;
-            rewardNote.textContent = "Potential payout · not credited";
-        } else if (stars === 2) {
-            rewardLabel.textContent = "2-STAR REFUND";
-            reward.textContent = `${economy.twoStarRefundCredits.toLocaleString("en-US")} credits`;
-            rewardNote.textContent = "Potential refund · not credited";
-        } else {
-            rewardLabel.textContent = "1-STAR PAYOUT";
-            reward.textContent = `${economy.oneStarPayoutCredits.toLocaleString("en-US")} credits`;
-            rewardNote.textContent = "No payout for 1 star";
-        }
+        rewardLabel.textContent = "CREDIT EFFECT";
+        reward.textContent = "0 credits";
+        rewardNote.textContent = "Testing mode · no credits changed";
         completionSummary.hidden = false;
         gameHud.dataset.completed = "true";
     }
@@ -1011,10 +1005,6 @@ function startScene() {
         if ((row === GRID.start.row && col === GRID.start.col) ||
             (row === GRID.target.row && col === GRID.target.col)) {
             setFeedback("The source and battery occupy those tiles.");
-            return;
-        }
-        if (activeLevel.obstacles.some((cell) => cell.row === row && cell.col === col)) {
-            setFeedback("That tile is blocked by a structure.");
             return;
         }
         startSolveTimer();
@@ -1120,12 +1110,17 @@ function startScene() {
             const cell = pickTile(event);
             if (!cell ||
                 (cell.row === GRID.start.row && cell.col === GRID.start.col) ||
-                (cell.row === GRID.target.row && cell.col === GRID.target.col) ||
-                activeLevel.obstacles.some((obstacle) => obstacle.row === cell.row && obstacle.col === cell.col)) {
+                (cell.row === GRID.target.row && cell.col === GRID.target.col)) {
                 hoverRing.visible = false;
                 return;
             }
-            hoverRing.position.set(gridX(cell.col), 0.27, gridZ(cell.row));
+            const obstacleIndex = activeLevel.obstacles.findIndex(
+                (obstacle) => obstacle.row === cell.row && obstacle.col === cell.col
+            );
+            const hoverHeight = obstacleIndex < 0
+                ? 0.27
+                : 0.19 + 0.52 + (obstacleIndex % 2) * 0.16 + 0.08;
+            hoverRing.position.set(gridX(cell.col), hoverHeight, gridZ(cell.row));
             hoverRing.visible = !corePowered && !tracing;
         });
 
@@ -1609,6 +1604,7 @@ function startScene() {
         corePulse.position.y = 0.09;
         hologram.add(corePulse);
         hologram.userData.animate = true;
+        animatedObjects.push(hologram);
 
         coreSystem = new THREE.Group();
         platform.children.slice(firstCoreChild).forEach((child) => {
@@ -1675,7 +1671,10 @@ function startScene() {
     function resize() {
         const width = Math.max(1, canvas.clientWidth);
         const height = Math.max(1, canvas.clientHeight);
-        renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, width < 620 ? 1.3 : 1.65));
+        const mobileQuality = width < 620;
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, mobileQuality ? 1 : 1.35));
+        renderer.shadowMap.enabled = !mobileQuality;
+        moonLight.castShadow = !mobileQuality;
         renderer.setSize(width, height, false);
         composer.setSize(width, height);
         camera.aspect = width / height;
@@ -1783,6 +1782,7 @@ function startScene() {
     const clock = new THREE.Clock();
     function render() {
         requestAnimationFrame(render);
+        if (document.hidden || canvas.clientWidth === 0 || canvas.clientHeight === 0) return;
         const time = clock.getElapsedTime();
         if (tracing && traceResult) {
             const duration = Math.max(650, traceResult.segments.length * 175);
@@ -1849,12 +1849,10 @@ function startScene() {
                 }
             }
         }
-        platform.traverse((object) => {
-            if (object.userData.animate) {
-                object.rotation.y = Math.sin(time * 0.12) * 0.025;
-                object.position.y = 1.42 + Math.sin(time * 0.8) * 0.025;
-            }
-        });
+        for (const object of animatedObjects) {
+            object.rotation.y = Math.sin(time * 0.12) * 0.025;
+            object.position.y = 1.42 + Math.sin(time * 0.8) * 0.025;
+        }
         if (corePowered) {
             coreLight.intensity = 16 + Math.sin(time * 4) * 2;
             corePulse.scale.setScalar(1 + Math.sin(time * 3.2) * 0.08);
@@ -1862,7 +1860,8 @@ function startScene() {
             coreLight.intensity = 14;
             if (corePulse) corePulse.scale.setScalar(1 + Math.sin(time * 1.8) * 0.025);
         }
-        composer.render();
+        if (renderer.shadowMap.enabled) composer.render();
+        else renderer.render(scene, camera);
     }
     render();
     window.addEventListener("resize", resize);
