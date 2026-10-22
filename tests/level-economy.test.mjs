@@ -322,6 +322,8 @@ test("free gameplay testing does not request paid level entry or change wallet c
     assert.match(scene, /reward\.textContent = "0 credits"/);
     assert.match(scene, /Testing mode · no credits changed/);
     assert.match(scene, /const mirror = placedMirrors\.get\(gridKey\(row, col\)\);[\s\S]*?else if \(isObstacle\)/);
+    assert.match(scene, /crystal\.definition\.inputColor !== colorIndex % beamColors\.length/);
+    assert.match(scene, /drawActiveRoute\(previewRoute, previewRoute\.segments\.length, true\)/);
     assert.doesNotMatch(
         scene.slice(scene.indexOf("function placeOrRotateMirror"), scene.indexOf("function toggleLaunchDirection")),
         /That tile is blocked by a structure/
@@ -337,8 +339,13 @@ test("RelicGrid branding is used in the game and hidden scenes stop rendering", 
     assert.match(scene, /antialias: !mobileQuality/);
     assert.match(scene, /mobileQuality \? 0\.75 : 1\.35/);
     assert.match(scene, /configureQualityLight/);
+    assert.match(scene, /new THREE\.Sprite\(new THREE\.SpriteMaterial/);
+    assert.match(scene, /crystalHits\.forEach/);
     assert.match(scene, /if \(document\.hidden \|\| canvas\.clientWidth === 0 \|\| canvas\.clientHeight === 0\) return;/);
     assert.match(scene, /cancelAnimationFrame\(renderRequest\)/);
+    const app = readFileSync(new URL("../app.js", import.meta.url), "utf8");
+    assert.match(app, /next-level[\s\S]*?startLevel\(number, true\)/);
+    assert.doesNotMatch(app, /playLevelTransition|transitionFor/);
 });
 
 test("deposit conversion uses precise integer arithmetic and requires explicit rounding", () => {
@@ -487,6 +494,53 @@ test("server proof validator accepts the generated solution and rejects fabricat
     assert.equal(verifyLevelProof(levels[0], [], levels[0].start.direction).connected, false);
     assert.equal(verifyLevelProof(levels[0], [{ row: -1, col: 1, slash: true }], 1).connected, false);
     assert.equal(verifyLevelProof(levels[0], [], 0).connected, false);
+});
+
+test("server proof requires every crystal to be hit in the correct color sequence", () => {
+    const level = levels[0];
+    const mirrors = level.solutionMirrors.map(({ row, col, orientation }) => ({
+        row,
+        col,
+        slash: orientation === "/"
+    }));
+    const routeCells = new Set(level.route.map(({ row, col }) => `${row},${col}`));
+    const obstacles = new Set(level.obstacles.map(({ row, col }) => `${row},${col}`));
+    const openCell = Array.from({ length: 6 }, (_, row) =>
+        Array.from({ length: 8 }, (_, col) => ({ row, col }))
+    ).flat().find(({ row, col }) => {
+        const key = `${row},${col}`;
+        return !routeCells.has(key) && !obstacles.has(key);
+    });
+
+    assert.ok(level.crystals.length >= 1);
+    assert.deepEqual(
+        verifyLevelProof(level, mirrors, level.start.direction),
+        { connected: true, reflections: level.par }
+    );
+    assert.equal(
+        verifyLevelProof({
+            ...level,
+            crystals: [{ ...level.crystals[0], ...openCell }, ...level.crystals.slice(1)]
+        }, mirrors, level.start.direction).reason,
+        "crystal_missed"
+    );
+    assert.equal(
+        verifyLevelProof({
+            ...level,
+            crystals: [{
+                ...level.crystals[0],
+                inputColor: (level.crystals[0].inputColor + 1) % 3
+            }, ...level.crystals.slice(1)]
+        }, mirrors, level.start.direction).reason,
+        "crystal_mismatch"
+    );
+    assert.equal(
+        verifyLevelProof(level, [
+            ...mirrors,
+            { row: level.crystals[0].row, col: level.crystals[0].col, slash: true }
+        ], level.start.direction).reason,
+        "invalid_mirror_position"
+    );
 });
 
 test("server-side time ratings share the configured thresholds and exact reward formulas", async () => {
@@ -1318,7 +1372,7 @@ test("a level completion event can only be claimed once per level", () => {
     assert.equal(claimLevelCompletion(2, null), false);
 });
 
-test("all 99 generated layouts are unique, valid, and solvable with their solution mirrors", () => {
+test("all 99 generated layouts are unique, valid, and solvable through every ordered crystal", () => {
     const signatures = new Set();
     const deltas = [
         { row: -1, col: 0 },
@@ -1343,19 +1397,35 @@ test("all 99 generated layouts are unique, valid, and solvable with their soluti
             start: level.start,
             target: level.target,
             solutionMirrors: level.solutionMirrors,
+            crystals: level.crystals,
             obstacles: level.obstacles
         });
         assert.equal(signatures.has(signature), false, `Level ${level.number} duplicates a generated layout.`);
         signatures.add(signature);
 
         const obstacles = new Set(level.obstacles.map(({ row, col }) => `${row},${col}`));
+        const mirrorCells = new Set(level.solutionMirrors.map(({ row, col }) => `${row},${col}`));
+        const crystals = new Map(level.crystals.map((crystal) => [
+            `${crystal.row},${crystal.col}`,
+            crystal
+        ]));
         const mirrors = new Map(level.solutionMirrors.map((mirror) => [`${mirror.row},${mirror.col}`, mirror.orientation]));
+        assert.equal(level.crystals.length, 1 + Math.floor((level.band - 1) / 2));
+        for (const crystal of level.crystals) {
+            const key = `${crystal.row},${crystal.col}`;
+            assert.equal(obstacles.has(key), false);
+            assert.equal(mirrorCells.has(key), false);
+            assert.ok(crystal.inputColor >= 0 && crystal.inputColor < 3);
+            assert.ok(crystal.outputColor >= 0 && crystal.outputColor < 3);
+        }
         assert.equal(obstacles.has(`${level.start.row},${level.start.col}`), false);
         assert.equal(obstacles.has(`${level.target.row},${level.target.col}`), false);
 
         let row = level.start.row;
         let col = level.start.col;
         let direction = level.start.direction;
+        let colorIndex = 0;
+        let nextCrystal = 0;
         const visited = new Set();
         let connected = false;
         for (let step = 0; step < 6 * 8 * 2; step++) {
@@ -1375,8 +1445,17 @@ test("all 99 generated layouts are unique, valid, and solvable with their soluti
             const orientation = mirrors.get(`${row},${col}`);
             if (orientation === "/") direction = slashReflection[direction];
             else if (orientation === "\\") direction = backslashReflection[direction];
+            if (orientation) colorIndex++;
+            const crystal = crystals.get(`${row},${col}`);
+            if (crystal) {
+                assert.equal(crystal.inputColor, colorIndex % 3, `Level ${level.number} crystal has the wrong input color.`);
+                assert.equal(crystal.outputColor, (crystal.inputColor + 1) % 3);
+                colorIndex = crystal.outputColor;
+                nextCrystal++;
+            }
         }
         assert.equal(connected, true, `Level ${level.number} solution does not connect to its battery.`);
+        assert.equal(nextCrystal, level.crystals.length, `Level ${level.number} solution must activate every crystal.`);
     }
     assert.equal(signatures.size, 99);
 });

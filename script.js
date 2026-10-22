@@ -113,6 +113,7 @@ function startScene() {
     const tileTargets = [];
     const sourceTargets = [];
     const placedMirrors = new Map();
+    const levelCrystals = new Map();
     const raycaster = new THREE.Raycaster();
     const pointerNdc = new THREE.Vector2();
     const beamSegments = [];
@@ -137,7 +138,7 @@ function startScene() {
     const cameraState = {
         azimuth: 0.53,
         elevation: 0.54,
-        distance: 12.5,
+        distance: 16,
         defaultAzimuth: 0.53,
         defaultElevation: 0.54,
         dragging: false,
@@ -778,7 +779,8 @@ function startScene() {
             const child = group.children[i];
             group.remove(child);
             child.traverse((object) => {
-                if (!object.isMesh && !object.isLine) return;
+                if (!object.isMesh && !object.isLine && !object.isSprite) return;
+                if (object.isSprite) object.material?.map?.dispose();
                 object.geometry?.dispose();
                 if (Array.isArray(object.material)) {
                     object.material.forEach((material) => material.dispose());
@@ -798,6 +800,7 @@ function startScene() {
     const slashReflection = [1, 0, 3, 2];
     const backslashReflection = [3, 2, 1, 0];
     const beamColors = [colors.pink, colors.amber, colors.blue];
+    const crystalColors = [0xff77e6, 0xffaa43, 0x43baff];
 
     function traceLight() {
         let row = GRID.start.row;
@@ -805,7 +808,9 @@ function startScene() {
         let direction = launchDirection;
         let colorIndex = 0;
         const segments = [];
+        const crystalHits = [];
         const visited = new Set();
+        const activatedCrystals = new Set();
         let outcome = "edge";
         let reflections = 0;
         let finalCell = { row, col };
@@ -847,7 +852,7 @@ function startScene() {
             from = to.clone();
 
             if (isTarget) {
-                outcome = "powered";
+                outcome = activatedCrystals.size === levelCrystals.size ? "powered" : "crystal_missed";
                 break;
             }
             if (mirror) {
@@ -860,22 +865,33 @@ function startScene() {
                 outcome = "blocked";
                 break;
             }
+            const crystal = levelCrystals.get(gridKey(row, col));
+            if (crystal) {
+                if (crystal.definition.index !== activatedCrystals.size ||
+                    crystal.definition.inputColor !== colorIndex % beamColors.length) {
+                    outcome = "crystal_mismatch";
+                    break;
+                }
+                activatedCrystals.add(gridKey(row, col));
+                crystalHits.push({ cellKey: gridKey(row, col), segmentIndex: segments.length - 1 });
+                colorIndex = crystal.definition.outputColor;
+            }
         }
 
         if (outcome === "powered" && reflections < activeLevel.par) {
             outcome = "underpowered";
         }
-        return { outcome, finalCell, segments, reflections };
+        return { outcome, finalCell, segments, reflections, crystalHits };
     }
 
-    function addActiveSegment(segment, index, visibleCount) {
+    function addActiveSegment(segment, index, visibleCount, preview = false) {
         const curve = new THREE.LineCurve3(segment.from, segment.to);
         const glow = new THREE.Mesh(
             new THREE.TubeGeometry(curve, 1, 0.055, 8, false),
             new THREE.MeshBasicMaterial({
                 color: segment.color,
                 transparent: true,
-                opacity: 0.12,
+                opacity: preview ? 0.035 : 0.12,
                 depthWrite: false,
                 toneMapped: false,
                 blending: THREE.AdditiveBlending
@@ -885,6 +901,9 @@ function startScene() {
             new THREE.TubeGeometry(curve, 1, 0.018, 6, false),
             new THREE.MeshBasicMaterial({
                 color: segment.color,
+                transparent: preview,
+                opacity: preview ? 0.32 : 1,
+                depthWrite: !preview,
                 toneMapped: false,
                 blending: THREE.AdditiveBlending
             })
@@ -895,10 +914,10 @@ function startScene() {
         beamSegments.push({ glow, core });
     }
 
-    function drawActiveRoute(route, visibleCount = route.segments.length) {
+    function drawActiveRoute(route, visibleCount = route.segments.length, preview = false) {
         clearObjectGroup(activeBeamGroup);
         beamSegments.length = 0;
-        route.segments.forEach((segment, index) => addActiveSegment(segment, index, visibleCount));
+        route.segments.forEach((segment, index) => addActiveSegment(segment, index, visibleCount, preview));
     }
 
     function placeLevelTarget() {
@@ -912,6 +931,7 @@ function startScene() {
 
     function createLevelObstacles() {
         clearObjectGroup(levelObjectGroup);
+        levelCrystals.clear();
         activeLevel.obstacles.forEach(({ row, col }, index) => {
             const block = new THREE.Group();
             block.position.set(gridX(col), 0.19, gridZ(row));
@@ -930,6 +950,74 @@ function startScene() {
                 materials.stone[(index + 1) % materials.stone.length]
             );
         });
+        activeLevel.crystals.forEach((definition, index) => {
+            const cellKey = gridKey(definition.row, definition.col);
+            const crystalGroup = new THREE.Group();
+            crystalGroup.position.set(gridX(definition.col), 0.2, gridZ(definition.row));
+            levelObjectGroup.add(crystalGroup);
+            addCylinder(crystalGroup, 0.3, 0.38, 0.12, [0, 0.06, 0], materials.metalEdge, 6);
+
+            const ring = new THREE.Mesh(
+                new THREE.TorusGeometry(0.34, 0.025, 6, 24),
+                new THREE.MeshBasicMaterial({
+                    color: crystalColors[definition.inputColor],
+                    transparent: true,
+                    opacity: 0.8,
+                    toneMapped: false
+                })
+            );
+            ring.rotation.x = Math.PI / 2;
+            ring.position.y = 0.15;
+            crystalGroup.add(ring);
+
+            const material = new THREE.MeshStandardMaterial({
+                color: crystalColors[definition.inputColor],
+                emissive: crystalColors[definition.inputColor],
+                emissiveIntensity: 0.32,
+                metalness: 0.18,
+                roughness: 0.2,
+                transparent: true,
+                opacity: 0.9
+            });
+            const prism = new THREE.Mesh(new THREE.OctahedronGeometry(0.3, 0), material);
+            prism.position.y = 0.53;
+            prism.rotation.set(0.2, 0.3 + index * 0.2, 0.12);
+            prism.castShadow = true;
+            crystalGroup.add(prism);
+            const labelCanvas = document.createElement("canvas");
+            labelCanvas.width = 128;
+            labelCanvas.height = 56;
+            const labelContext = labelCanvas.getContext("2d");
+            labelContext.fillStyle = "#08131ee8";
+            labelContext.fillRect(2, 2, 124, 52);
+            labelContext.strokeStyle = "#b4eefa";
+            labelContext.lineWidth = 3;
+            labelContext.strokeRect(3.5, 3.5, 121, 49);
+            labelContext.fillStyle = "#e8fbff";
+            labelContext.font = "bold 32px Consolas, monospace";
+            labelContext.textAlign = "center";
+            labelContext.textBaseline = "middle";
+            labelContext.fillText(String(index + 1).padStart(2, "0"), 64, 29);
+            const labelTexture = new THREE.CanvasTexture(labelCanvas);
+            labelTexture.colorSpace = THREE.SRGBColorSpace;
+            const label = new THREE.Sprite(new THREE.SpriteMaterial({
+                map: labelTexture,
+                transparent: true,
+                depthWrite: false
+            }));
+            label.position.y = 1.02;
+            label.scale.set(0.62, 0.27, 1);
+            crystalGroup.add(label);
+            levelCrystals.set(cellKey, { definition: { ...definition, index }, material, activated: false });
+        });
+    }
+
+    function resetCrystalStates() {
+        for (const crystal of levelCrystals.values()) {
+            crystal.activated = false;
+            crystal.material.emissiveIntensity = 0.32;
+            crystal.material.color.setHex(crystalColors[crystal.definition.inputColor]);
+        }
     }
 
     function loadLevel(levelDetails) {
@@ -1001,6 +1089,11 @@ function startScene() {
         rewardLabel.textContent = "CREDIT EFFECT";
         reward.textContent = "0 credits";
         rewardNote.textContent = "Testing mode · no credits changed";
+        const nextLevelButton = document.getElementById("next-level");
+        nextLevelButton.hidden = false;
+        nextLevelButton.disabled = true;
+        nextLevelButton.dataset.nextLevel = String(level.number + 1);
+        nextLevelButton.textContent = level.number >= levels.length ? "CAMPAIGN COMPLETE" : "NEXT LEVEL →";
         completionSummary.hidden = false;
         gameHud.dataset.completed = "true";
     }
@@ -1012,7 +1105,12 @@ function startScene() {
             setFeedback("The source and battery occupy those tiles.");
             return;
         }
+        if (levelCrystals.has(gridKey(row, col))) {
+            setFeedback("A crystal occupies this tile. Route the laser through it; mirrors cannot cover crystals.");
+            return;
+        }
         startSolveTimer();
+        resetCrystalStates();
         const cellKey = gridKey(row, col);
         const existing = placedMirrors.get(cellKey);
         if (existing) {
@@ -1027,8 +1125,9 @@ function startScene() {
         clearObjectGroup(activeBeamGroup);
         beamSegments.length = 0;
         previewRoute = traceLight();
+        drawActiveRoute(previewRoute, previewRoute.segments.length, true);
         if (previewRoute.outcome === "powered") {
-            setFeedback("Route ready. Press POWER SOURCE to launch the beam.", "ready");
+            setFeedback(`All ${activeLevel.crystals.length} crystals aligned. Press POWER SOURCE to launch.`, "ready");
         } else if (previewRoute.outcome === "underpowered") {
             const needed = activeLevel.par - previewRoute.reflections;
             setFeedback(
@@ -1037,6 +1136,16 @@ function startScene() {
             );
         } else if (previewRoute.outcome === "loop") {
             setFeedback("This route loops. Rotate or move a mirror before launching.", "miss");
+        } else if (previewRoute.outcome === "crystal_missed") {
+            const remaining = activeLevel.crystals.length - previewRoute.crystalHits.length;
+            setFeedback(
+                `Battery reached, but ${remaining} crystal${remaining === 1 ? " is" : "s are"} still uncharged. Redirect through every crystal.`,
+                "miss"
+            );
+        } else if (previewRoute.outcome === "crystal_mismatch") {
+            setFeedback("A crystal received the wrong beam color. Re-route through the crystals in sequence.", "miss");
+        } else if (previewRoute.outcome === "blocked") {
+            setFeedback("Stone blocks the beam. Redirect it with a mirror before the obstruction.", "miss");
         } else {
             setFeedback(
                 `The route exits after row ${previewRoute.finalCell.row + 1}, column ${previewRoute.finalCell.col + 1}. Adjust a mirror before launching.`,
@@ -1053,6 +1162,8 @@ function startScene() {
         clearObjectGroup(activeBeamGroup);
         beamSegments.length = 0;
         previewRoute = placedMirrors.size ? traceLight() : null;
+        resetCrystalStates();
+        if (previewRoute) drawActiveRoute(previewRoute, previewRoute.segments.length, true);
         setFeedback(
             `Source points ${launchDirection === 1 ? "right" : "left"}. Place mirrors, then press POWER SOURCE to launch.`
         );
@@ -1062,6 +1173,7 @@ function startScene() {
         if (tracing || corePowered) return;
         startSolveTimer();
         previewRoute = traceLight();
+        resetCrystalStates();
         environmentNetwork.visible = false;
         drawActiveRoute(previewRoute, 0);
         if (sourcePylon?.userData.beaconLight) sourcePylon.userData.beaconLight.intensity = 12;
@@ -1079,6 +1191,10 @@ function startScene() {
         previewRoute = null;
         levelStartedAt = null;
         completionSummary.hidden = true;
+        const nextLevelButton = document.getElementById("next-level");
+        nextLevelButton.hidden = true;
+        nextLevelButton.disabled = true;
+        resetCrystalStates();
         delete gameHud.dataset.completed;
         launchDirection = activeLevel.start.direction;
         updateSourceMarker();
@@ -1092,9 +1208,12 @@ function startScene() {
         if (sourcePylon?.userData.beaconLight) sourcePylon.userData.beaconLight.intensity = 7;
         traceButton.disabled = false;
         traceButton.innerHTML = "<span>▶</span> POWER SOURCE";
+        const crystalObjective = activeLevel.crystals.length === 1
+            ? "the numbered crystal"
+            : `all ${activeLevel.crystals.length} numbered crystals`;
         setStatus(
             `Level ${String(activeLevel.number).padStart(2, "0")} — ${activeLevel.title}`,
-            `Requires ${activeLevel.par} mirror${activeLevel.par === 1 ? "" : "s"} on the beam path. Tap the source to switch side, place mirrors, then launch.`
+            `Route through ${crystalObjective} in order using at least ${activeLevel.par} mirror${activeLevel.par === 1 ? "" : "s"}. Mirrors shift beam color; match each crystal, then reach the battery.`
         );
     }
 
@@ -1674,7 +1793,7 @@ function startScene() {
     function resetCamera() {
         cameraState.azimuth = cameraState.defaultAzimuth;
         cameraState.elevation = cameraState.defaultElevation;
-        cameraState.distance = window.innerWidth < 620 ? 17.5 : 12.5;
+        cameraState.distance = window.innerWidth < 620 ? 17.5 : 16;
         setupCamera();
     }
 
@@ -1813,6 +1932,14 @@ function startScene() {
                 glow.visible = visible;
                 core.visible = visible;
             });
+            traceResult.crystalHits.forEach(({ cellKey, segmentIndex }) => {
+                if (segmentIndex >= visibleCount) return;
+                const crystal = levelCrystals.get(cellKey);
+                if (!crystal || crystal.activated) return;
+                crystal.activated = true;
+                crystal.material.emissiveIntensity = 1.8;
+                crystal.material.color.setHex(crystalColors[crystal.definition.outputColor]);
+            });
 
             if (progress >= 1) {
                 tracing = false;
@@ -1862,7 +1989,11 @@ function startScene() {
                             ? "The beam hits an obstacle."
                             : traceResult.outcome === "underpowered"
                                 ? `The battery received the beam, but this sector requires ${activeLevel.par} mirrors on its path; only ${traceResult.reflections} reflected the beam.`
-                            : "The beam misses the battery and exits the platform.";
+                                : traceResult.outcome === "crystal_missed"
+                                    ? "The battery was reached, but not every crystal was charged."
+                                    : traceResult.outcome === "crystal_mismatch"
+                                        ? "A crystal rejected the beam color. Follow the crystal color sequence."
+                                : "The beam misses the battery and exits the platform.";
                     setStatus("Route interrupted", `${ending} Adjust the mirrors or choose the other launch side.`, "miss");
                 }
             }

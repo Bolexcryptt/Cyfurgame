@@ -128,6 +128,30 @@ function makeLevel(number, usedLayouts) {
         }
         if (solutionMirrors.length < requiredTurns) continue;
 
+        const straightRouteCells = [];
+        for (let i = 1; i < route.length - 1; i++) {
+            if (route[i].direction === route[i + 1].direction) {
+                straightRouteCells.push(route[i]);
+            }
+        }
+        const crystalCount = 1 + Math.floor((band - 1) / 2);
+        if (straightRouteCells.length < crystalCount) continue;
+        for (let i = straightRouteCells.length - 1; i > 0; i--) {
+            const j = Math.floor(random() * (i + 1));
+            [straightRouteCells[i], straightRouteCells[j]] = [straightRouteCells[j], straightRouteCells[i]];
+        }
+        const crystals = straightRouteCells
+            .slice(0, crystalCount)
+            .sort((a, b) => route.indexOf(a) - route.indexOf(b))
+            .map(({ row, col }, index) => {
+                const routeIndex = route.findIndex((cell) => cell.row === row && cell.col === col);
+                const mirrorsBefore = solutionMirrors.filter((mirror) =>
+                    route.findIndex((cell) => cell.row === mirror.row && cell.col === mirror.col) < routeIndex
+                ).length;
+                const inputColor = (mirrorsBefore + index) % 3;
+                return { row, col, inputColor, outputColor: (inputColor + 1) % 3 };
+            });
+
         const pathCells = new Set(route.map(({ row, col }) => `${row},${col}`));
         const candidates = [];
         for (let row = 0; row < ROWS; row++) {
@@ -146,6 +170,7 @@ function makeLevel(number, usedLayouts) {
             start,
             target,
             solutionMirrors,
+            crystals,
             obstacles
         });
         if (usedLayouts.has(layoutKey)) continue;
@@ -161,6 +186,7 @@ function makeLevel(number, usedLayouts) {
             start: Object.freeze(start),
             target: Object.freeze(target),
             solutionMirrors: Object.freeze(solutionMirrors.map(Object.freeze)),
+            crystals: Object.freeze(crystals.map(Object.freeze)),
             obstacles: Object.freeze(obstacles.map(Object.freeze)),
             route: Object.freeze(route.map(Object.freeze)),
             par,

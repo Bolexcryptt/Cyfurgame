@@ -184,6 +184,8 @@ html, body {
 .completion-heading { display: grid; align-content: start; gap: 6px; }
 .completion-heading > strong { color: #e6fbff; font-size: 14px; }
 .completion-heading > small { max-width: 260px; color: #91a8b6; font-size: 9px; line-height: 1.5; }
+.next-level-button { width: fit-content; min-height: 40px; margin-top: 5px; border-radius: 5px; }
+.next-level-button[hidden] { display: none; }
 .completion-metrics {
     display: grid;
     grid-template-columns: repeat(4, minmax(0, 1fr));

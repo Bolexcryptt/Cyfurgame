@@ -77,7 +77,6 @@ let player = readPlayer();
 let pendingLevel = null;
 let activeWalletLevelSessionId = null;
 let walletTimerStartPromise = Promise.resolve(false);
-let transitionNextLevel = null;
 const processedLevelCompletions = new Set();
 const pendingLevelEntryRequests = new Map();
 let levelEntryRequestInProgress = false;
@@ -1348,49 +1347,6 @@ function leaveGameplay(toHome = true) {
     if (toHome) renderHome();
 }
 
-function transitionFor(completedLevel) {
-    if (completedLevel === 1) return "levels1.mp4";
-    if (completedLevel === 8) return "levels2.mp4";
-    return Math.random() < 0.12 ? (Math.random() < 0.5 ? "levels1.mp4" : "levels2.mp4") : null;
-}
-
-function playLevelTransition(videoFile, nextLevel) {
-    transitionNextLevel = nextLevel;
-    introVideo.pause();
-    transitionVideo.src = videoFile;
-    transitionVideo.currentTime = 0;
-    transitionVideo.hidden = false;
-    showScreen("video-screen");
-    videoCaption.textContent = `Signal transfer · Level ${String(nextLevel).padStart(2, "0")}`;
-    videoAction.hidden = true;
-    transitionVideo.onended = () => {
-        transitionVideo.hidden = true;
-        videoAction.textContent = `CONTINUE TO LEVEL ${String(transitionNextLevel).padStart(2, "0")}  →`;
-        videoAction.hidden = false;
-        videoAction.onclick = () => {
-            videoAction.hidden = true;
-            startLevel(transitionNextLevel, true);
-        };
-        transitionVideo.onerror = () => {
-            console.error(`Transition video ${videoFile} could not be decoded.`, transitionVideo.error);
-            videoCaption.textContent = "The transfer video is unavailable; your level is already unlocked.";
-            videoAction.textContent = `CONTINUE TO LEVEL ${String(nextLevel).padStart(2, "0")}  →`;
-            videoAction.hidden = false;
-            videoAction.onclick = () => startLevel(nextLevel, true);
-        };
-        videoCaption.textContent = "Transfer complete.";
-    };
-    const playback = transitionVideo.play();
-    if (playback && typeof playback.catch === "function") {
-        playback.catch((error) => {
-            console.warn(`Transition video ${videoFile} could not start.`, error);
-            videoAction.textContent = `CONTINUE TO LEVEL ${String(nextLevel).padStart(2, "0")}  →`;
-            videoAction.hidden = false;
-            videoAction.onclick = () => startLevel(nextLevel, true);
-        });
-    }
-}
-
 document.getElementById("name-form").addEventListener("submit", async (event) => {
     event.preventDefault();
     const name = playerNameInput.value.trim();
@@ -1415,6 +1371,11 @@ document.getElementById("name-form").addEventListener("submit", async (event) =>
 
 document.getElementById("continue-game").addEventListener("click", () => {
     startLevel(getContinueLevel());
+});
+document.getElementById("next-level").addEventListener("click", (event) => {
+    const number = Number(event.currentTarget.dataset.nextLevel);
+    if (!Number.isInteger(number) || number < 1 || number > 99) return;
+    startLevel(number, true);
 });
 document.getElementById("home-levels-toggle").addEventListener("click", (event) => {
     const button = event.currentTarget;
@@ -1631,17 +1592,23 @@ window.addEventListener("fluxgrid:level-complete", async (event) => {
             return;
         }
     } else if (claimLevelCompletion(number, processedLevelCompletions)) {
+        player.unlockedLevel = Math.max(player.unlockedLevel, Math.min(99, number + 1));
+        if (!player.completedLevels.includes(number)) player.completedLevels.push(number);
+        savePlayer();
+        if (number < 99) {
+            const nextLevelButton = document.getElementById("next-level");
+            nextLevelButton.dataset.nextLevel = String(number + 1);
+            nextLevelButton.disabled = false;
+        }
         await saveLevelCompletion(number);
     }
 
-    const nextLevel = number + 1;
-    if (nextLevel <= 99) {
-        const transition = transitionFor(number);
-        if (transition) {
-            backgroundMusic.pause();
-            playLevelTransition(transition, nextLevel);
-            return;
-        }
+    const nextLevelButton = document.getElementById("next-level");
+    if (pendingLevel?.number === number) {
+        nextLevelButton.hidden = false;
+        nextLevelButton.disabled = number >= 99;
+        nextLevelButton.dataset.nextLevel = String(number + 1);
+        nextLevelButton.textContent = number >= 99 ? "CAMPAIGN COMPLETE" : "NEXT LEVEL →";
     }
     renderProfile();
 });
