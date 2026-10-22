@@ -75,7 +75,7 @@
                     </div>
                     <div class="hero-copy">
                         <h1>Route the light.<br><em>Restore the grid.</em></h1>
-                        <p>Place reflectors, read the route, and guide the beam into the dormant power core.</p>
+                        <p>Explore 99 progressively challenging laser puzzles. Direct the beam, charge the crystals, and power the grid.</p>
                         <div class="hero-mission-actions">
                             <button id="home-levels-toggle" class="button button-quiet" type="button" aria-controls="level-section" aria-expanded="false">LEVELS <span aria-hidden="true">↓</span></button>
                             <button id="continue-game" class="button button-primary" type="button">
@@ -104,11 +104,11 @@
                         <div>
                             <span class="eyebrow">THE CAMPAIGN</span>
                             <h2 id="level-heading">Select a sector</h2>
-                            <p>Explore the campaign freely. Complete each sector to unlock the next; no credits are charged.</p>
+                            <p>Every sector is open from the start. Choose any level, solve at your own pace, and track campaign progress as you go.</p>
                         </div>
                         <div class="campaign-progress-card">
-                            <span>CAMPAIGN PROGRESS</span>
-                            <b id="campaign-progress">01 / 99</b>
+                            <span>SECTORS CLEARED</span>
+                            <b id="campaign-progress">00 / 99</b>
                             <i><span id="campaign-progress-fill"></span></i>
                         </div>
                     </div>
@@ -240,8 +240,19 @@
             <div class="play-topbar">
                 <button id="levels-open" class="button button-quiet" type="button">← LEVELS</button>
                 <div class="play-level-label"><span id="play-level">LEVEL 01</span><small id="play-level-title">SECTOR 01</small></div>
+                <button id="game-guide-toggle" class="icon-button" type="button" aria-label="How to play" aria-controls="game-guide" aria-expanded="false" title="How to play">?</button>
                 <button id="play-home" class="icon-button" type="button" aria-label="Return home">⌂</button>
             </div>
+            <aside id="game-guide" class="game-guide" aria-label="How to play" hidden>
+                <div class="game-guide-heading"><span class="hud-kicker">FIELD GUIDE</span><button id="game-guide-close" type="button" aria-label="Close field guide">×</button></div>
+                <ol>
+                    <li><b>01</b><span><strong>Choose the source direction</strong><small>Tap the source marker to aim the beam.</small></span></li>
+                    <li><b>02</b><span><strong>Place and rotate mirrors</strong><small>Tap a floor tile to place a mirror. Tap it again to rotate.</small></span></li>
+                    <li><b>03</b><span><strong>Charge crystals in order</strong><small>Mirror reflections change beam color. Match every numbered crystal before reaching the battery.</small></span></li>
+                    <li><b>04</b><span><strong>Launch and refine</strong><small>Power the source to test your route. Reset or adjust mirrors and try again.</small></span></li>
+                </ol>
+                <p>Drag to orbit the board. Pinch or scroll to zoom.</p>
+            </aside>
             <nav class="camera-tools" aria-label="Camera controls">
                 <span>CAMERA</span>
                 <button id="camera-left" type="button" aria-label="Rotate camera left" title="Rotate left">↶</button>

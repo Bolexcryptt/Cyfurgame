@@ -37,10 +37,10 @@ function startScene() {
     const mobileQuality = window.innerWidth < 620;
     const renderer = new THREE.WebGLRenderer({
         canvas,
-        antialias: !mobileQuality,
+        antialias: true,
         powerPreference: "high-performance"
     });
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, mobileQuality ? 0.75 : 1.35));
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, mobileQuality ? 1.25 : 1.5));
     renderer.shadowMap.enabled = !mobileQuality;
     renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
@@ -57,7 +57,7 @@ function startScene() {
     composer.addPass(bloom);
     composer.addPass(new OutputPass());
 
-    scene.add(new THREE.HemisphereLight(0x899bb4, 0x21150f, 1.5));
+    scene.add(new THREE.HemisphereLight(0xa9c5df, 0x312a29, mobileQuality ? 2 : 1.7));
 
     const moonLight = new THREE.DirectionalLight(0xb5c6dc, 4);
     moonLight.position.set(-7, 15, -4);
@@ -69,6 +69,9 @@ function startScene() {
     moonLight.shadow.camera.bottom = -14;
     moonLight.shadow.bias = -0.00035;
     scene.add(moonLight);
+    const boardFillLight = new THREE.DirectionalLight(0x8fc6e9, mobileQuality ? 1.35 : 0.65);
+    boardFillLight.position.set(5, 9, 4);
+    scene.add(boardFillLight);
 
     const warmLight = configureQualityLight(new THREE.PointLight(0xff7134, 17, 12, 2));
     warmLight.position.set(-3.8, 2.7, 1.7);
@@ -1801,7 +1804,7 @@ function startScene() {
         const width = Math.max(1, canvas.clientWidth);
         const height = Math.max(1, canvas.clientHeight);
         const mobileQuality = width < 620;
-        const pixelRatio = Math.min(window.devicePixelRatio || 1, mobileQuality ? 0.75 : 1.35);
+        const pixelRatio = Math.min(window.devicePixelRatio || 1, mobileQuality ? 1.25 : 1.5);
         if (renderer.getPixelRatio() !== pixelRatio) renderer.setPixelRatio(pixelRatio);
         renderer.shadowMap.enabled = !mobileQuality;
         moonLight.castShadow = !mobileQuality;

@@ -526,24 +526,28 @@ button { -webkit-tap-highlight-color: transparent; }
 .section-heading h2, .info-card h2 { margin: 7px 0 5px; font-size: 22px; letter-spacing: -.04em; }
 .section-heading p { margin: 0; color: #94a6b4; font-size: 12px; }
 .progress-pill { padding: 8px 11px; border: 1px solid #90dbe333; border-radius: 99px; color: #a8eaf0; font: 700 9px "Consolas", monospace; letter-spacing: .1em; }
-.level-list { display: grid; gap: 7px; margin: 0; padding: 0; list-style: none; }
+.level-list { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 12px; margin: 0; padding: 0; list-style: none; }
+.level-list > li { min-width: 0; }
 .level-card {
-    display: grid; width: 100%; min-height: 58px; grid-template-columns: 50px 1fr auto; align-items: center; gap: 14px;
-    padding: 8px 15px; border: 1px solid #99b3c51f; border-radius: 5px; background: #0d141e; color: #cbd7df; text-align: left;
-    transition: transform .16s ease, border-color .16s ease, background .16s ease;
+    position: relative; display: grid; width: 100%; min-height: 132px; grid-template-columns: minmax(0,1fr) auto; grid-template-rows: auto 1fr auto; align-items: start; gap: 11px 5px;
+    padding: 14px; border: 1px solid #99b3c536; border-radius: 9px; background: linear-gradient(145deg,#111e2b,#0a111b 80%); color: #cbd7df; text-align: left;
+    box-shadow: inset 0 1px #e0faff0b, 0 9px 24px #0003;
+    transition: transform .2s cubic-bezier(.2,.75,.2,1), border-color .2s ease, background .2s ease, box-shadow .2s ease;
 }
 .level-card.is-unlocked { cursor: pointer; }
-.level-card.is-unlocked:hover { transform: translateX(4px); border-color: #82ddea85; background: #11202b; }
-.level-card.is-complete { border-left: 2px solid #7ce8bd; }
+.level-card.is-unlocked:hover { transform: translateY(-3px); border-color: #82ddeaab; background: linear-gradient(145deg,#17303d,#0b1721); box-shadow: inset 0 1px #e0faff14, 0 16px 34px #0006, 0 0 24px #61e9f014; }
+.level-card.is-complete { border-color: #72e3ba62; }
 .level-card.is-locked { color: #596775; }
-.level-number { color: #b2eaf0; font: 700 15px "Consolas", monospace; }
+.level-number { display: grid; width: 38px; height: 38px; place-items: center; border: 1px solid #83e7f05c; border-radius: 50%; background: #153640; color: #c2f7fa; font: 700 13px "Consolas", monospace; box-shadow: 0 0 20px #50d8e51c; }
 .is-locked .level-number { color: #5c6875; }
-.level-detail b { display: block; color: #e2eaf0; font: 700 10px "Consolas", monospace; letter-spacing: .08em; }
-.level-detail small { display: block; margin-top: 4px; color: #8c9ba8; font: 9px "Consolas", monospace; letter-spacing: .06em; }
+.level-detail { grid-column: 1 / -1; align-self: start; }
+.level-detail b { display: block; overflow: hidden; color: #e2eaf0; font: 700 11px "Consolas", monospace; letter-spacing: .08em; text-overflow: ellipsis; white-space: nowrap; }
+.level-detail small { display: block; margin-top: 7px; color: #8c9ba8; font: 8px "Consolas", monospace; letter-spacing: .06em; line-height: 1.5; }
 .is-locked .level-detail b, .is-locked .level-detail small { color: #596775; }
-.level-state { color: #86cbd3; font: 700 8px "Consolas", monospace; letter-spacing: .1em; }
+.level-state { align-self: center; padding: 6px 7px; border: 1px solid #7fcfd936; border-radius: 4px; background: #14242d80; color: #a2e6ec; font: 700 7px "Consolas", monospace; letter-spacing: .1em; white-space: nowrap; }
 .is-complete .level-state { color: #83e0b5; }
 .is-locked .level-state { color: #5e6b78; }
+.level-entry-cost { grid-column: 1 / -1; align-self: end; color: #83cfd8; font: 700 8px "Consolas", monospace; letter-spacing: .1em; }
 
 .bottom-panels { display: grid; grid-template-columns: 1.25fr .75fr; gap: 12px; padding-top: 44px; }
 .info-card { padding: 22px; border: 1px solid #a3bacb20; border-radius: 6px; background: linear-gradient(130deg,#101a26,#0b1119); }
@@ -1433,6 +1437,21 @@ button { -webkit-tap-highlight-color: transparent; }
     background: linear-gradient(145deg,#142a36,#09121a);
     box-shadow: inset 0 1px #e0faff12;
 }
+.game-guide {
+    position: absolute; z-index: 5; top: 62px; left: 12px; width: min(390px, calc(100% - 24px)); padding: 17px;
+    border: 1px solid #8ce4ee68; border-radius: 10px; background: linear-gradient(145deg,#0c1924f5,#081019f5);
+    box-shadow: 0 24px 70px #000a, inset 0 1px #e0faff14; backdrop-filter: blur(20px);
+}
+.game-guide[hidden] { display: none; }
+.game-guide-heading { display: flex; align-items: center; justify-content: space-between; margin-bottom: 13px; }
+.game-guide-heading button { width: 28px; height: 28px; border: 1px solid #8ba5b54d; border-radius: 5px; background: #14232f; color: #dffcff; font-size: 18px; cursor: pointer; }
+.game-guide ol { display: grid; gap: 12px; margin: 0; padding: 0; list-style: none; }
+.game-guide li { display: grid; grid-template-columns: 28px minmax(0,1fr); gap: 10px; align-items: start; }
+.game-guide li > b { display: grid; width: 27px; height: 27px; place-items: center; border: 1px solid #7fe6ed45; border-radius: 50%; background: #102934; color: #a7f2f4; font: 700 9px "Consolas",monospace; }
+.game-guide li strong, .game-guide li small { display: block; }
+.game-guide li strong { color: #e6f4f7; font-size: 11px; }
+.game-guide li small { margin-top: 4px; color: #9dafbd; font-size: 10px; line-height: 1.5; }
+.game-guide > p { margin: 14px 0 0; padding-top: 10px; border-top: 1px solid #91b8c51c; color: #8edce4; font: 8px "Consolas",monospace; letter-spacing: .08em; }
 .icon-button:hover { border-color: #8eeaf4; color: #b7fbff; box-shadow: 0 0 18px #4adbe32b; }
 .camera-tools {
     border-color: #8cd7e33b;
@@ -1549,11 +1568,12 @@ button { -webkit-tap-highlight-color: transparent; }
 }
 .level-entry-status[data-state="error"] { border-color: #e78c7655; border-left-color: #f19a82; color: #ffc2aa; }
 .level-entry-status[data-state="pending"] { border-color: #78d7e84d; border-left-color: #78d7e8; color: #adeaf0; }
-.level-card { grid-template-columns: 50px minmax(0, 1fr) auto auto; }
-.level-entry-cost { min-width: 98px; text-align: right; }
+.level-card { grid-template-columns: minmax(0,1fr) auto; grid-template-rows: auto 1fr auto; }
+.level-entry-cost { grid-column: 1 / -1; grid-row: 3; min-width: 0; text-align: left; }
 .level-entry-cost small { color: #a8cdd0; font: 700 8px "Consolas", monospace; letter-spacing: .06em; white-space: nowrap; }
 .level-card.is-locked .level-entry-cost small { color: #586570; }
-.level-state { min-width: 68px; text-align: right; }
+.level-state { grid-column: 2; grid-row: 1; min-width: 0; text-align: center; }
+.level-detail { grid-column: 1 / -1; grid-row: 2; min-width: 0; }
 
 @media (max-width: 680px) {
     .wallet-home-card { grid-template-columns: 1fr; gap: 18px; margin-bottom: 20px; }
@@ -1564,12 +1584,22 @@ button { -webkit-tap-highlight-color: transparent; }
     .wallet-home-overview .wallet-balance-panel { max-width: none; min-height: 82px; }
     .wallet-fund-button { width: 100%; }
     .wallet-home-details { padding: 16px 0 0; border-top: 1px solid #9bb7cc21; border-left: 0; }
-    .level-card { grid-template-columns: 35px minmax(0, 1fr) auto; gap: 6px 8px; padding: 8px 9px; }
-    .level-entry-cost { grid-column: 2; grid-row: 2; min-width: 0; text-align: left; }
+    .level-list { grid-template-columns: repeat(3, minmax(0,1fr)); gap: 8px; }
+    .level-card { min-height: 120px; grid-template-columns: minmax(0,1fr) auto; grid-template-rows: auto 1fr auto; gap: 8px 4px; padding: 10px; }
+    .level-number { width: 33px; height: 33px; font-size: 11px; }
+    .level-detail { grid-column: 1 / -1; grid-row: 2; }
+    .level-entry-cost { grid-column: 1 / -1; grid-row: 3; min-width: 0; text-align: left; }
     .level-entry-cost small { font-size: 7px; }
-    .level-state { grid-column: 3; grid-row: 1 / span 2; min-width: 60px; max-width: 78px; font-size: 6px; line-height: 1.4; }
-    .level-detail { grid-column: 2; grid-row: 1; }
+    .level-state { grid-column: 2; grid-row: 1; min-width: 0; max-width: none; font-size: 6px; line-height: 1.4; text-align: center; }
     .level-detail small { font-size: 7px; }
+}
+
+@media (max-width: 420px) {
+    .level-list { grid-template-columns: repeat(2, minmax(0,1fr)); }
+}
+
+@media (min-width: 681px) and (max-width: 940px) {
+    .level-list { grid-template-columns: repeat(4, minmax(0,1fr)); }
 }
 
 .brand {

@@ -336,8 +336,8 @@ test("RelicGrid branding is used in the game and hidden scenes stop rendering", 
     assert.doesNotMatch(html, /FluxGrid/i);
 
     const scene = readFileSync(new URL("../script.js", import.meta.url), "utf8");
-    assert.match(scene, /antialias: !mobileQuality/);
-    assert.match(scene, /mobileQuality \? 0\.75 : 1\.35/);
+    assert.match(scene, /antialias: true/);
+    assert.match(scene, /mobileQuality \? 1\.25 : 1\.5/);
     assert.match(scene, /configureQualityLight/);
     assert.match(scene, /new THREE\.Sprite\(new THREE\.SpriteMaterial/);
     assert.match(scene, /crystalHits\.forEach/);
@@ -346,6 +346,21 @@ test("RelicGrid branding is used in the game and hidden scenes stop rendering", 
     const app = readFileSync(new URL("../app.js", import.meta.url), "utf8");
     assert.match(app, /next-level[\s\S]*?startLevel\(number, true\)/);
     assert.doesNotMatch(app, /playLevelTransition|transitionFor/);
+});
+
+test("all campaign levels are selectable and the in-game field guide is available", () => {
+    const app = readFileSync(new URL("../app.js", import.meta.url), "utf8");
+    const levelPicker = app.slice(app.indexOf("function renderLevels"), app.indexOf("\nfunction renderHome"));
+    const startLevel = app.slice(app.indexOf("async function startLevel"), app.indexOf("\nfunction leaveGameplay"));
+    assert.match(levelPicker, /className = `level-card is-unlocked/);
+    assert.doesNotMatch(levelPicker, /button\.disabled\s*=/);
+    assert.doesNotMatch(startLevel, /number > player\.unlockedLevel/);
+
+    const html = readFileSync(new URL("../index.html", import.meta.url), "utf8");
+    assert.match(html, /id="game-guide-toggle"/);
+    assert.match(html, /id="game-guide"/);
+    assert.match(html, /Charge crystals in order/);
+    assert.match(app, /game-guide-close/);
 });
 
 test("deposit conversion uses precise integer arithmetic and requires explicit rounding", () => {

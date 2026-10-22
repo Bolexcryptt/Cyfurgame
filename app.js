@@ -195,10 +195,10 @@ function renderProfile() {
     document.getElementById("profile-initial").textContent = name.slice(0, 1).toUpperCase();
     document.getElementById("profile-progress").textContent = `${completed} / 99 cleared`;
     document.getElementById("campaign-progress").textContent =
-        `${String(player.unlockedLevel).padStart(2, "0")} / 99`;
+        `${String(completed).padStart(2, "0")} / 99`;
     const progressFill = document.getElementById("campaign-progress-fill");
     if (progressFill) {
-        progressFill.style.width = `${Math.min(100, (player.unlockedLevel - 1) / 99 * 100)}%`;
+        progressFill.style.width = `${Math.min(100, completed / 99 * 100)}%`;
     }
     const nextLevel = levels[getContinueLevel() - 1];
     const nextLevelLabel = document.getElementById("hero-next-level");
@@ -213,7 +213,7 @@ function renderProfile() {
         statCard("CALLSIGN", name),
         statCard("PLAYER ID", player.playerId || "Available after Supabase setup"),
         statCard("LEVELS COMPLETED", `${completed} / 99`),
-        statCard("HIGHEST UNLOCKED", `LEVEL ${String(player.unlockedLevel).padStart(2, "0")}`),
+        statCard("NEXT STORY LEVEL", `LEVEL ${String(player.unlockedLevel).padStart(2, "0")}`),
         statCard("LEADERBOARD", supabaseConfigured ? backendStatus : "Configure Supabase to enable shared rankings")
     );
 }
@@ -347,14 +347,12 @@ function renderLevels() {
     const continueLevel = getContinueLevel();
     for (const level of levels) {
         const completed = player.completedLevels.includes(level.number);
-        const unlocked = level.number <= player.unlockedLevel;
-        const current = level.number === continueLevel && unlocked && !completed;
+        const current = level.number === continueLevel && !completed;
         const item = document.createElement("li");
         const button = document.createElement("button");
         button.style.setProperty("--card-index", String((level.number - 1) % 12));
-        button.className = `level-card${completed ? " is-complete" : ""}${unlocked ? " is-unlocked" : " is-locked"}${current ? " is-current" : ""}`;
+        button.className = `level-card is-unlocked${completed ? " is-complete" : ""}${current ? " is-current" : ""}`;
         button.type = "button";
-        button.disabled = !unlocked;
         button.dataset.level = String(level.number);
 
         const number = document.createElement("span");
@@ -372,12 +370,12 @@ function renderLevels() {
         detail.append(title, meta);
         const badge = document.createElement("span");
         badge.className = "level-state";
-        badge.textContent = completed ? "CLEARED" : current ? "CONTINUE" : unlocked ? "UNLOCKED" : "LOCKED";
+        badge.textContent = completed ? "CLEARED" : current ? "NEXT UP" : "PLAY";
         const cost = document.createElement("span");
         cost.className = "level-entry-cost";
         cost.append(entryCost);
         button.append(number, detail, cost, badge);
-        button.setAttribute("aria-label", `Level ${level.number}, free play, ${completed ? "completed" : unlocked ? "progress unlocked" : "locked"}`);
+        button.setAttribute("aria-label", `Play level ${level.number}, free play${completed ? ", completed" : ""}`);
         button.addEventListener("click", () => void startLevel(level.number));
         item.append(button);
         fragment.append(item);
@@ -1323,7 +1321,10 @@ function showOpeningIntro() {
 
 async function startLevel(number, resumeMusic = false) {
     const level = levels[number - 1];
-    if (!level || number > player.unlockedLevel) return;
+    if (!level) return;
+    const gameGuide = document.getElementById("game-guide");
+    gameGuide.hidden = true;
+    document.getElementById("game-guide-toggle").setAttribute("aria-expanded", "false");
     activeWalletLevelSessionId = null;
     walletTimerStartPromise = Promise.resolve(false);
     setLevelEntryMessage("Free gameplay testing is enabled. No credits are charged or awarded.", "ready");
@@ -1462,6 +1463,19 @@ document.getElementById("profile-open").addEventListener("click", () => {
 });
 document.getElementById("levels-open").addEventListener("click", () => leaveGameplay());
 document.getElementById("play-home").addEventListener("click", () => leaveGameplay());
+document.getElementById("game-guide-toggle").addEventListener("click", (event) => {
+    const button = event.currentTarget;
+    const guide = document.getElementById("game-guide");
+    const expanded = button.getAttribute("aria-expanded") === "true";
+    guide.hidden = expanded;
+    button.setAttribute("aria-expanded", String(!expanded));
+});
+document.getElementById("game-guide-close").addEventListener("click", () => {
+    document.getElementById("game-guide").hidden = true;
+    const button = document.getElementById("game-guide-toggle");
+    button.setAttribute("aria-expanded", "false");
+    button.focus();
+});
 document.querySelectorAll("[data-home]").forEach((button) => button.addEventListener("click", renderHome));
 
 async function saveLevelCompletion(number) {
