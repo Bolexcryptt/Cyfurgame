@@ -11,6 +11,7 @@ import {
     decryptPhantomMobileResponse,
     encodeWalletBytes,
     getConnectedPhantomWallet,
+    getDepositPreparationFieldErrors,
     getPhantomProvider,
     isMobileBrowser,
     readPhantomMobileCallback,
@@ -152,6 +153,42 @@ test("blockhash rejection fetches a fresh transaction and requires a second Phan
         ["build", "fresh-blockhash"],
         ["sign", "fresh-blockhash"],
         ["broadcast", "signed:fresh-blockhash"]
+    ]);
+});
+
+test("deposit preparation validation matches API JSON and identifies invalid field names safely", () => {
+    const apiResponse = {
+        blockhash: "11111111111111111111111111111116",
+        lastValidBlockHeight: 123,
+        senderTokenAccounts: ["11111111111111111111111111111113"],
+        treasuryTokenAccounts: ["11111111111111111111111111111114"]
+    };
+    assert.deepEqual(getDepositPreparationFieldErrors(apiResponse), []);
+    assert.deepEqual(getDepositPreparationFieldErrors({
+        ...apiResponse,
+        lastValidBlockHeight: "123",
+        senderTokenAccounts: undefined
+    }), [
+        {
+            field: "lastValidBlockHeight",
+            actualType: "string",
+            isSafeInteger: false,
+            isPositive: false
+        },
+        { field: "senderTokenAccounts", actualType: "undefined" }
+    ]);
+    assert.deepEqual(getDepositPreparationFieldErrors({
+        ...apiResponse,
+        blockhash: "not-a-blockhash",
+        treasuryTokenAccounts: [null]
+    }), [
+        { field: "blockhash", actualType: "string", actualLength: 15 },
+        {
+            field: "treasuryTokenAccounts",
+            actualType: "array",
+            arrayLength: 1,
+            invalidAccountCount: 1
+        }
     ]);
 });
 
@@ -1628,6 +1665,7 @@ test("deposit transaction API prepares and broadcasts through the authenticated 
     try {
         const prepared = await invoke({ action: "prepare" });
         assert.equal(prepared.statusCode, 200);
+        assert.deepEqual(getDepositPreparationFieldErrors(prepared.payload), []);
         assert.equal(prepared.payload.blockhash, "11111111111111111111111111111116");
         assert.deepEqual(prepared.payload.senderTokenAccounts, [senderTokenAccount]);
         assert.deepEqual(prepared.payload.treasuryTokenAccounts, [treasuryTokenAccount]);

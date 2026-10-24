@@ -9,6 +9,7 @@ import {
     decryptPhantomMobileResponse,
     encodeWalletBytes,
     getConnectedPhantomWallet,
+    getDepositPreparationFieldErrors,
     getPhantomProvider,
     isMobileBrowser,
     readPhantomMobileCallback,
@@ -860,11 +861,11 @@ async function sendCyfurDeposit() {
         const broadcast = await signAndBroadcastWithBlockhashRetry({
             prepare: () => requestDepositTransaction("prepare"),
             build: (preparation) => {
-                if (typeof preparation.blockhash !== "string" ||
-                    !Number.isSafeInteger(preparation.lastValidBlockHeight) ||
-                    preparation.lastValidBlockHeight <= 0 ||
-                    !Array.isArray(preparation.senderTokenAccounts) ||
-                    !Array.isArray(preparation.treasuryTokenAccounts)) {
+                const invalidFields = getDepositPreparationFieldErrors(preparation);
+                if (invalidFields.length > 0) {
+                    console.error("Deposit preparation response validation failed.", {
+                        invalidFields
+                    });
                     throw new Error("The server returned invalid or incomplete transaction preparation.");
                 }
                 if (Date.parse(paymentIntent.expiresAt) <= Date.now()) {

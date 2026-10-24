@@ -5,6 +5,51 @@ const walletConnections = new WeakMap();
 const connectionListeners = new WeakSet();
 const mobileProviders = new WeakMap();
 const mobileStateKey = "fluxgrid.phantom.deeplink.v1";
+const BASE58_ALPHABET = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+
+export function getDepositPreparationFieldErrors(preparation) {
+    const errors = [];
+    const value = preparation && typeof preparation === "object" ? preparation : {};
+    if (typeof value.blockhash !== "string" ||
+        value.blockhash.length < 32 || value.blockhash.length > 44 ||
+        [...value.blockhash].some((character) => !BASE58_ALPHABET.includes(character))) {
+        errors.push({
+            field: "blockhash",
+            actualType: typeof value.blockhash,
+            actualLength: typeof value.blockhash === "string" ? value.blockhash.length : null
+        });
+    }
+    if (!Number.isSafeInteger(value.lastValidBlockHeight) || value.lastValidBlockHeight <= 0) {
+        errors.push({
+            field: "lastValidBlockHeight",
+            actualType: typeof value.lastValidBlockHeight,
+            isSafeInteger: Number.isSafeInteger(value.lastValidBlockHeight),
+            isPositive: typeof value.lastValidBlockHeight === "number" && value.lastValidBlockHeight > 0
+        });
+    }
+    for (const field of ["senderTokenAccounts", "treasuryTokenAccounts"]) {
+        const accounts = value[field];
+        if (!Array.isArray(accounts)) {
+            errors.push({ field, actualType: typeof accounts });
+            continue;
+        }
+        const invalidAccountCount = accounts.filter((account) =>
+            typeof account !== "string" ||
+            account.length < 32 ||
+            account.length > 44 ||
+            [...account].some((character) => !BASE58_ALPHABET.includes(character))
+        ).length;
+        if (invalidAccountCount > 0) {
+            errors.push({
+                field,
+                actualType: "array",
+                arrayLength: accounts.length,
+                invalidAccountCount
+            });
+        }
+    }
+    return errors;
+}
 
 function getNacl(walletWindow) {
     const nacl = walletWindow.nacl;
