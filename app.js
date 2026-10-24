@@ -861,8 +861,6 @@ async function sendCyfurDeposit() {
             prepare: () => requestDepositTransaction("prepare"),
             build: (preparation) => {
                 if (typeof preparation.blockhash !== "string" ||
-                    !Number.isSafeInteger(preparation.contextSlot) ||
-                    preparation.contextSlot < 0 ||
                     !Number.isSafeInteger(preparation.lastValidBlockHeight) ||
                     preparation.lastValidBlockHeight <= 0 ||
                     !Array.isArray(preparation.senderTokenAccounts) ||
@@ -931,7 +929,6 @@ async function sendCyfurDeposit() {
                     await provider.sendTransaction(transaction, null, {
                         preflightCommitment: "confirmed",
                         chain: config.network,
-                        contextSlot: preparation.contextSlot,
                         paymentIntentId
                     });
                     throw new Error("The Phantom mobile signing request did not return to RelicGrid.");
@@ -952,8 +949,7 @@ async function sendCyfurDeposit() {
                 return signedBytes;
             },
             broadcast: (signedBytes, preparation) => requestDepositTransaction("broadcast", {
-                transaction: bytesToWalletBase64(signedBytes),
-                minContextSlot: preparation.contextSlot
+                transaction: bytesToWalletBase64(signedBytes)
             })
         });
         signature = broadcast.signature;
@@ -1255,8 +1251,7 @@ async function handlePhantomMobileCallback(callback) {
             }
             const transactionBytes = decodeWalletBytes(decrypted.data.transaction);
             const broadcast = await requestDepositTransaction("broadcast", {
-                transaction: bytesToWalletBase64(transactionBytes),
-                minContextSlot: state.contextSlot
+                transaction: bytesToWalletBase64(transactionBytes)
             });
             broadcastSignature = broadcast.signature;
             document.getElementById("deposit-signature").value = broadcastSignature;

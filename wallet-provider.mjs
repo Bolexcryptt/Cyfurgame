@@ -136,7 +136,6 @@ function startPhantomTransactionSign(walletWindow, transaction, options = {}) {
         ...stored,
         action: "deposit-sign",
         network: options.chain ?? "mainnet-beta",
-        contextSlot: options.contextSlot,
         paymentIntentId: options.paymentIntentId
     });
     const url = new URL("https://phantom.com/ul/v1/signTransaction");

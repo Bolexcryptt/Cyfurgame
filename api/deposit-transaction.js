@@ -119,16 +119,13 @@ module.exports = async function depositTransaction(request, response) {
                 { commitment: "confirmed" }
             ]);
             const blockhash = latestBlockhash?.value?.blockhash;
-            const contextSlot = latestBlockhash?.context?.slot;
             if (!isBase58(blockhash, 32) ||
-                !Number.isSafeInteger(latestBlockhash?.value?.lastValidBlockHeight) ||
-                !Number.isSafeInteger(contextSlot) || contextSlot < 0) {
+                !Number.isSafeInteger(latestBlockhash?.value?.lastValidBlockHeight)) {
                 throw new Error("The configured Solana RPC returned an invalid recent blockhash.");
             }
             return sendJson(response, 200, {
                 blockhash,
                 lastValidBlockHeight: latestBlockhash.value.lastValidBlockHeight,
-                contextSlot,
                 senderTokenAccounts: getTokenAccountAddresses(senderAccounts),
                 treasuryTokenAccounts: getTokenAccountAddresses(treasuryAccounts)
             });
@@ -139,9 +136,17 @@ module.exports = async function depositTransaction(request, response) {
             if (!transaction) {
                 return sendJson(response, 400, { error: "invalid_signed_transaction" });
             }
-            const minContextSlot = request.body?.minContextSlot;
+            const [genesisHash, minContextSlot] = await Promise.all([
+                solanaRpc(process.env.SOLANA_RPC_URL, "getGenesisHash", []),
+                solanaRpc(process.env.SOLANA_RPC_URL, "getSlot", [
+                    { commitment: "confirmed" }
+                ])
+            ]);
+            if (genesisHash !== GENESIS_HASHES[network]) {
+                return notReady(response, "solana_rpc_network_mismatch", "Configured Solana RPC is connected to a different network.");
+            }
             if (!Number.isSafeInteger(minContextSlot) || minContextSlot < 0) {
-                return sendJson(response, 400, { error: "invalid_blockhash_context" });
+                throw new Error("The configured Solana RPC returned an invalid current slot.");
             }
             const signature = await solanaRpc(process.env.SOLANA_RPC_URL, "sendTransaction", [
                 transaction.toString("base64"),

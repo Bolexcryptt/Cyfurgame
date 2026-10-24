@@ -318,7 +318,6 @@ test("Phantom mobile deeplink encrypts connect and message-sign requests and res
         null,
         {
             chain: "mainnet-beta",
-            contextSlot: 456,
             paymentIntentId
         }
     );
@@ -326,7 +325,7 @@ test("Phantom mobile deeplink encrypts connect and message-sign requests and res
     assert.equal(depositUrl.pathname, "/ul/v1/signTransaction");
     const depositState = JSON.parse(storage.get("fluxgrid.phantom.deeplink.v1"));
     assert.equal(depositState.action, "deposit-sign");
-    assert.equal(depositState.contextSlot, 456);
+    assert.equal(depositState.contextSlot, undefined);
     assert.equal(depositState.paymentIntentId, paymentIntentId);
     const depositPayload = nacl.box.open.after(
         decodeWalletBytes(depositUrl.searchParams.get("payload")),
@@ -1597,12 +1596,12 @@ test("deposit transaction API prepares and broadcasts through the authenticated 
                         : treasuryTokenAccount }]
                 },
                 getLatestBlockhash: {
-                    context: { slot: 456 },
                     value: {
                         blockhash: "11111111111111111111111111111116",
                         lastValidBlockHeight: 123
                     }
                 },
+                getSlot: 456,
                 sendTransaction: signature
             };
             return new Response(JSON.stringify({ result: results[call.method] }), { status: 200 });
@@ -1639,13 +1638,12 @@ test("deposit transaction API prepares and broadcasts through the authenticated 
             "getLatestBlockhash"
         ]);
         assert.equal(rpcCalls.at(-1).params[0].commitment, "confirmed");
-        assert.equal(prepared.payload.contextSlot, 456);
+        assert.equal("contextSlot" in prepared.payload, false);
 
         const signedTransactionBase64 = Buffer.from([1, 2, 3]).toString("base64");
         const broadcast = await invoke({
             action: "broadcast",
-            transaction: signedTransactionBase64,
-            minContextSlot: prepared.payload.contextSlot
+            transaction: signedTransactionBase64
         });
         assert.equal(broadcast.statusCode, 200);
         assert.equal(broadcast.payload.signature, signature);
@@ -1653,6 +1651,11 @@ test("deposit transaction API prepares and broadcasts through the authenticated 
         assert.equal(rpcCalls.at(-1).params[1].encoding, "base64");
         assert.equal(rpcCalls.at(-1).params[0], signedTransactionBase64);
         assert.equal(rpcCalls.at(-1).params[1].minContextSlot, 456);
+        assert.deepEqual(rpcCalls.slice(-3).map((call) => call.method), [
+            "getGenesisHash",
+            "getSlot",
+            "sendTransaction"
+        ]);
 
         const invalid = await invoke({ action: "broadcast", transaction: "not base64!" });
         assert.equal(invalid.statusCode, 400);
@@ -1661,8 +1664,10 @@ test("deposit transaction API prepares and broadcasts through the authenticated 
             action: "broadcast",
             transaction: signedTransactionBase64
         });
-        assert.equal(missingContext.statusCode, 400);
-        assert.equal(missingContext.payload.error, "invalid_blockhash_context");
+        assert.equal(missingContext.statusCode, 200);
+        assert.equal(missingContext.payload.signature, signature);
+        assert.equal(rpcCalls.at(-2).method, "getSlot");
+        assert.equal(rpcCalls.at(-1).params[1].minContextSlot, 456);
 
         rpcError = {
             code: -32002,
@@ -1670,8 +1675,7 @@ test("deposit transaction API prepares and broadcasts through the authenticated 
         };
         const staleBlockhash = await invoke({
             action: "broadcast",
-            transaction: signedTransactionBase64,
-            minContextSlot: prepared.payload.contextSlot
+            transaction: signedTransactionBase64
         });
         assert.equal(staleBlockhash.statusCode, 409);
         assert.equal(staleBlockhash.payload.error, "blockhash_expired");
@@ -1681,8 +1685,7 @@ test("deposit transaction API prepares and broadcasts through the authenticated 
         };
         const failedSimulation = await invoke({
             action: "broadcast",
-            transaction: signedTransactionBase64,
-            minContextSlot: prepared.payload.contextSlot
+            transaction: signedTransactionBase64
         });
         assert.equal(failedSimulation.statusCode, 502);
         assert.equal(failedSimulation.payload.error, "solana_rpc_unavailable");
