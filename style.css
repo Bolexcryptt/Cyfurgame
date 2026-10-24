@@ -228,6 +228,7 @@ html, body {
 }
 
 @media (max-width: 520px) {
+    .game-guide { top: 48px; max-height: min(48svh, 410px); overflow-y: auto; overscroll-behavior: contain; }
     .camera-tools { gap: 3px; padding: 4px; }
     .camera-tools span { padding-inline: 5px; font-size: 7px; }
     .camera-tools button { width: 28px; height: 28px; }
@@ -1452,6 +1453,11 @@ button { -webkit-tap-highlight-color: transparent; }
 .game-guide li strong { color: #e6f4f7; font-size: 11px; }
 .game-guide li small { margin-top: 4px; color: #9dafbd; font-size: 10px; line-height: 1.5; }
 .game-guide > p { margin: 14px 0 0; padding-top: 10px; border-top: 1px solid #91b8c51c; color: #8edce4; font: 8px "Consolas",monospace; letter-spacing: .08em; }
+.first-level-tutorial { display: grid; gap: 7px; margin: 0 0 14px; padding: 12px; border: 1px solid #70e1ed59; border-left: 2px solid #71e7ef; border-radius: 6px; background: linear-gradient(110deg,#14313b,#0a1721); }
+.first-level-tutorial[hidden] { display: none; }
+.tutorial-step { color: #91eaf0; font: 700 8px "Consolas",monospace; letter-spacing: .13em; }
+.first-level-tutorial strong { color: #f0fbff; font-size: 13px; }
+.first-level-tutorial p { margin: 0; color: #bfd0d9; font-size: 10px; line-height: 1.55; }
 .icon-button:hover { border-color: #8eeaf4; color: #b7fbff; box-shadow: 0 0 18px #4adbe32b; }
 .camera-tools {
     border-color: #8cd7e33b;

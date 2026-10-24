@@ -42,6 +42,7 @@ function readPlayer() {
             name: "",
             playerId: "",
             watchedGameIntro: false,
+            tutorialSeen: false,
             unlockedLevel: 1,
             completedLevels: [],
             lastLevel: 1
@@ -54,6 +55,7 @@ function readPlayer() {
             name: typeof parsed.name === "string" ? parsed.name : "",
             playerId: typeof parsed.playerId === "string" ? parsed.playerId : "",
             watchedGameIntro: parsed.watchedGameIntro === true,
+            tutorialSeen: parsed.tutorialSeen === true,
             unlockedLevel: Math.min(99, Math.max(1, Number(parsed.unlockedLevel) || 1)),
             completedLevels: Array.isArray(parsed.completedLevels)
                 ? [...new Set(parsed.completedLevels.filter((level) => Number.isInteger(level) && level >= 1 && level <= 99))]
@@ -66,6 +68,7 @@ function readPlayer() {
             name: "",
             playerId: "",
             watchedGameIntro: false,
+            tutorialSeen: false,
             unlockedLevel: 1,
             completedLevels: [],
             lastLevel: 1
@@ -1323,8 +1326,10 @@ async function startLevel(number, resumeMusic = false) {
     const level = levels[number - 1];
     if (!level) return;
     const gameGuide = document.getElementById("game-guide");
-    gameGuide.hidden = true;
-    document.getElementById("game-guide-toggle").setAttribute("aria-expanded", "false");
+    const showTutorial = number === 1 && !player.tutorialSeen;
+    gameGuide.hidden = !showTutorial;
+    document.getElementById("first-level-tutorial").hidden = !showTutorial;
+    document.getElementById("game-guide-toggle").setAttribute("aria-expanded", String(showTutorial));
     activeWalletLevelSessionId = null;
     walletTimerStartPromise = Promise.resolve(false);
     setLevelEntryMessage("Free gameplay testing is enabled. No credits are charged or awarded.", "ready");
@@ -1337,7 +1342,11 @@ async function startLevel(number, resumeMusic = false) {
     window.setTimeout(() => {
         window.fluxGridSceneResize?.();
         window.dispatchEvent(new CustomEvent("fluxgrid:load-level", {
-            detail: { level, walletSessionId: activeWalletLevelSessionId }
+            detail: {
+                level,
+                walletSessionId: activeWalletLevelSessionId,
+                tutorial: showTutorial
+            }
         }));
     }, 0);
     if (resumeMusic || !musicStarted) startMusic();
@@ -1472,6 +1481,11 @@ document.getElementById("game-guide-toggle").addEventListener("click", (event) =
 });
 document.getElementById("game-guide-close").addEventListener("click", () => {
     document.getElementById("game-guide").hidden = true;
+    document.getElementById("first-level-tutorial").hidden = true;
+    if (pendingLevel?.number === 1) {
+        player.tutorialSeen = true;
+        savePlayer();
+    }
     const button = document.getElementById("game-guide-toggle");
     button.setAttribute("aria-expanded", "false");
     button.focus();
@@ -1590,6 +1604,10 @@ window.addEventListener("fluxgrid:level-complete", async (event) => {
     if (!Number.isInteger(number) || number < 1 || number > 99) {
         console.error("Invalid completed-level event received.", detail);
         return;
+    }
+    if (number === 1 && !player.tutorialSeen) {
+        player.tutorialSeen = true;
+        savePlayer();
     }
 
     if (detail.walletSessionId) {

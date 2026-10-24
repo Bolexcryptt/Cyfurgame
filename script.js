@@ -100,6 +100,19 @@ function startScene() {
     platform.add(mirrorGroup);
     const activeBeamGroup = new THREE.Group();
     platform.add(activeBeamGroup);
+    const tutorialTargetMarker = new THREE.Mesh(
+        new THREE.TorusGeometry(0.48, 0.035, 6, 28),
+        new THREE.MeshBasicMaterial({
+            color: 0x8cffff,
+            transparent: true,
+            opacity: 0.78,
+            toneMapped: false
+        })
+    );
+    tutorialTargetMarker.rotation.x = Math.PI / 2;
+    tutorialTargetMarker.position.y = 0.24;
+    tutorialTargetMarker.visible = false;
+    platform.add(tutorialTargetMarker);
 
     const GRID = {
         rows: 6,
@@ -131,6 +144,8 @@ function startScene() {
     let corePowered = false;
     let tracing = false;
     let launchDirection = 1;
+    let firstLevelTutorial = false;
+    let firstLevelTutorialStage = "observe";
     let walletLevelSessionId = null;
     let updateSourceMarker = () => {};
     let traceStartedAt = 0;
@@ -894,7 +909,7 @@ function startScene() {
             new THREE.MeshBasicMaterial({
                 color: segment.color,
                 transparent: true,
-                opacity: preview ? 0.035 : 0.12,
+                opacity: preview ? 0.11 : 0.2,
                 depthWrite: false,
                 toneMapped: false,
                 blending: THREE.AdditiveBlending
@@ -905,7 +920,7 @@ function startScene() {
             new THREE.MeshBasicMaterial({
                 color: segment.color,
                 transparent: preview,
-                opacity: preview ? 0.32 : 1,
+                opacity: preview ? 0.72 : 1,
                 depthWrite: !preview,
                 toneMapped: false,
                 blending: THREE.AdditiveBlending
@@ -1030,6 +1045,14 @@ function startScene() {
             return;
         }
         activeLevel = level;
+        firstLevelTutorial = level.number === 1 && levelDetails?.tutorial === true;
+        firstLevelTutorialStage = "observe";
+        const tutorialMirror = level.solutionMirrors[0];
+        tutorialTargetMarker.visible = firstLevelTutorial && Boolean(tutorialMirror);
+        if (tutorialMirror) {
+            tutorialTargetMarker.position.x = gridX(tutorialMirror.col);
+            tutorialTargetMarker.position.z = gridZ(tutorialMirror.row);
+        }
         walletLevelSessionId = levelDetails?.level ? levelDetails.walletSessionId ?? null : null;
         GRID.start = { row: level.start.row, col: level.start.col };
         GRID.target = { row: level.target.row, col: level.target.col };
@@ -1040,6 +1063,22 @@ function startScene() {
         updateSourceMarker();
         environmentNetwork.visible = false;
         statusTitle.textContent = `Level ${String(level.number).padStart(2, "0")} — ${level.title}`;
+        document.getElementById("first-level-tutorial").hidden = !firstLevelTutorial;
+        if (firstLevelTutorial) {
+            updateFirstLevelTutorial(
+                "01 / 03",
+                "Place a mirror",
+                "The live preview shows the beam leaving the source. Place a mirror at row " +
+                    `${level.solutionMirrors[0].row + 1}, column ${level.solutionMirrors[0].col + 1}.`
+            );
+        }
+    }
+
+    function updateFirstLevelTutorial(step, title, instruction) {
+        if (!firstLevelTutorial) return;
+        document.getElementById("tutorial-step").textContent = `LIVE TUTORIAL · ${step}`;
+        document.getElementById("tutorial-title").textContent = title;
+        document.getElementById("tutorial-instruction").textContent = instruction;
     }
 
     function setCorePowered(powered) {
@@ -1129,6 +1168,34 @@ function startScene() {
         beamSegments.length = 0;
         previewRoute = traceLight();
         drawActiveRoute(previewRoute, previewRoute.segments.length, true);
+        if (firstLevelTutorial && firstLevelTutorialStage !== "complete") {
+            const tutorialMirror = activeLevel.solutionMirrors[0];
+            if (row !== tutorialMirror.row || col !== tutorialMirror.col) {
+                firstLevelTutorialStage = "place";
+                tutorialTargetMarker.visible = true;
+                updateFirstLevelTutorial(
+                    "01 / 03",
+                    "Use the highlighted mirror tile",
+                    `The highlighted row ${tutorialMirror.row + 1}, column ${tutorialMirror.col + 1} redirects the beam toward the crystal.`
+                );
+            } else if (previewRoute.outcome === "powered") {
+                firstLevelTutorialStage = "launch";
+                tutorialTargetMarker.visible = false;
+                updateFirstLevelTutorial(
+                    "03 / 03",
+                    "Crystal and battery aligned",
+                    "The preview now crosses the crystal and reaches the battery. Press POWER SOURCE to watch the full route."
+                );
+            } else {
+                firstLevelTutorialStage = "rotate";
+                tutorialTargetMarker.visible = false;
+                updateFirstLevelTutorial(
+                    "02 / 03",
+                    "Rotate to redirect",
+                    "Tap this mirror again. Watch the live beam preview change; stop when it passes the crystal and points to the battery."
+                );
+            }
+        }
         if (previewRoute.outcome === "powered") {
             setFeedback(`All ${activeLevel.crystals.length} crystals aligned. Press POWER SOURCE to launch.`, "ready");
         } else if (previewRoute.outcome === "underpowered") {
@@ -1183,6 +1250,13 @@ function startScene() {
         tracing = true;
         traceStartedAt = performance.now();
         traceResult = previewRoute;
+        if (firstLevelTutorial && firstLevelTutorialStage !== "complete") {
+            updateFirstLevelTutorial(
+                "03 / 03",
+                "Follow the live beam",
+                "Watch the beam travel through the crystal. The battery only lights when the required route is complete."
+            );
+        }
         traceButton.disabled = true;
         traceButton.innerHTML = "<span>…</span> TRACING";
         setStatus("Power source activated", "Tracing the live light path through your reflectors…");
@@ -1218,6 +1292,18 @@ function startScene() {
             `Level ${String(activeLevel.number).padStart(2, "0")} — ${activeLevel.title}`,
             `Route through ${crystalObjective} in order using at least ${activeLevel.par} mirror${activeLevel.par === 1 ? "" : "s"}. Mirrors shift beam color; match each crystal, then reach the battery.`
         );
+        previewRoute = traceLight();
+        drawActiveRoute(previewRoute, previewRoute.segments.length, true);
+        if (firstLevelTutorial) {
+            firstLevelTutorialStage = "observe";
+            const tutorialMirror = activeLevel.solutionMirrors[0];
+            tutorialTargetMarker.visible = true;
+            updateFirstLevelTutorial(
+                "01 / 03",
+                "Place a mirror",
+                `The preview shows the beam leaving the source. Place a mirror at row ${tutorialMirror.row + 1}, column ${tutorialMirror.col + 1}.`
+            );
+        }
     }
 
     function pickTile(event) {
@@ -1924,6 +2010,7 @@ function startScene() {
         if (document.hidden || canvas.clientWidth === 0 || canvas.clientHeight === 0) return;
         renderRequest = requestAnimationFrame(render);
         const time = clock.getElapsedTime();
+        tutorialTargetMarker.material.opacity = 0.55 + Math.sin(time * 3.4) * 0.2;
         if (tracing && traceResult) {
             const duration = Math.max(650, traceResult.segments.length * 175);
             const progress = Math.min(1, (performance.now() - traceStartedAt) / duration);
@@ -1949,6 +2036,15 @@ function startScene() {
                 traceButton.disabled = false;
                 traceButton.innerHTML = "<span>▶</span> TRACE AGAIN";
                 if (traceResult.outcome === "powered") {
+                    if (firstLevelTutorial) {
+                        firstLevelTutorialStage = "complete";
+                        tutorialTargetMarker.visible = false;
+                        updateFirstLevelTutorial(
+                            "COMPLETE",
+                            "You solved the route",
+                            "The crystal charged and the battery connected. Rotate a mirror to preview changes before launching in later levels."
+                        );
+                    }
                     setCorePowered(true);
                     traceButton.disabled = true;
                     traceButton.innerHTML = "<span>✓</span> CORE ONLINE";

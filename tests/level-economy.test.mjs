@@ -360,7 +360,13 @@ test("all campaign levels are selectable and the in-game field guide is availabl
     assert.match(html, /id="game-guide-toggle"/);
     assert.match(html, /id="game-guide"/);
     assert.match(html, /Charge crystals in order/);
+    assert.match(html, /LIVE TUTORIAL/);
     assert.match(app, /game-guide-close/);
+    const scene = readFileSync(new URL("../script.js", import.meta.url), "utf8");
+    assert.match(scene, /tutorialTargetMarker/);
+    assert.match(scene, /drawActiveRoute\(previewRoute, previewRoute\.segments\.length, true\)/);
+    assert.match(scene, /firstLevelTutorialStage = "complete"/);
+    assert.match(scene, /Rotate to redirect/);
 });
 
 test("deposit conversion uses precise integer arithmetic and requires explicit rounding", () => {
