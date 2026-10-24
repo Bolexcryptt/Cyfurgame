@@ -25,11 +25,12 @@ const nacl = require("tweetnacl");
 const {
     CYFUR_CREDITS_PER_TOKEN: apiCreditsPerToken,
     getDepositCreditAmount,
-    getLevelEntryCostCredits
-} = require("../api/_lib/wallet.js");
-const { verifyFinalizedDeposit } = require("../api/_lib/solana-deposit.js");
-const { getLevelEconomyAndStars, verifyLevelProof } = require("../api/_lib/level-completion.js");
-const { verifyWalletSignature } = require("../api/_lib/solana-wallet-link.js");
+    getLevelEntryCostCredits,
+    parseTokenAmount
+} = require("../server/lib/wallet.js");
+const { verifyFinalizedDeposit } = require("../server/lib/solana-deposit.js");
+const { getLevelEconomyAndStars, verifyLevelProof } = require("../server/lib/level-completion.js");
+const { verifyWalletSignature } = require("../server/lib/solana-wallet-link.js");
 
 function encodeBase58(bytes) {
     const alphabet = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
@@ -73,6 +74,11 @@ test("Phantom Wallet Standard registration supports connect, ownership signing, 
                     return [{ signature: signatureBytes }];
                 }
             },
+            "solana:signTransaction": {
+                async signTransaction() {
+                    return [{ signedTransaction: Uint8Array.from([4, 5, 6]) }];
+                }
+            },
             "solana:signAndSendTransaction": {
                 async signAndSendTransaction(input) {
                     transactionApproved = input.account === account &&
@@ -100,6 +106,10 @@ test("Phantom Wallet Standard registration supports connect, ownership signing, 
     assert.equal(connected, true);
     assert.equal(messageSigned, true);
     assert.equal(transactionApproved, true);
+    assert.deepEqual(
+        await provider.signTransaction({ serialize: () => Uint8Array.from([7]) }),
+        Uint8Array.from([4, 5, 6])
+    );
 });
 
 test("Phantom provider discovery waits briefly for delayed extension injection", async () => {
@@ -741,6 +751,7 @@ test("Solana verifier credits only successful finalized transfers to the mapped 
     const tokenAccount = "So11111111111111111111111111111111111111112";
     let transaction = {
         slot: 500,
+        blockTime: 1700000000,
         transaction: {
             signatures: [signature],
             message: {
@@ -795,7 +806,8 @@ test("Solana verifier credits only successful finalized transfers to the mapped 
     assert.deepEqual(await verifyFinalizedDeposit(options), {
         state: "finalized",
         amountRaw: "10000",
-        finalizedSlot: 500
+        finalizedSlot: 500,
+        finalizedAt: 1700000000
     });
     const finalizedTransaction = structuredClone(transaction);
     const sourceWallet = "11111111111111111111111111111111";
@@ -828,8 +840,35 @@ test("Solana verifier credits only successful finalized transfers to the mapped 
     assert.deepEqual(await verifyFinalizedDeposit({ ...options, expectedSourceWallet: sourceWallet }), {
         state: "finalized",
         amountRaw: "10000",
-        finalizedSlot: 500
+        finalizedSlot: 500,
+        finalizedAt: 1700000000
     });
+    const intentId = "8f9ef883-520e-45ef-96ae-62e621d3b31c";
+    const memoProgramId = "MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr";
+    directTreasuryTransaction.transaction.message.instructions.push({
+        programId: memoProgramId,
+        data: encodeBase58(Buffer.from(`RelicGrid payment intent: ${intentId}`))
+    });
+    const intentOptions = {
+        ...options,
+        expectedSourceWallet: sourceWallet,
+        expectedAmountRaw: "10000",
+        requiredMemo: `RelicGrid payment intent: ${intentId}`
+    };
+    assert.deepEqual(await verifyFinalizedDeposit(intentOptions), {
+        state: "finalized",
+        amountRaw: "10000",
+        finalizedSlot: 500,
+        finalizedAt: 1700000000
+    });
+    assert.deepEqual(await verifyFinalizedDeposit({ ...intentOptions, expectedAmountRaw: "10001" }), {
+        state: "wrong_amount"
+    });
+    assert.deepEqual(await verifyFinalizedDeposit({
+        ...intentOptions,
+        requiredMemo: "RelicGrid payment intent: 00000000-0000-4000-8000-000000000000"
+    }), { state: "payment_intent_mismatch" });
+
     directTreasuryTransaction.transaction.message.instructions[0].parsed.info.authority = tokenAccount;
     assert.deepEqual(await verifyFinalizedDeposit({ ...options, expectedSourceWallet: sourceWallet }), {
         state: "wrong_destination_or_token"
@@ -851,6 +890,108 @@ test("Solana verifier credits only successful finalized transfers to the mapped 
     );
     status = { err: { InstructionError: [0, "Custom"] }, confirmationStatus: "finalized" };
     assert.deepEqual(await verifyFinalizedDeposit(options), { state: "failed" });
+});
+
+test("deposit amount parsing uses exact token base units and rejects malformed precision", () => {
+    assert.equal(parseTokenAmount("1", 8), "100000000");
+    assert.equal(parseTokenAmount("0.0001", 8), "10000");
+    assert.equal(parseTokenAmount("1.23000000", 8), "123000000");
+    assert.throws(() => parseTokenAmount("0", 8), /greater than zero/);
+    assert.throws(() => parseTokenAmount("1.000000001", 8), /supported token decimals/);
+    assert.throws(() => parseTokenAmount("1e3", 8), /supported token decimals/);
+});
+
+test("payment-intent API binds the exact amount to the authenticated linked wallet", async () => {
+    const environment = {
+        SUPABASE_URL: "https://example.supabase.co",
+        SUPABASE_PUBLISHABLE_KEY: "public-test-key",
+        SUPABASE_SERVICE_ROLE_KEY: "service-test-key",
+        SOLANA_NETWORK: "mainnet-beta",
+        SOLANA_TREASURY_ADDRESS: "FbvtTKQFE4xFrSheorQoFHqp57Dd8ngYXvD8wavwLzsn",
+        WALLET_DIRECT_TREASURY_READY: "true",
+        WALLET_DEPOSITS_ENABLED: "true",
+        WALLET_MAINNET_DEPOSITS_ENABLED: "true"
+    };
+    const previousEnvironment = Object.fromEntries(
+        Object.keys(environment).map((name) => [name, process.env[name]])
+    );
+    for (const [name, value] of Object.entries(environment)) process.env[name] = value;
+    const originalFetch = globalThis.fetch;
+    const requests = [];
+    globalThis.fetch = async (url, options = {}) => {
+        const target = String(url);
+        requests.push({ target, options });
+        if (target.endsWith("/auth/v1/user")) {
+            return new Response(JSON.stringify({ id: "test-player" }), { status: 200 });
+        }
+        if (target.includes("/wallet_system_config?")) {
+            return new Response(JSON.stringify([{
+                deposits_enabled: true,
+                network: "mainnet-beta",
+                official_mint_address: "9F4hLLngEAhepsH2HLTH6kBYmmq6dzm4GXRrcpME3uam",
+                token_program_id: "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+                token_decimals: 8,
+                credits_per_token: "10000",
+                rounding_policy: "floor",
+                treasury_address: environment.SOLANA_TREASURY_ADDRESS
+            }]), { status: 200 });
+        }
+        if (target.includes("/player_solana_wallets?")) {
+            return new Response(JSON.stringify([{
+                wallet_address: "11111111111111111111111111111111"
+            }]), { status: 200 });
+        }
+        if (target.includes("/wallet_payment_intents?") && options.method === "DELETE") {
+            return new Response(null, { status: 204 });
+        }
+        if (target.includes("/wallet_payment_intents?") && options.method === "POST") {
+            const intent = JSON.parse(options.body);
+            return new Response(JSON.stringify([{
+                id: intent.id,
+                expires_at: intent.expires_at
+            }]), { status: 201 });
+        }
+        throw new Error(`Unexpected payment-intent API request: ${target}`);
+    };
+
+    try {
+        const endpoint = require("../api/payment-intent.js");
+        const response = {
+            statusCode: 200,
+            headers: {},
+            status(code) { this.statusCode = code; return this; },
+            setHeader(name, value) { this.headers[name] = value; },
+            json(payload) { this.payload = payload; }
+        };
+        await endpoint({
+            method: "POST",
+            headers: { authorization: "Bearer test-token" },
+            body: { amount: "0.25" }
+        }, response);
+
+        assert.equal(response.statusCode, 201);
+        assert.equal(response.payload.amountRaw, "25000000");
+        assert.equal(response.payload.sourceWalletAddress, "11111111111111111111111111111111");
+        assert.equal(response.payload.treasuryAddress, environment.SOLANA_TREASURY_ADDRESS);
+        assert.equal(response.payload.memo, `RelicGrid payment intent: ${response.payload.intentId}`);
+        assert.equal(requests.some(({ options }) => options.method === "DELETE"), true);
+        const createdIntent = JSON.parse(
+            requests.find(({ options }) => options.method === "POST").options.body
+        );
+        assert.equal(createdIntent.player_id, "test-player");
+        assert.equal(createdIntent.amount_raw, "25000000");
+        assert.equal(createdIntent.status, "pending");
+        assert.equal(
+            Date.parse(createdIntent.expires_at) - Date.parse(createdIntent.created_at),
+            15 * 60 * 1000
+        );
+    } finally {
+        globalThis.fetch = originalFetch;
+        for (const [name, value] of Object.entries(previousEnvironment)) {
+            if (value === undefined) delete process.env[name];
+            else process.env[name] = value;
+        }
+    }
 });
 
 test("level entry API rejects insufficient balances and never enables paid gameplay", async () => {

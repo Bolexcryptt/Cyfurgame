@@ -1,12 +1,14 @@
 const {
     authenticate,
+    handleApiCors,
     hasServiceDatabaseEnvironment,
     serviceRequest,
     sendJson
-} = require("./_lib/wallet");
-const { getLevelEconomyAndStars, verifyLevelProof } = require("./_lib/level-completion");
+} = require("../server/lib/wallet");
+const { getLevelEconomyAndStars, verifyLevelProof } = require("../server/lib/level-completion");
 
 module.exports = async function levelCompletion(request, response) {
+    if (handleApiCors(request, response)) return;
     if (request.method !== "POST") {
         response.setHeader("Allow", "POST");
         return sendJson(response, 405, { error: "method_not_allowed" });

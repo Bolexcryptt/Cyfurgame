@@ -1,14 +1,16 @@
 const {
     authenticate,
+    handleApiCors,
     getLevelEntryCostCredits,
     hasServiceDatabaseEnvironment,
     hasWalletEnvironment,
     selectOwn,
     serviceRequest,
     sendJson
-} = require("./_lib/wallet");
+} = require("../server/lib/wallet");
 
 module.exports = async function levelEntry(request, response) {
+    if (handleApiCors(request, response)) return;
     if (request.method !== "POST") {
         response.setHeader("Allow", "POST");
         return sendJson(response, 405, { error: "method_not_allowed" });

@@ -1,11 +1,12 @@
 const {
     authenticate,
     getDepositCreditAmount,
+    handleApiCors,
     hasWalletEnvironment,
     serviceRequest,
     sendJson
-} = require("./_lib/wallet");
-const { isBase58, TOKEN_PROGRAM_IDS, verifyFinalizedDeposit } = require("./_lib/solana-deposit");
+} = require("../server/lib/wallet");
+const { isBase58, TOKEN_PROGRAM_IDS, verifyFinalizedDeposit } = require("../server/lib/solana-deposit");
 
 function respondNotReady(response, error, message) {
     return sendJson(response, 503, {
@@ -16,6 +17,7 @@ function respondNotReady(response, error, message) {
 }
 
 module.exports = async function deposits(request, response) {
+    if (handleApiCors(request, response)) return;
     if (request.method !== "POST") {
         response.setHeader("Allow", "POST");
         return sendJson(response, 405, { error: "method_not_allowed" });
@@ -66,13 +68,19 @@ module.exports = async function deposits(request, response) {
         }
 
         const signature = request.body?.signature;
+        const paymentIntentId = request.body?.paymentIntentId;
         if (typeof signature !== "string" || signature.length > 100 || !isBase58(signature, 64)) {
             return sendJson(response, 400, { error: "invalid_transaction_signature" });
         }
+        if (typeof paymentIntentId !== "string" ||
+            !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(paymentIntentId)) {
+            return sendJson(response, 400, { error: "payment_intent_required", credited: false });
+        }
 
-        const [configs, linkedWallets] = await Promise.all([
+        const [configs, linkedWallets, intents] = await Promise.all([
             serviceRequest("wallet_system_config?select=deposits_enabled,network,official_mint_address,token_program_id,token_decimals,credits_per_token,rounding_policy,treasury_address&id=eq.1"),
-            serviceRequest(`player_solana_wallets?select=wallet_address&player_id=eq.${encodeURIComponent(user.id)}&limit=1`)
+            serviceRequest(`player_solana_wallets?select=wallet_address&player_id=eq.${encodeURIComponent(user.id)}&limit=1`),
+            serviceRequest(`wallet_payment_intents?select=id,player_id,source_wallet_address,network,mint_address,token_program_id,treasury_address,amount_raw,token_decimals,expires_at,status,transaction_signature&id=eq.${encodeURIComponent(paymentIntentId)}&player_id=eq.${encodeURIComponent(user.id)}&limit=1`)
         ]);
         const config = configs[0];
         if (!config || config.deposits_enabled !== true || config.network !== configuredNetwork ||
@@ -97,6 +105,22 @@ module.exports = async function deposits(request, response) {
                 message: "Connect and verify ownership of your Solana wallet before depositing."
             });
         }
+        const intent = intents[0];
+        if (!intent || intent.player_id !== user.id ||
+            intent.source_wallet_address !== linkedWallet ||
+            intent.network !== config.network ||
+            intent.mint_address !== config.official_mint_address ||
+            intent.token_program_id !== config.token_program_id ||
+            intent.treasury_address !== config.treasury_address ||
+            !/^[1-9]\d*$/.test(String(intent.amount_raw)) ||
+            intent.token_decimals !== config.token_decimals ||
+            !Number.isFinite(Date.parse(intent.expires_at)) ||
+            !["pending", "confirmed"].includes(intent.status)) {
+            return sendJson(response, 422, {
+                error: "payment_intent_mismatch",
+                credited: false
+            });
+        }
 
         const verified = await verifyFinalizedDeposit({
             signature,
@@ -106,7 +130,9 @@ module.exports = async function deposits(request, response) {
             tokenProgramId: config.token_program_id,
             tokenDecimals: config.token_decimals,
             network: config.network,
-            rpcUrl: process.env.SOLANA_RPC_URL
+            rpcUrl: process.env.SOLANA_RPC_URL,
+            expectedAmountRaw: String(intent.amount_raw),
+            requiredMemo: `RelicGrid payment intent: ${paymentIntentId}`
         });
         if (verified.state === "pending") {
             return sendJson(response, 202, { status: "pending", credited: false });
@@ -120,8 +146,17 @@ module.exports = async function deposits(request, response) {
         if (verified.state === "wrong_destination_or_token") {
             return sendJson(response, 422, { error: "wrong_token_or_destination", credited: false });
         }
+        if (verified.state === "wrong_amount") {
+            return sendJson(response, 422, { error: "wrong_amount", credited: false });
+        }
+        if (verified.state === "payment_intent_mismatch") {
+            return sendJson(response, 422, { error: "payment_intent_mismatch", credited: false });
+        }
         if (verified.state !== "finalized") {
             return sendJson(response, 503, { error: "finalized_transaction_unavailable", credited: false });
+        }
+        if (!Number.isSafeInteger(verified.finalizedAt) || verified.finalizedAt <= 0) {
+            return sendJson(response, 422, { error: "transaction_block_time_unavailable", credited: false });
         }
 
         let creditAmount;
@@ -137,10 +172,11 @@ module.exports = async function deposits(request, response) {
             }
             throw error;
         }
-        const [ledgerResult] = await serviceRequest("rpc/process_verified_treasury_deposit", {
+        const [ledgerResult] = await serviceRequest("rpc/process_verified_payment_intent", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
+                p_payment_intent_id: paymentIntentId,
                 p_player_id: user.id,
                 p_source_wallet_address: linkedWallet,
                 p_network: config.network,
@@ -151,6 +187,7 @@ module.exports = async function deposits(request, response) {
                 p_amount_raw: verified.amountRaw,
                 p_token_decimals: config.token_decimals,
                 p_finalized_slot: verified.finalizedSlot,
+                p_finalized_at: new Date(verified.finalizedAt * 1000).toISOString(),
                 p_credit_amount_credits: creditAmount
             })
         });
@@ -177,6 +214,12 @@ module.exports = async function deposits(request, response) {
         }
         if (error.status === 404 && error.code === "PGRST205") {
             return sendJson(response, 503, { error: "wallet_schema_not_installed" });
+        }
+        if (["22023", "23505"].includes(error.code)) {
+            return sendJson(response, 422, {
+                error: "payment_intent_rejected",
+                credited: false
+            });
         }
         return sendJson(response, 502, { error: "deposit_verification_unavailable", credited: false });
     }

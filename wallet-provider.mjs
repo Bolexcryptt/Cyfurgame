@@ -135,7 +135,8 @@ function startPhantomTransactionSign(walletWindow, transaction, options = {}) {
     writeMobileState(walletWindow, {
         ...stored,
         action: "deposit-sign",
-        network: options.chain ?? "mainnet-beta"
+        network: options.chain ?? "mainnet-beta",
+        paymentIntentId: options.paymentIntentId
     });
     const url = new URL("https://phantom.com/ul/v1/signTransaction");
     url.searchParams.set("dapp_encryption_public_key", encodeBase58(base64ToBytes(stored.publicKey)));
@@ -232,6 +233,24 @@ function getWalletStandardAdapter(wallet) {
             }
             const [result] = await feature.signMessage({ account, message });
             return { signature: result.signature };
+        },
+        async signTransaction(transaction, options = {}) {
+            const account = walletStandardAccounts.get(wallet);
+            const feature = wallet.features["solana:signTransaction"];
+            if (!account || typeof feature?.signTransaction !== "function") {
+                throw new Error("Phantom does not support Solana transaction signing in this browser.");
+            }
+            const serializedTransaction = transaction.serialize({
+                requireAllSignatures: false,
+                verifySignatures: false
+            });
+            const chain = options.chain === "devnet" ? "solana:devnet" : "solana:mainnet";
+            const [result] = await feature.signTransaction({
+                account,
+                chain,
+                transaction: serializedTransaction
+            });
+            return result.signedTransaction;
         },
         async sendTransaction(transaction, connection, options = {}) {
             const account = walletStandardAccounts.get(wallet);

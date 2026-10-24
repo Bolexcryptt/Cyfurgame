@@ -1,10 +1,11 @@
 const {
     authenticate,
+    handleApiCors,
     hasWalletEnvironment,
     serviceRequest,
     sendJson
-} = require("./_lib/wallet");
-const { GENESIS_HASHES, TOKEN_PROGRAM_IDS, isBase58, solanaRpc } = require("./_lib/solana-deposit");
+} = require("../server/lib/wallet");
+const { GENESIS_HASHES, TOKEN_PROGRAM_IDS, isBase58, solanaRpc } = require("../server/lib/solana-deposit");
 
 function notReady(response, error, message) {
     return sendJson(response, 503, { error, message });
@@ -36,6 +37,7 @@ function decodeSignedTransaction(value) {
 }
 
 module.exports = async function depositTransaction(request, response) {
+    if (handleApiCors(request, response)) return;
     if (request.method !== "POST") {
         response.setHeader("Allow", "POST");
         return sendJson(response, 405, { error: "method_not_allowed" });

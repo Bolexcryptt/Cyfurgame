@@ -159,6 +159,8 @@
                             </div>
                         </form>
                         <form id="deposit-signature-form" class="deposit-signature-form">
+                            <label class="wallet-field-label" for="deposit-intent-id">PAYMENT INTENT ID</label>
+                            <input id="deposit-intent-id" name="paymentIntentId" type="text" inputmode="text" autocomplete="off" spellcheck="false" maxlength="36" placeholder="Provided when the deposit is prepared" required disabled>
                             <label class="wallet-field-label" for="deposit-signature">SOLANA TRANSACTION SIGNATURE</label>
                             <input id="deposit-signature" name="signature" type="text" inputmode="text" autocomplete="off" spellcheck="false" maxlength="100" placeholder="Paste transaction signature" required disabled>
                             <button id="deposit-verify-button" class="button button-quiet" type="submit" disabled>VERIFY &amp; CREDIT</button>

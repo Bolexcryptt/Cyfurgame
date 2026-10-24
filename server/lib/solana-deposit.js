@@ -34,6 +34,25 @@ function getInstructionAmount(info) {
     return typeof amount === "string" && /^\d+$/.test(amount) ? BigInt(amount) : null;
 }
 
+function decodeBase58(value) {
+    let decoded = 0n;
+    for (const character of value) {
+        const digit = BASE58_ALPHABET.indexOf(character);
+        if (digit < 0) return null;
+        decoded = decoded * 58n + BigInt(digit);
+    }
+    const bytes = [];
+    while (decoded > 0n) {
+        bytes.unshift(Number(decoded & 0xffn));
+        decoded >>= 8n;
+    }
+    for (const character of value) {
+        if (character !== "1") break;
+        bytes.unshift(0);
+    }
+    return Uint8Array.from(bytes);
+}
+
 async function solanaRpc(rpcUrl, method, params, fetchImpl = fetch) {
     const response = await fetchImpl(rpcUrl, {
         method: "POST",
@@ -56,6 +75,8 @@ async function verifyFinalizedDeposit({
     tokenDecimals,
     network,
     rpcUrl,
+    expectedAmountRaw,
+    requiredMemo,
     fetchImpl = fetch
 }) {
     if (!isBase58(signature, 64)) throw new TypeError("Invalid Solana transaction signature.");
@@ -74,6 +95,14 @@ async function verifyFinalizedDeposit({
     if (!GENESIS_HASHES[network]) throw new TypeError("Unsupported Solana network.");
     if (typeof rpcUrl !== "string" || !/^https:\/\//i.test(rpcUrl)) {
         throw new TypeError("A trusted HTTPS Solana RPC URL is required.");
+    }
+    if (expectedAmountRaw !== undefined &&
+        (typeof expectedAmountRaw !== "string" || !/^[1-9]\d*$/.test(expectedAmountRaw))) {
+        throw new TypeError("Invalid expected token transfer amount.");
+    }
+    if (requiredMemo !== undefined &&
+        (typeof requiredMemo !== "string" || requiredMemo.length < 1 || requiredMemo.length > 128)) {
+        throw new TypeError("Invalid required payment-intent memo.");
     }
 
     const genesisHash = await solanaRpc(rpcUrl, "getGenesisHash", [], fetchImpl);
@@ -150,6 +179,20 @@ async function verifyFinalizedDeposit({
         ...(transaction.transaction.message.instructions ?? []),
         ...(transaction.meta.innerInstructions ?? []).flatMap((group) => group.instructions ?? [])
     ];
+    if (requiredMemo !== undefined) {
+        const memoProgramId = "MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr";
+        const memoBytes = new TextEncoder().encode(requiredMemo);
+        const hasIntentMemo = instructions.some((instruction) => {
+            if (getPublicKey(instruction.programId) !== memoProgramId) return false;
+            if (instruction.parsed === requiredMemo || instruction.parsed?.info === requiredMemo) return true;
+            const encoded = typeof instruction.data === "string"
+                ? decodeBase58(instruction.data)
+                : null;
+            return encoded !== null &&
+                Buffer.from(encoded).equals(Buffer.from(memoBytes));
+        });
+        if (!hasIntentMemo) return { state: "payment_intent_mismatch" };
+    }
     let instructionAmount = 0n;
     for (const instruction of instructions) {
         if (getPublicKey(instruction.programId) !== tokenProgramId ||
@@ -170,11 +213,15 @@ async function verifyFinalizedDeposit({
     if (instructionAmount !== receivedAmount) {
         return { state: "wrong_destination_or_token" };
     }
+    if (expectedAmountRaw !== undefined && receivedAmount !== BigInt(expectedAmountRaw)) {
+        return { state: "wrong_amount" };
+    }
 
     return {
         state: "finalized",
         amountRaw: receivedAmount.toString(),
-        finalizedSlot: transaction.slot
+        finalizedSlot: transaction.slot,
+        finalizedAt: transaction.blockTime
     };
 }
 

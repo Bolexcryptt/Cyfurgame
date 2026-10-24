@@ -1,5 +1,6 @@
 import { CYFUR_CREDITS_PER_TOKEN, levels, claimLevelCompletion } from "./levels.js";
 import { supabase, supabaseConfigured } from "./supabase.js";
+import { GAME_API_BASE_URL } from "./supabase-config.js";
 import {
     bytesToWalletBase64,
     clearPhantomMobileSession,
@@ -34,6 +35,21 @@ const backgroundMusic = document.getElementById("background-music");
 const playerNameInput = document.getElementById("player-name");
 document.getElementById("wallet-exchange-rate").textContent =
     `1 CYFUR = ${CYFUR_CREDITS_PER_TOKEN.toLocaleString("en-US")} CREDITS`;
+
+function apiUrl(path) {
+    if (!GAME_API_BASE_URL) return `/api/${path}`;
+    let base;
+    try {
+        base = new URL(GAME_API_BASE_URL);
+    } catch {
+        throw new Error("GAME_API_BASE_URL must be an absolute HTTPS origin.");
+    }
+    if (base.protocol !== "https:" || base.username || base.password ||
+        base.pathname !== "/" || base.search || base.hash) {
+        throw new Error("GAME_API_BASE_URL must be an HTTPS origin without credentials, path, or query.");
+    }
+    return `${base.origin}/api/${path}`;
+}
 
 function readPlayer() {
     const saved = localStorage.getItem(storageKey);
@@ -429,7 +445,7 @@ async function requestLevelEntry(levelNumber) {
             const requestId = pendingLevelEntryRequests.get(levelNumber) ?? crypto.randomUUID();
             pendingLevelEntryRequests.set(levelNumber, requestId);
 
-            const response = await fetch("/api/level-entry", {
+            const response = await fetch(apiUrl("level-entry"), {
                 method: "POST",
                 headers: {
                     Authorization: `Bearer ${accessToken}`,
@@ -618,6 +634,7 @@ async function refreshWallet() {
     const address = document.getElementById("wallet-address");
     const copyButton = document.getElementById("wallet-copy-address");
     const signatureInput = document.getElementById("deposit-signature");
+    const intentInput = document.getElementById("deposit-intent-id");
     const signatureSubmit = document.getElementById("deposit-verify-button");
     const balance = document.getElementById("wallet-balance");
     const status = document.getElementById("wallet-status-value");
@@ -637,6 +654,7 @@ async function refreshWallet() {
     balance.textContent = "Unavailable";
     document.getElementById("wallet-balance-state").textContent = "CREDITS · NOT VERIFIED";
     signatureInput.disabled = true;
+    intentInput.disabled = true;
     signatureSubmit.disabled = true;
     renderWalletHistory(null);
 
@@ -653,7 +671,7 @@ async function refreshWallet() {
             return;
         }
 
-        const response = await fetch("/api/wallet", {
+        const response = await fetch(apiUrl("wallet"), {
             headers: { Authorization: `Bearer ${accessToken}` },
             cache: "no-store"
         });
@@ -695,6 +713,7 @@ async function refreshWallet() {
         amountInput.disabled = !depositReady;
         transferButton.disabled = !depositReady;
         signatureInput.disabled = result.depositsEnabled !== true || !result.linkedWalletAddress;
+        intentInput.disabled = signatureInput.disabled;
         signatureSubmit.disabled = result.depositsEnabled !== true || !result.linkedWalletAddress;
         balance.textContent = result.balanceCredits === null
             ? "Unavailable"
@@ -795,6 +814,7 @@ async function sendCyfurDeposit() {
     const mainButton = document.getElementById("fund-account-button");
     const amountInput = document.getElementById("wallet-transfer-amount");
     let signature = "";
+    let paymentIntentId = "";
     try {
         if (!getPhantomProvider(window)) {
             showPhantomUnavailableMessage();
@@ -811,7 +831,7 @@ async function sendCyfurDeposit() {
         const { provider } = walletConnection;
         renderWalletConnectionState();
         const rawAmount = parseTokenAmount(amountInput.value, config.tokenDecimals);
-        const { PublicKey, Transaction, TransactionInstruction, Connection, clusterApiUrl } =
+        const { PublicKey, Transaction, TransactionInstruction } =
             await loadSolanaWeb3();
         const payer = new PublicKey(walletConnection.publicKey);
         if (payer.toString() !== config.linkedWalletAddress) {
@@ -822,6 +842,17 @@ async function sendCyfurDeposit() {
         const tokenProgramId = new PublicKey(config.tokenProgramId);
         const senderTokenAccount = getAssociatedTokenAddress(PublicKey, payer, mint, tokenProgramId);
         const treasuryTokenAccount = getAssociatedTokenAddress(PublicKey, treasury, mint, tokenProgramId);
+        const paymentIntent = await requestPaymentIntent(amountInput.value);
+        paymentIntentId = paymentIntent.intentId;
+        if (paymentIntent.network !== config.network ||
+            paymentIntent.sourceWalletAddress !== config.linkedWalletAddress ||
+            paymentIntent.mintAddress !== config.officialMintAddress ||
+            paymentIntent.tokenProgramId !== config.tokenProgramId ||
+            paymentIntent.treasuryAddress !== config.treasuryAddress ||
+            paymentIntent.amountRaw !== rawAmount.toString() ||
+            Date.parse(paymentIntent.expiresAt) <= Date.now()) {
+            throw new Error("The server payment intent does not match the reviewed wallet, token, amount, recipient, and expiry.");
+        }
         const preparation = await requestDepositTransaction("prepare");
         const senderInfo = preparation.senderTokenAccounts.includes(senderTokenAccount.toString());
         const treasuryInfo = preparation.treasuryTokenAccounts.includes(treasuryTokenAccount.toString());
@@ -864,28 +895,54 @@ async function sendCyfurDeposit() {
             ],
             data: transferData
         }));
+        instructions.push(new TransactionInstruction({
+            programId: new PublicKey("MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr"),
+            keys: [{ pubkey: payer, isSigner: true, isWritable: false }],
+            data: new TextEncoder().encode(paymentIntent.memo)
+        }));
         const transaction = new Transaction({
             feePayer: payer,
             recentBlockhash: preparation.blockhash
         }).add(...instructions);
-        const connection = new Connection(clusterApiUrl(config.network), "confirmed");
         transferButton.disabled = true;
         mainButton.disabled = true;
         setWalletMessage("Review the CYFUR amount and recipient in Phantom, then approve the transfer. RelicGrid will verify it before crediting.", "pending");
-        const result = await provider.sendTransaction(transaction, connection, {
+        if (provider.isMobileDeepLink) {
+            await provider.sendTransaction(transaction, null, {
+                preflightCommitment: "confirmed",
+                chain: config.network,
+                paymentIntentId
+            });
+            throw new Error("The Phantom mobile signing request did not return to RelicGrid.");
+        }
+        if (typeof provider.signTransaction !== "function") {
+            throw new Error("This Phantom provider cannot securely sign a transfer for server submission.");
+        }
+        const signed = await provider.signTransaction(transaction, {
             preflightCommitment: "confirmed",
-            ...(provider.isWalletStandard ? { chain: config.network } : {})
+            chain: config.network
         });
-        signature = typeof result === "string" ? result : result.signature;
+        const signedBytes = signed instanceof Uint8Array
+            ? signed
+            : signed?.serialize?.({ requireAllSignatures: true, verifySignatures: true });
+        if (!(signedBytes instanceof Uint8Array)) {
+            throw new Error("Phantom did not return a serialized signed transaction.");
+        }
+        const broadcast = await requestDepositTransaction("broadcast", {
+            transaction: bytesToWalletBase64(signedBytes)
+        });
+        signature = broadcast.signature;
         if (!signature) throw new Error("Phantom did not return a transaction signature.");
         document.getElementById("deposit-signature").value = signature;
+        document.getElementById("deposit-intent-id").value = paymentIntentId;
         setWalletMessage("Transfer submitted. Waiting for the backend to verify successful finalized confirmation; no credits are shown until it confirms.", "pending");
-        await verifyDepositSignature(signature);
+        await verifyDepositSignature(signature, paymentIntentId);
         amountInput.value = "";
     } catch (error) {
         console.error("Wallet transfer could not be completed or verified.", error);
         if (signature) {
             document.getElementById("deposit-signature").value = signature;
+            document.getElementById("deposit-intent-id").value = paymentIntentId;
             setWalletMessage(`Transfer was submitted, but credit verification did not complete. Keep this signature and use VERIFY & CREDIT after the transaction finalizes. ${error.message}`, "error");
         } else {
             setWalletMessage(`Transfer was not completed. ${error.message}`, "error");
@@ -894,6 +951,28 @@ async function sendCyfurDeposit() {
         transferButton.disabled = walletStatusSnapshot?.depositsEnabled !== true;
         mainButton.disabled = false;
     }
+}
+
+async function requestPaymentIntent(amount) {
+    const response = await fetch(apiUrl("payment-intent"), {
+        method: "POST",
+        headers: await getWalletAuthorizationHeaders(),
+        body: JSON.stringify({ amount }),
+        cache: "no-store"
+    });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok) {
+        throw new Error(result.message || result.error || `Payment intent request failed (${response.status}).`);
+    }
+    if (typeof result.intentId !== "string" ||
+        !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(result.intentId) ||
+        typeof result.memo !== "string" ||
+        !/^[1-9]\d*$/.test(String(result.amountRaw)) ||
+        !Number.isFinite(Date.parse(result.expiresAt)) ||
+        Date.parse(result.expiresAt) <= Date.now()) {
+        throw new Error("The server returned an invalid or expired payment intent.");
+    }
+    return result;
 }
 
 async function connectSolanaWallet() {
@@ -938,7 +1017,7 @@ async function connectSolanaWallet() {
             Authorization: `Bearer ${accessToken}`,
             "Content-Type": "application/json"
         };
-        const challengeResponse = await fetch("/api/wallet-link", {
+        const challengeResponse = await fetch(apiUrl("wallet-link"), {
             method: "POST",
             headers,
             body: JSON.stringify({ action: "challenge", walletAddress }),
@@ -960,7 +1039,7 @@ async function connectSolanaWallet() {
         const signature = btoa(Array.from(signed.signature, (byte) => String.fromCharCode(byte)).join(""));
         button.textContent = "SAVING WALLET…";
         setWalletMessage("Wallet signature received. Saving the wallet link securely on the server…", "pending");
-        const linkResponse = await fetch("/api/wallet-link", {
+        const linkResponse = await fetch(apiUrl("wallet-link"), {
             method: "POST",
             headers,
             body: JSON.stringify({ action: "verify", walletAddress, signature }),
@@ -981,19 +1060,22 @@ async function connectSolanaWallet() {
     }
 }
 
-async function verifyDepositSignature(signature) {
+async function verifyDepositSignature(signature, paymentIntentId) {
+    if (typeof paymentIntentId !== "string" || !/^[0-9a-f-]{36}$/i.test(paymentIntentId)) {
+        throw new Error("Enter the payment intent ID created for this exact deposit.");
+    }
     if (!supabaseConfigured || !supabase) throw new Error("Supabase authentication is unavailable.");
     const { data, error } = await supabase.auth.getSession();
     if (error) throw error;
     const accessToken = data.session?.access_token;
     if (!accessToken) throw new Error("Sign in before submitting a transaction signature.");
-    const response = await fetch("/api/deposits", {
+    const response = await fetch(apiUrl("deposits"), {
         method: "POST",
         headers: {
             Authorization: `Bearer ${accessToken}`,
             "Content-Type": "application/json"
         },
-        body: JSON.stringify({ signature }),
+        body: JSON.stringify({ signature, paymentIntentId }),
         cache: "no-store"
     });
     const result = await response.json().catch(() => ({}));
@@ -1043,7 +1125,7 @@ async function getWalletAuthorizationHeaders() {
 }
 
 async function requestDepositTransaction(action, payload = {}) {
-    const response = await fetch("/api/deposit-transaction", {
+    const response = await fetch(apiUrl("deposit-transaction"), {
         method: "POST",
         headers: await getWalletAuthorizationHeaders(),
         body: JSON.stringify({ action, ...payload }),
@@ -1081,7 +1163,7 @@ async function handlePhantomMobileCallback(callback) {
                 throw new Error("Phantom's returned wallet session did not match its public address.");
             }
             const headers = await getWalletAuthorizationHeaders();
-            const challengeResponse = await fetch("/api/wallet-link", {
+            const challengeResponse = await fetch(apiUrl("wallet-link"), {
                 method: "POST",
                 headers,
                 body: JSON.stringify({ action: "challenge", walletAddress }),
@@ -1103,7 +1185,7 @@ async function handlePhantomMobileCallback(callback) {
             const signature = decrypted.data.signature;
             if (typeof signature !== "string") throw new Error("Phantom did not return the ownership signature.");
             const headers = await getWalletAuthorizationHeaders();
-            const verifyResponse = await fetch("/api/wallet-link", {
+            const verifyResponse = await fetch(apiUrl("wallet-link"), {
                 method: "POST",
                 headers,
                 body: JSON.stringify({
@@ -1130,6 +1212,9 @@ async function handlePhantomMobileCallback(callback) {
 
         if (state.action === "deposit-sign") {
             const config = walletStatusSnapshot;
+            if (typeof state.paymentIntentId !== "string" || !/^[0-9a-f-]{36}$/i.test(state.paymentIntentId)) {
+                throw new Error("The saved Phantom request is missing its payment intent. No transaction will be broadcast.");
+            }
             if (!config?.depositsEnabled || config.network !== state.network) {
                 throw new Error("Deposit readiness or network changed while Phantom was open. No transaction was submitted.");
             }
@@ -1147,7 +1232,8 @@ async function handlePhantomMobileCallback(callback) {
             broadcastSignature = broadcast.signature;
             document.getElementById("deposit-signature").value = broadcastSignature;
             setWalletMessage("Phantom approved the transaction. Waiting for the server to verify its finalized transfer before crediting.", "pending");
-            await verifyDepositSignature(broadcastSignature);
+            document.getElementById("deposit-intent-id").value = state.paymentIntentId;
+            await verifyDepositSignature(broadcastSignature, state.paymentIntentId);
             setPhantomMobilePendingAction(window, { action: "connected" });
             await refreshWallet();
             return;
@@ -1162,6 +1248,7 @@ async function handlePhantomMobileCallback(callback) {
         }
         if (broadcastSignature) {
             document.getElementById("deposit-signature").value = broadcastSignature;
+            document.getElementById("deposit-intent-id").value = state.paymentIntentId;
             setWalletMessage(`Transaction was submitted, but credit verification did not complete. Keep the signature and use VERIFY & CREDIT. ${error.message}`, "error");
         } else {
             setWalletMessage(`Phantom returned to RelicGrid, but the requested action did not complete. ${error.message}`, "error");
@@ -1450,6 +1537,7 @@ document.getElementById("wallet-copy-address").addEventListener("click", async (
 document.getElementById("deposit-signature-form").addEventListener("submit", async (event) => {
     event.preventDefault();
     const input = document.getElementById("deposit-signature");
+    const intentInput = document.getElementById("deposit-intent-id");
     const button = document.getElementById("deposit-verify-button");
     const signature = input.value.trim();
     if (!signature) return;
@@ -1457,7 +1545,8 @@ document.getElementById("deposit-signature-form").addEventListener("submit", asy
     button.textContent = "VERIFYING…";
     setWalletMessage("Checking transaction status, token mint, recipient, and finality with the backend…", "pending");
     try {
-        await verifyDepositSignature(signature);
+        const paymentIntentId = intentInput.value.trim();
+        await verifyDepositSignature(signature, paymentIntentId);
     } catch (error) {
         console.error("Deposit signature verification failed.", error);
         setWalletMessage(error.message, "error");
@@ -1527,7 +1616,7 @@ async function saveWalletLevelCompletion(detail) {
     const accessToken = data.session?.access_token;
     if (!accessToken) throw new Error("Player authentication expired before completion was saved.");
     await walletTimerStartPromise;
-    const response = await fetch("/api/level-completion", {
+    const response = await fetch(apiUrl("level-completion"), {
         method: "POST",
         headers: {
             Authorization: `Bearer ${accessToken}`,
@@ -1576,7 +1665,7 @@ window.addEventListener("fluxgrid:level-timer-start", (event) => {
         if (error) throw error;
         const accessToken = data.session?.access_token;
         if (!accessToken) throw new Error("Player authentication expired before the timer started.");
-        const response = await fetch("/api/level-session", {
+        const response = await fetch(apiUrl("level-session"), {
             method: "POST",
             headers: {
                 Authorization: `Bearer ${accessToken}`,

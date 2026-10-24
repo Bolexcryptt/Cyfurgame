@@ -34,6 +34,21 @@ function getDepositCreditAmount(amountRaw, tokenDecimals, roundingPolicy) {
     return credits.toString();
 }
 
+function parseTokenAmount(amount, tokenDecimals) {
+    if (typeof amount !== "string" || !Number.isInteger(tokenDecimals) ||
+        tokenDecimals < 0 || tokenDecimals > 18) {
+        throw new TypeError("Token amount must be a decimal string.");
+    }
+    const match = amount.trim().match(/^(0|[1-9]\d*)(?:\.(\d+))?$/);
+    if (!match || (match[2]?.length ?? 0) > tokenDecimals) {
+        throw new TypeError("Enter a positive amount using no more than the supported token decimals.");
+    }
+    const raw = BigInt(match[1]) * (10n ** BigInt(tokenDecimals)) +
+        BigInt((match[2] ?? "").padEnd(tokenDecimals, "0") || "0");
+    if (raw <= 0n) throw new RangeError("Token amount must be greater than zero.");
+    return raw.toString();
+}
+
 function hasWalletEnvironment() {
     return requiredEnvironment.every((name) => Boolean(process.env[name]?.trim()));
 }
@@ -48,6 +63,35 @@ function sendJson(response, status, payload) {
     response.setHeader("Content-Type", "application/json; charset=utf-8");
     response.setHeader("X-Content-Type-Options", "nosniff");
     response.json(payload);
+}
+
+function handleApiCors(request, response) {
+    const origin = request.headers.origin;
+    if (!origin) return false;
+
+    const configuredOrigin = process.env.GAME_FRONTEND_ORIGIN?.trim();
+    const forwardedProtocol = request.headers["x-forwarded-proto"]?.split(",")[0]?.trim();
+    const protocol = forwardedProtocol || "https";
+    const host = request.headers["x-forwarded-host"]?.split(",")[0]?.trim() ||
+        request.headers.host;
+    const sameOrigin = host && origin === `${protocol}://${host}`;
+    if (origin !== configuredOrigin && !sameOrigin) {
+        sendJson(response, 403, { error: "origin_not_allowed" });
+        return true;
+    }
+
+    response.setHeader("Access-Control-Allow-Origin", origin);
+    response.setHeader("Vary", "Origin");
+    response.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+    response.setHeader("Access-Control-Allow-Headers", "Authorization, Content-Type");
+    response.setHeader("Access-Control-Max-Age", "600");
+    if (request.method === "OPTIONS") {
+        response.status(204);
+        if (typeof response.end === "function") response.end();
+        else response.json({});
+        return true;
+    }
+    return false;
 }
 
 async function authenticate(request) {
@@ -119,6 +163,8 @@ module.exports = {
     getLevelEntryCostCredits,
     hasServiceDatabaseEnvironment,
     hasWalletEnvironment,
+    handleApiCors,
+    parseTokenAmount,
     serviceRequest,
     selectOwn,
     sendJson

@@ -1,13 +1,15 @@
 const {
     CYFUR_CREDITS_PER_TOKEN,
     authenticate,
+    handleApiCors,
     hasWalletEnvironment,
     selectOwn,
     serviceRequest,
     sendJson
-} = require("./_lib/wallet");
+} = require("../server/lib/wallet");
 
 module.exports = async function wallet(request, response) {
+    if (handleApiCors(request, response)) return;
     if (request.method !== "GET") {
         response.setHeader("Allow", "GET");
         return sendJson(response, 405, { error: "method_not_allowed" });

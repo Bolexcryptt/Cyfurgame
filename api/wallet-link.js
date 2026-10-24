@@ -1,14 +1,16 @@
 const { randomBytes } = require("node:crypto");
 const {
     authenticate,
+    handleApiCors,
     hasWalletEnvironment,
     serviceRequest,
     sendJson
-} = require("./_lib/wallet");
-const { isBase58 } = require("./_lib/solana-deposit");
-const { verifyWalletSignature } = require("./_lib/solana-wallet-link");
+} = require("../server/lib/wallet");
+const { isBase58 } = require("../server/lib/solana-deposit");
+const { verifyWalletSignature } = require("../server/lib/solana-wallet-link");
 
 module.exports = async function walletLink(request, response) {
+    if (handleApiCors(request, response)) return;
     if (request.method !== "POST") {
         response.setHeader("Allow", "POST");
         return sendJson(response, 405, { error: "method_not_allowed" });
