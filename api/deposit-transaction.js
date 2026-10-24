@@ -150,6 +150,8 @@ module.exports = async function depositTransaction(request, response) {
     } catch (error) {
         console.error("Deposit transaction request failed.", {
             status: error.status ?? 502,
+            errorName: error.name || "Error",
+            errorMessage: error.message || "Unknown error",
             rpcForbidden: error.message?.includes("(403)") === true
         });
         const forbidden = error.message?.includes("(403)") === true;

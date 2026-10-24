@@ -54,15 +54,60 @@ function decodeBase58(value) {
 }
 
 async function solanaRpc(rpcUrl, method, params, fetchImpl = fetch) {
-    const response = await fetchImpl(rpcUrl, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
-        cache: "no-store"
-    });
-    if (!response.ok) throw new Error(`Solana RPC request failed (${response.status}).`);
-    const payload = await response.json();
-    if (payload.error) throw new Error(`Solana RPC ${method} failed.`);
+    let response;
+
+    try {
+        response = await fetchImpl(rpcUrl, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
+            cache: "no-store"
+        });
+    } catch (error) {
+        console.error("Solana RPC connection failed.", {
+            method,
+            errorName: error?.name || "Error",
+            errorCode: error?.cause?.code || null
+        });
+        throw new Error(`Solana RPC ${method} connection failed.`);
+    }
+
+    if (!response.ok) {
+        console.error("Solana RPC HTTP error.", {
+            method,
+            status: response.status
+        });
+        throw new Error(`Solana RPC request failed (${response.status}).`);
+    }
+
+    let payload;
+
+    try {
+        payload = await response.json();
+    } catch {
+        console.error("Solana RPC returned invalid JSON.", { method });
+        throw new Error(`Solana RPC ${method} returned invalid JSON.`);
+    }
+
+    if (payload?.error) {
+        console.error("Solana JSON-RPC error.", {
+            method,
+            code: Number.isInteger(payload.error.code)
+                ? payload.error.code
+                : null,
+            message: typeof payload.error.message === "string"
+                ? payload.error.message.slice(0, 300)
+                : "Unknown RPC error"
+        });
+
+        throw new Error(`Solana RPC ${method} failed.`);
+    }
+
+    if (!Object.prototype.hasOwnProperty.call(payload ?? {}, "result")) {
+        console.error("Solana RPC response missing result.", { method });
+        throw new Error(`Solana RPC ${method} returned no result.`);
+    }
+
     return payload.result;
 }
 
