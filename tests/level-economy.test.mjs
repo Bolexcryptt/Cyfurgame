@@ -15,6 +15,7 @@ import {
     getPhantomProvider,
     isMobileBrowser,
     readPhantomMobileCallback,
+    rebuildMobileDepositAfterBlockhashRejection,
     savePhantomMobileSession,
     signAndBroadcastWithBlockhashRetry,
     startPhantomMobileConnect,
@@ -154,6 +155,80 @@ test("blockhash rejection fetches a fresh transaction and requires a second Phan
         ["sign", "fresh-blockhash"],
         ["broadcast", "signed:fresh-blockhash"]
     ]);
+});
+
+test("mobile blockhash recovery rebuilds once from fresh preparation for the same unexpired intent", async () => {
+    const events = [];
+    const state = {
+        action: "deposit-sign",
+        paymentIntentId: "8f9ef883-520e-45ef-96ae-62e621d3b31c",
+        paymentIntentAmountRaw: "125000000",
+        paymentIntentExpiresAt: "2030-01-01T00:15:00.000Z",
+        blockhashRetryCount: 0
+    };
+    const result = await rebuildMobileDepositAfterBlockhashRejection({
+        error: Object.assign(new Error("server rejected stale blockhash"), {
+            code: "blockhash_expired"
+        }),
+        state,
+        async prepare() {
+            events.push("prepare");
+            return { blockhash: "fresh-mobile-blockhash" };
+        },
+        async build(preparation, intentState) {
+            events.push(["build", preparation.blockhash, intentState.paymentIntentId]);
+            return { blockhash: preparation.blockhash };
+        },
+        now: () => Date.parse("2029-12-31T23:59:00.000Z")
+    });
+
+    assert.deepEqual(result, {
+        transaction: { blockhash: "fresh-mobile-blockhash" },
+        blockhashRetryCount: 1
+    });
+    assert.deepEqual(events, [
+        "prepare",
+        ["build", "fresh-mobile-blockhash", state.paymentIntentId]
+    ]);
+});
+
+test("mobile blockhash recovery refuses unrelated, expired, invalid, or repeated requests", async () => {
+    let operationCount = 0;
+    const options = {
+        state: {
+            action: "deposit-sign",
+            paymentIntentId: "8f9ef883-520e-45ef-96ae-62e621d3b31c",
+            paymentIntentAmountRaw: "125000000",
+            paymentIntentExpiresAt: "2030-01-01T00:15:00.000Z",
+            blockhashRetryCount: 0
+        },
+        async prepare() { operationCount += 1; return {}; },
+        async build() { operationCount += 1; return {}; },
+        now: () => Date.parse("2029-12-31T23:59:00.000Z")
+    };
+    await assert.rejects(
+        rebuildMobileDepositAfterBlockhashRejection({
+            ...options,
+            error: Object.assign(new Error("simulation failed"), { code: "solana_rpc_unavailable" })
+        }),
+        { code: "solana_rpc_unavailable" }
+    );
+    await assert.rejects(rebuildMobileDepositAfterBlockhashRejection({
+        ...options,
+        error: Object.assign(new Error("stale"), { code: "blockhash_expired" }),
+        state: { ...options.state, blockhashRetryCount: 1 }
+    }), /cannot be safely refreshed/);
+    await assert.rejects(rebuildMobileDepositAfterBlockhashRejection({
+        ...options,
+        error: Object.assign(new Error("stale"), { code: "blockhash_expired" }),
+        state: { ...options.state, paymentIntentExpiresAt: "2029-12-31T23:58:59.000Z" }
+    }), /cannot be safely refreshed/);
+    await assert.rejects(rebuildMobileDepositAfterBlockhashRejection({
+        ...options,
+        error: Object.assign(new Error("stale"), { code: "blockhash_expired" }),
+        state: { ...options.state, paymentIntentAmountRaw: "18446744073709551616" }
+    }), /cannot be safely refreshed/);
+    assert.equal(operationCount, 0);
 });
 
 test("deposit preparation validation matches API JSON and identifies invalid field names safely", () => {
@@ -355,7 +430,10 @@ test("Phantom mobile deeplink encrypts connect and message-sign requests and res
         null,
         {
             chain: "mainnet-beta",
-            paymentIntentId
+            paymentIntentId,
+            paymentIntentAmountRaw: "125000000",
+            paymentIntentExpiresAt: "2030-01-01T00:15:00.000Z",
+            blockhashRetryCount: 0
         }
     );
     const depositUrl = new URL(assignedUrl);
@@ -364,6 +442,9 @@ test("Phantom mobile deeplink encrypts connect and message-sign requests and res
     assert.equal(depositState.action, "deposit-sign");
     assert.equal(depositState.contextSlot, undefined);
     assert.equal(depositState.paymentIntentId, paymentIntentId);
+    assert.equal(depositState.paymentIntentAmountRaw, "125000000");
+    assert.equal(depositState.paymentIntentExpiresAt, "2030-01-01T00:15:00.000Z");
+    assert.equal(depositState.blockhashRetryCount, 0);
     const depositPayload = nacl.box.open.after(
         decodeWalletBytes(depositUrl.searchParams.get("payload")),
         decodeWalletBytes(depositUrl.searchParams.get("nonce")),
@@ -371,6 +452,32 @@ test("Phantom mobile deeplink encrypts connect and message-sign requests and res
     );
     const parsedDepositPayload = JSON.parse(new TextDecoder().decode(depositPayload));
     assert.deepEqual(decodeWalletBytes(parsedDepositPayload.transaction), Uint8Array.from([8, 9, 10]));
+
+    const freshTransactionBytes = Uint8Array.from([11, 12, 13, 14]);
+    void connection.provider.sendTransaction(
+        { serialize: () => freshTransactionBytes },
+        null,
+        {
+            chain: "mainnet-beta",
+            paymentIntentId,
+            paymentIntentAmountRaw: "125000000",
+            paymentIntentExpiresAt: "2030-01-01T00:15:00.000Z",
+            blockhashRetryCount: 1
+        }
+    );
+    const refreshedDepositUrl = new URL(assignedUrl);
+    const refreshedState = JSON.parse(storage.get("fluxgrid.phantom.deeplink.v1"));
+    const refreshedPayload = nacl.box.open.after(
+        decodeWalletBytes(refreshedDepositUrl.searchParams.get("payload")),
+        decodeWalletBytes(refreshedDepositUrl.searchParams.get("nonce")),
+        sharedSecret
+    );
+    assert.equal(refreshedState.blockhashRetryCount, 1);
+    assert.equal(refreshedState.paymentIntentId, paymentIntentId);
+    assert.deepEqual(
+        decodeWalletBytes(JSON.parse(new TextDecoder().decode(refreshedPayload)).transaction),
+        freshTransactionBytes
+    );
 });
 
 test("mobile browser detection recognizes phones and touch-enabled iPads", () => {
@@ -1165,6 +1272,7 @@ test("payment-intent API binds the exact amount to the authenticated linked wall
     for (const [name, value] of Object.entries(environment)) process.env[name] = value;
     const originalFetch = globalThis.fetch;
     const requests = [];
+    let persistedIntent = null;
     globalThis.fetch = async (url, options = {}) => {
         const target = String(url);
         requests.push({ target, options });
@@ -1193,10 +1301,14 @@ test("payment-intent API binds the exact amount to the authenticated linked wall
         }
         if (target.includes("/wallet_payment_intents?") && options.method === "POST") {
             const intent = JSON.parse(options.body);
+            persistedIntent = intent;
             return new Response(JSON.stringify([{
                 id: intent.id,
                 expires_at: intent.expires_at
             }]), { status: 201 });
+        }
+        if (target.includes("/wallet_payment_intents?")) {
+            return new Response(JSON.stringify(persistedIntent ? [persistedIntent] : []), { status: 200 });
         }
         throw new Error(`Unexpected payment-intent API request: ${target}`);
     };
@@ -1232,6 +1344,30 @@ test("payment-intent API binds the exact amount to the authenticated linked wall
             Date.parse(createdIntent.expires_at) - Date.parse(createdIntent.created_at),
             15 * 60 * 1000
         );
+
+        const validateIntent = async () => {
+            const validationResponse = {
+                statusCode: 200,
+                status(code) { this.statusCode = code; return this; },
+                setHeader() {},
+                json(payload) { this.payload = payload; }
+            };
+            await endpoint({
+                method: "POST",
+                headers: { authorization: "Bearer test-token" },
+                body: { action: "validate", paymentIntentId: response.payload.intentId }
+            }, validationResponse);
+            return validationResponse;
+        };
+        const validIntent = await validateIntent();
+        assert.equal(validIntent.statusCode, 200);
+        assert.equal(validIntent.payload.intentId, response.payload.intentId);
+        assert.equal(validIntent.payload.amountRaw, "25000000");
+        assert.equal(validIntent.payload.memo, response.payload.memo);
+        persistedIntent.expires_at = new Date(Date.now() - 1000).toISOString();
+        const expiredIntent = await validateIntent();
+        assert.equal(expiredIntent.statusCode, 409);
+        assert.equal(expiredIntent.payload.error, "payment_intent_invalid_or_expired");
     } finally {
         globalThis.fetch = originalFetch;
         for (const [name, value] of Object.entries(previousEnvironment)) {
@@ -1594,6 +1730,9 @@ test("deposit transaction API prepares and broadcasts through the authenticated 
     const senderTokenAccount = "11111111111111111111111111111113";
     const treasuryTokenAccount = "11111111111111111111111111111114";
     const signature = "1".repeat(64);
+    const paymentIntentId = "8f9ef883-520e-45ef-96ae-62e621d3b31c";
+    let intentExpiresAt = new Date(Date.now() + 60_000).toISOString();
+    let intentStatus = "pending";
     const rpcCalls = [];
     let denyRpc = false;
     let rpcError = null;
@@ -1617,6 +1756,21 @@ test("deposit transaction API prepares and broadcasts through the authenticated 
         }
         if (target.includes("/rest/v1/player_solana_wallets")) {
             return new Response(JSON.stringify([{ wallet_address: linkedWallet }]), { status: 200 });
+        }
+        if (target.includes("/rest/v1/wallet_payment_intents")) {
+            return new Response(JSON.stringify([{
+                id: paymentIntentId,
+                player_id: "test-player",
+                source_wallet_address: linkedWallet,
+                network: "mainnet-beta",
+                mint_address: "9F4hLLngEAhepsH2HLTH6kBYmmq6dzm4GXRrcpME3uam",
+                token_program_id: "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+                treasury_address: process.env.SOLANA_TREASURY_ADDRESS,
+                amount_raw: "100000000",
+                token_decimals: 8,
+                expires_at: intentExpiresAt,
+                status: intentStatus
+            }]), { status: 200 });
         }
         if (target === process.env.SOLANA_RPC_URL) {
             if (denyRpc) return new Response("", { status: 403 });
@@ -1681,6 +1835,7 @@ test("deposit transaction API prepares and broadcasts through the authenticated 
         const signedTransactionBase64 = Buffer.from([1, 2, 3]).toString("base64");
         const broadcast = await invoke({
             action: "broadcast",
+            paymentIntentId,
             transaction: signedTransactionBase64
         });
         assert.equal(broadcast.statusCode, 200);
@@ -1697,9 +1852,17 @@ test("deposit transaction API prepares and broadcasts through the authenticated 
 
         const invalid = await invoke({ action: "broadcast", transaction: "not base64!" });
         assert.equal(invalid.statusCode, 400);
-        assert.equal(invalid.payload.error, "invalid_signed_transaction");
+        assert.equal(invalid.payload.error, "payment_intent_required");
+        const invalidTransaction = await invoke({
+            action: "broadcast",
+            paymentIntentId,
+            transaction: "not base64!"
+        });
+        assert.equal(invalidTransaction.statusCode, 400);
+        assert.equal(invalidTransaction.payload.error, "invalid_signed_transaction");
         const missingContext = await invoke({
             action: "broadcast",
+            paymentIntentId,
             transaction: signedTransactionBase64
         });
         assert.equal(missingContext.statusCode, 200);
@@ -1709,24 +1872,52 @@ test("deposit transaction API prepares and broadcasts through the authenticated 
 
         rpcError = {
             code: -32002,
-            message: "Transaction simulation failed: Blockhash not found"
+            message: "Transaction simulation failed: Blockhash not found at https://rpc.example/?api-key=dummy and address 11111111111111111111111111111111"
         };
-        const staleBlockhash = await invoke({
-            action: "broadcast",
-            transaction: signedTransactionBase64
-        });
+        const originalConsoleError = console.error;
+        const diagnosticLogs = [];
+        console.error = (...args) => diagnosticLogs.push(args);
+        let staleBlockhash;
+        try {
+            staleBlockhash = await invoke({
+                action: "broadcast",
+                paymentIntentId,
+                transaction: signedTransactionBase64
+            });
+        } finally {
+            console.error = originalConsoleError;
+        }
         assert.equal(staleBlockhash.statusCode, 409);
         assert.equal(staleBlockhash.payload.error, "blockhash_expired");
+        const diagnostic = diagnosticLogs.find(([message]) =>
+            message === "Deposit transaction request failed."
+        )?.[1];
+        assert.equal(diagnostic.stage, "broadcast_rpc_send");
+        assert.equal(diagnostic.rpcCode, -32002);
+        assert.match(diagnostic.rpcMessage, /Blockhash not found/);
+        assert.doesNotMatch(JSON.stringify(diagnostic), /rpc\.example|api-key|11111111111111111111111111111111/);
         rpcError = {
             code: -32002,
             message: "Transaction simulation failed: custom program error"
         };
         const failedSimulation = await invoke({
             action: "broadcast",
+            paymentIntentId,
             transaction: signedTransactionBase64
         });
         assert.equal(failedSimulation.statusCode, 502);
         assert.equal(failedSimulation.payload.error, "solana_rpc_unavailable");
+
+        const rpcCallCountBeforeExpiredIntent = rpcCalls.length;
+        intentExpiresAt = new Date(Date.now() - 1000).toISOString();
+        const expiredIntent = await invoke({
+            action: "broadcast",
+            paymentIntentId,
+            transaction: signedTransactionBase64
+        });
+        assert.equal(expiredIntent.statusCode, 409);
+        assert.equal(expiredIntent.payload.error, "payment_intent_invalid_or_expired");
+        assert.equal(rpcCalls.length, rpcCallCountBeforeExpiredIntent);
 
         denyRpc = true;
         const forbidden = await invoke({ action: "prepare" });

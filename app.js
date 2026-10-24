@@ -13,6 +13,7 @@ import {
     getPhantomProvider,
     isMobileBrowser,
     readPhantomMobileCallback,
+    rebuildMobileDepositAfterBlockhashRejection,
     savePhantomMobileSession,
     signAndBroadcastWithBlockhashRetry,
     setPhantomMobilePendingAction,
@@ -804,6 +805,76 @@ function createAssociatedTokenAccountInstruction(
     });
 }
 
+function buildCyfurDepositTransaction({
+    preparation,
+    config,
+    payer,
+    rawAmount,
+    paymentIntentMemo,
+    PublicKey,
+    Transaction,
+    TransactionInstruction
+}) {
+    const invalidFields = getDepositPreparationFieldErrors(preparation);
+    if (invalidFields.length > 0) {
+        console.error("Deposit preparation response validation failed.", { invalidFields });
+        throw new Error("The server returned invalid or incomplete transaction preparation.");
+    }
+    const mint = new PublicKey(config.officialMintAddress);
+    const tokenProgramId = new PublicKey(config.tokenProgramId);
+    const treasury = new PublicKey(config.treasuryAddress);
+    const senderTokenAccount = getAssociatedTokenAddress(PublicKey, payer, mint, tokenProgramId);
+    const treasuryTokenAccount = getAssociatedTokenAddress(PublicKey, treasury, mint, tokenProgramId);
+    const instructions = [];
+    if (!preparation.senderTokenAccounts.includes(senderTokenAccount.toString())) {
+        instructions.push(createAssociatedTokenAccountInstruction(
+            TransactionInstruction,
+            PublicKey,
+            payer,
+            senderTokenAccount,
+            payer,
+            mint,
+            tokenProgramId
+        ));
+    }
+    if (!preparation.treasuryTokenAccounts.includes(treasuryTokenAccount.toString())) {
+        instructions.push(createAssociatedTokenAccountInstruction(
+            TransactionInstruction,
+            PublicKey,
+            payer,
+            treasuryTokenAccount,
+            treasury,
+            mint,
+            tokenProgramId
+        ));
+    }
+    const transferData = new Uint8Array(10);
+    transferData[0] = 12;
+    for (let index = 0; index < 8; index += 1) {
+        transferData[index + 1] = Number((rawAmount >> BigInt(index * 8)) & 0xffn);
+    }
+    transferData[9] = config.tokenDecimals;
+    instructions.push(new TransactionInstruction({
+        programId: tokenProgramId,
+        keys: [
+            { pubkey: senderTokenAccount, isSigner: false, isWritable: true },
+            { pubkey: mint, isSigner: false, isWritable: false },
+            { pubkey: treasuryTokenAccount, isSigner: false, isWritable: true },
+            { pubkey: payer, isSigner: true, isWritable: false }
+        ],
+        data: transferData
+    }));
+    instructions.push(new TransactionInstruction({
+        programId: new PublicKey("MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr"),
+        keys: [{ pubkey: payer, isSigner: true, isWritable: false }],
+        data: new TextEncoder().encode(paymentIntentMemo)
+    }));
+    return new Transaction({
+        feePayer: payer,
+        recentBlockhash: preparation.blockhash
+    }).add(...instructions);
+}
+
 async function sendCyfurDeposit() {
     const config = walletStatusSnapshot;
     if (!config?.depositsEnabled || !config.linkedWalletAddress ||
@@ -839,11 +910,6 @@ async function sendCyfurDeposit() {
         if (payer.toString() !== config.linkedWalletAddress) {
             throw new Error("The connected Phantom account differs from the wallet linked to this game account. Relink the correct wallet first.");
         }
-        const treasury = new PublicKey(config.treasuryAddress);
-        const mint = new PublicKey(config.officialMintAddress);
-        const tokenProgramId = new PublicKey(config.tokenProgramId);
-        const senderTokenAccount = getAssociatedTokenAddress(PublicKey, payer, mint, tokenProgramId);
-        const treasuryTokenAccount = getAssociatedTokenAddress(PublicKey, treasury, mint, tokenProgramId);
         const paymentIntent = await requestPaymentIntent(amountInput.value);
         paymentIntentId = paymentIntent.intentId;
         if (paymentIntent.network !== config.network ||
@@ -861,66 +927,19 @@ async function sendCyfurDeposit() {
         const broadcast = await signAndBroadcastWithBlockhashRetry({
             prepare: () => requestDepositTransaction("prepare"),
             build: (preparation) => {
-                const invalidFields = getDepositPreparationFieldErrors(preparation);
-                if (invalidFields.length > 0) {
-                    console.error("Deposit preparation response validation failed.", {
-                        invalidFields
-                    });
-                    throw new Error("The server returned invalid or incomplete transaction preparation.");
-                }
                 if (Date.parse(paymentIntent.expiresAt) <= Date.now()) {
                     throw new Error("The payment intent expired. Start a new deposit to receive a fresh intent and blockhash.");
                 }
-                const senderInfo = preparation.senderTokenAccounts.includes(senderTokenAccount.toString());
-                const treasuryInfo = preparation.treasuryTokenAccounts.includes(treasuryTokenAccount.toString());
-                const instructions = [];
-                if (!senderInfo) {
-                    instructions.push(createAssociatedTokenAccountInstruction(
-                        TransactionInstruction,
-                        PublicKey,
-                        payer,
-                        senderTokenAccount,
-                        payer,
-                        mint,
-                        tokenProgramId
-                    ));
-                }
-                if (!treasuryInfo) {
-                    instructions.push(createAssociatedTokenAccountInstruction(
-                        TransactionInstruction,
-                        PublicKey,
-                        payer,
-                        treasuryTokenAccount,
-                        treasury,
-                        mint,
-                        tokenProgramId
-                    ));
-                }
-                const transferData = new Uint8Array(10);
-                transferData[0] = 12;
-                for (let index = 0; index < 8; index += 1) {
-                    transferData[index + 1] = Number((rawAmount >> BigInt(index * 8)) & 0xffn);
-                }
-                transferData[9] = config.tokenDecimals;
-                instructions.push(new TransactionInstruction({
-                    programId: tokenProgramId,
-                    keys: [
-                        { pubkey: senderTokenAccount, isSigner: false, isWritable: true },
-                        { pubkey: mint, isSigner: false, isWritable: false },
-                        { pubkey: treasuryTokenAccount, isSigner: false, isWritable: true },
-                        { pubkey: payer, isSigner: true, isWritable: false }
-                    ],
-                    data: transferData
-                }));
-                instructions.push(new TransactionInstruction({
-                    programId: new PublicKey("MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr"),
-                    keys: [{ pubkey: payer, isSigner: true, isWritable: false }],
-                    data: new TextEncoder().encode(paymentIntent.memo)
-                }));
-                return new Transaction({
-                    feePayer: payer,
-                    recentBlockhash: new PublicKey(preparation.blockhash).toBase58()
-                }).add(...instructions);
+                return buildCyfurDepositTransaction({
+                    preparation,
+                    config,
+                    payer,
+                    rawAmount,
+                    paymentIntentMemo: paymentIntent.memo,
+                    PublicKey,
+                    Transaction,
+                    TransactionInstruction
+                });
             },
             sign: async (transaction, preparation, attempt) => {
                 if (attempt > 0) {
@@ -930,7 +949,10 @@ async function sendCyfurDeposit() {
                     await provider.sendTransaction(transaction, null, {
                         preflightCommitment: "confirmed",
                         chain: config.network,
-                        paymentIntentId
+                        paymentIntentId,
+                        paymentIntentAmountRaw: rawAmount.toString(),
+                        paymentIntentExpiresAt: paymentIntent.expiresAt,
+                        blockhashRetryCount: attempt
                     });
                     throw new Error("The Phantom mobile signing request did not return to RelicGrid.");
                 }
@@ -950,6 +972,7 @@ async function sendCyfurDeposit() {
                 return signedBytes;
             },
             broadcast: (signedBytes, preparation) => requestDepositTransaction("broadcast", {
+                paymentIntentId,
                 transaction: bytesToWalletBase64(signedBytes)
             })
         });
@@ -990,6 +1013,27 @@ async function requestPaymentIntent(amount) {
         !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(result.intentId) ||
         typeof result.memo !== "string" ||
         !/^[1-9]\d*$/.test(String(result.amountRaw)) ||
+        !Number.isFinite(Date.parse(result.expiresAt)) ||
+        Date.parse(result.expiresAt) <= Date.now()) {
+        throw new Error("The server returned an invalid or expired payment intent.");
+    }
+    return result;
+}
+
+async function requestExistingPaymentIntent(paymentIntentId) {
+    const response = await fetch(apiUrl("payment-intent"), {
+        method: "POST",
+        headers: await getWalletAuthorizationHeaders(),
+        body: JSON.stringify({ action: "validate", paymentIntentId }),
+        cache: "no-store"
+    });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok) {
+        throw new Error(result.message || result.error || `Payment intent validation failed (${response.status}).`);
+    }
+    if (result.intentId !== paymentIntentId ||
+        typeof result.amountRaw !== "string" ||
+        !/^[1-9]\d*$/.test(result.amountRaw) ||
         !Number.isFinite(Date.parse(result.expiresAt)) ||
         Date.parse(result.expiresAt) <= Date.now()) {
         throw new Error("The server returned an invalid or expired payment intent.");
@@ -1166,6 +1210,7 @@ async function requestDepositTransaction(action, payload = {}) {
 async function handlePhantomMobileCallback(callback) {
     const state = callback.state;
     let broadcastSignature = "";
+    let stage = "callback_validation";
     try {
         if (callback.error) throw callback.error;
         await backendReady;
@@ -1251,13 +1296,71 @@ async function handlePhantomMobileCallback(callback) {
                 throw new Error("Phantom did not return the signed transaction.");
             }
             const transactionBytes = decodeWalletBytes(decrypted.data.transaction);
-            const broadcast = await requestDepositTransaction("broadcast", {
-                transaction: bytesToWalletBase64(transactionBytes)
-            });
+            stage = "broadcast";
+            let broadcast;
+            try {
+                broadcast = await requestDepositTransaction("broadcast", {
+                    paymentIntentId: state.paymentIntentId,
+                    transaction: bytesToWalletBase64(transactionBytes)
+                });
+            } catch (error) {
+                if (error.code !== "blockhash_expired") throw error;
+                stage = "mobile_blockhash_refresh";
+                const paymentIntent = await requestExistingPaymentIntent(state.paymentIntentId);
+                if (paymentIntent.network !== config.network ||
+                    paymentIntent.sourceWalletAddress !== config.linkedWalletAddress ||
+                    paymentIntent.mintAddress !== config.officialMintAddress ||
+                    paymentIntent.tokenProgramId !== config.tokenProgramId ||
+                    paymentIntent.treasuryAddress !== config.treasuryAddress ||
+                    paymentIntent.tokenDecimals !== config.tokenDecimals ||
+                    paymentIntent.amountRaw !== state.paymentIntentAmountRaw ||
+                    paymentIntent.expiresAt !== state.paymentIntentExpiresAt) {
+                    throw new Error("The payment intent changed or expired. Start a new deposit before approving another transaction.");
+                }
+                const recovery = await rebuildMobileDepositAfterBlockhashRejection({
+                    error,
+                    state: {
+                        ...state,
+                        paymentIntentAmountRaw: paymentIntent.amountRaw,
+                        paymentIntentExpiresAt: paymentIntent.expiresAt
+                    },
+                    prepare: () => requestDepositTransaction("prepare"),
+                    build: async (preparation) => {
+                        const { PublicKey, Transaction, TransactionInstruction } =
+                            await loadSolanaWeb3();
+                        const payer = new PublicKey(config.linkedWalletAddress);
+                        return buildCyfurDepositTransaction({
+                            preparation,
+                            config,
+                            payer,
+                            rawAmount: BigInt(paymentIntent.amountRaw),
+                            paymentIntentMemo: paymentIntent.memo,
+                            PublicKey,
+                            Transaction,
+                            TransactionInstruction
+                        });
+                    }
+                });
+                if (!walletConnection.provider?.isMobileDeepLink) {
+                    throw new Error("The Phantom mobile session cannot approve a fresh transaction. Start a new deposit.");
+                }
+                setWalletMessage("The previous blockhash was rejected before submission. Review and approve a newly built transaction in Phantom; the old signed transaction will not be reused.", "pending");
+                stage = "mobile_resign";
+                await walletConnection.provider.sendTransaction(recovery.transaction, null, {
+                    preflightCommitment: "confirmed",
+                    chain: config.network,
+                    paymentIntentId: state.paymentIntentId,
+                    paymentIntentAmountRaw: state.paymentIntentAmountRaw,
+                    paymentIntentExpiresAt: state.paymentIntentExpiresAt,
+                    blockhashRetryCount: recovery.blockhashRetryCount
+                });
+                return;
+            }
             broadcastSignature = broadcast.signature;
             document.getElementById("deposit-signature").value = broadcastSignature;
             setWalletMessage("Phantom approved the transaction. Waiting for the server to verify its finalized transfer before crediting.", "pending");
             document.getElementById("deposit-intent-id").value = state.paymentIntentId;
+            stage = "deposit_verification";
             await verifyDepositSignature(broadcastSignature, state.paymentIntentId);
             setPhantomMobilePendingAction(window, { action: "connected" });
             await refreshWallet();
@@ -1265,7 +1368,21 @@ async function handlePhantomMobileCallback(callback) {
         }
         throw new Error("The returned Phantom action is not recognized.");
     } catch (error) {
-        console.error("Phantom mobile callback could not be completed.", error);
+        console.error("Phantom mobile callback could not be completed.", {
+            stage,
+            errorName: error?.name || "Error",
+            errorCode: typeof error?.code === "string" || Number.isInteger(error?.code)
+                ? error.code
+                : null,
+            status: Number.isInteger(error?.status) ? error.status : null,
+            errorMessage: typeof error?.message === "string"
+                ? error.message
+                    .replace(/https?:\/\/\S+/gi, "[redacted-url]")
+                    .replace(/\b[1-9A-HJ-NP-Za-km-z]{32,44}\b/g, "[redacted-address]")
+                    .replace(/[A-Za-z0-9+/]{80,}={0,2}/g, "[redacted-data]")
+                    .slice(0, 300)
+                : "Unknown error"
+        });
         if (state?.session) {
             setPhantomMobilePendingAction(window, { action: "connected" });
         } else {

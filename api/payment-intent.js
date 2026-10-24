@@ -81,6 +81,54 @@ module.exports = async function paymentIntent(request, response) {
             });
         }
 
+        if (request.body?.action === "validate") {
+            const paymentIntentId = request.body?.paymentIntentId;
+            if (typeof paymentIntentId !== "string" ||
+                !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(paymentIntentId)) {
+                return sendJson(response, 400, { error: "payment_intent_required" });
+            }
+            const [storedIntent] = await serviceRequest(
+                `wallet_payment_intents?select=id,player_id,source_wallet_address,network,mint_address,token_program_id,treasury_address,amount_raw,token_decimals,expires_at,status&id=eq.${encodeURIComponent(paymentIntentId)}&player_id=eq.${encodeURIComponent(user.id)}&limit=1`
+            );
+            const amountRaw = String(storedIntent?.amount_raw ?? "");
+            const expiresAt = Date.parse(storedIntent?.expires_at);
+            if (!storedIntent ||
+                storedIntent.player_id !== user.id ||
+                storedIntent.source_wallet_address !== walletAddress ||
+                storedIntent.network !== network ||
+                storedIntent.mint_address !== config.official_mint_address ||
+                storedIntent.token_program_id !== config.token_program_id ||
+                storedIntent.treasury_address !== config.treasury_address ||
+                storedIntent.token_decimals !== config.token_decimals ||
+                !/^[1-9]\d*$/.test(amountRaw) ||
+                amountRaw.length > 20 ||
+                BigInt(amountRaw) > 18446744073709551615n ||
+                !Number.isFinite(expiresAt) ||
+                expiresAt <= Date.now() ||
+                storedIntent.status !== "pending") {
+                return sendJson(response, 409, {
+                    error: "payment_intent_invalid_or_expired",
+                    message: "The payment intent is no longer valid. Start a new deposit before approving a transfer."
+                });
+            }
+            return sendJson(response, 200, {
+                intentId: storedIntent.id,
+                network: storedIntent.network,
+                sourceWalletAddress: storedIntent.source_wallet_address,
+                mintAddress: storedIntent.mint_address,
+                tokenProgramId: storedIntent.token_program_id,
+                treasuryAddress: storedIntent.treasury_address,
+                amountRaw,
+                tokenDecimals: storedIntent.token_decimals,
+                expiresAt: storedIntent.expires_at,
+                memo: `RelicGrid payment intent: ${storedIntent.id}`
+            });
+        }
+
+        if (request.body?.action !== undefined) {
+            return sendJson(response, 400, { error: "invalid_action" });
+        }
+
         let amountRaw;
         try {
             amountRaw = parseTokenAmount(request.body?.amount, config.token_decimals);

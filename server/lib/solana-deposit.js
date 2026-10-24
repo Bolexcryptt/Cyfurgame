@@ -53,6 +53,15 @@ function decodeBase58(value) {
     return Uint8Array.from(bytes);
 }
 
+function sanitizeRpcErrorMessage(message) {
+    if (typeof message !== "string") return "Unknown RPC error";
+    return message
+        .replace(/https?:\/\/\S+/gi, "[redacted-url]")
+        .replace(/\b[1-9A-HJ-NP-Za-km-z]{32,44}\b/g, "[redacted-address]")
+        .replace(/[A-Za-z0-9+/]{80,}={0,2}/g, "[redacted-data]")
+        .slice(0, 300);
+}
+
 async function solanaRpc(rpcUrl, method, params, fetchImpl = fetch) {
     let response;
 
@@ -67,8 +76,10 @@ async function solanaRpc(rpcUrl, method, params, fetchImpl = fetch) {
         console.error("Solana RPC connection failed.", {
             method,
             errorName: error?.name || "Error",
-            errorMessage: error?.message || "Unknown error",
-            errorCause: error?.cause?.message || null,
+            errorMessage: sanitizeRpcErrorMessage(error?.message || "Unknown error"),
+            errorCause: error?.cause?.message
+                ? sanitizeRpcErrorMessage(error.cause.message)
+                : null,
             errorCode: error?.cause?.code || null
         });
         throw new Error(`Solana RPC ${method} connection failed.`);
@@ -100,14 +111,12 @@ async function solanaRpc(rpcUrl, method, params, fetchImpl = fetch) {
             code: Number.isInteger(payload.error.code)
                 ? payload.error.code
                 : null,
-            message: /blockhash not found/i.test(rpcMessage)
-                ? "Transaction simulation failed: Blockhash not found"
-                : "Unknown RPC error"
+            message: sanitizeRpcErrorMessage(rpcMessage)
         });
 
         const error = new Error(`Solana RPC ${method} failed.`);
         error.rpcCode = Number.isInteger(payload.error.code) ? payload.error.code : null;
-        error.rpcMessage = rpcMessage.slice(0, 300);
+        error.rpcMessage = sanitizeRpcErrorMessage(rpcMessage);
         throw error;
     }
 
@@ -282,6 +291,7 @@ module.exports = {
     GENESIS_HASHES,
     TOKEN_PROGRAM_IDS,
     isBase58,
+    sanitizeRpcErrorMessage,
     solanaRpc,
     verifyFinalizedDeposit
 };

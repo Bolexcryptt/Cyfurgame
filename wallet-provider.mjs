@@ -181,7 +181,10 @@ function startPhantomTransactionSign(walletWindow, transaction, options = {}) {
         ...stored,
         action: "deposit-sign",
         network: options.chain ?? "mainnet-beta",
-        paymentIntentId: options.paymentIntentId
+        paymentIntentId: options.paymentIntentId,
+        paymentIntentAmountRaw: options.paymentIntentAmountRaw,
+        paymentIntentExpiresAt: options.paymentIntentExpiresAt,
+        blockhashRetryCount: options.blockhashRetryCount ?? 0
     });
     const url = new URL("https://phantom.com/ul/v1/signTransaction");
     url.searchParams.set("dapp_encryption_public_key", encodeBase58(base64ToBytes(stored.publicKey)));
@@ -378,6 +381,33 @@ export async function signAndBroadcastWithBlockhashRetry({ prepare, build, sign,
     }
 
     throw new Error("The refreshed Solana transaction could not be submitted.");
+}
+
+export async function rebuildMobileDepositAfterBlockhashRejection({
+    error,
+    state,
+    prepare,
+    build,
+    now = Date.now
+}) {
+    if (error?.code !== "blockhash_expired") throw error;
+    if ([prepare, build].some((operation) => typeof operation !== "function")) {
+        throw new TypeError("Mobile blockhash recovery requires preparation and transaction-building operations.");
+    }
+    if (state?.action !== "deposit-sign" || (state.blockhashRetryCount ?? 0) !== 0 ||
+        typeof state.paymentIntentId !== "string" ||
+        !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(state.paymentIntentId) ||
+        typeof state.paymentIntentAmountRaw !== "string" ||
+        state.paymentIntentAmountRaw.length > 20 ||
+        !/^[1-9]\d*$/.test(state.paymentIntentAmountRaw) ||
+        BigInt(state.paymentIntentAmountRaw) > 18446744073709551615n ||
+        !Number.isFinite(Date.parse(state.paymentIntentExpiresAt)) ||
+        Date.parse(state.paymentIntentExpiresAt) <= now()) {
+        throw new Error("The expired mobile transaction cannot be safely refreshed. Start a new deposit.");
+    }
+    const preparation = await prepare();
+    const transaction = await build(preparation, state);
+    return { transaction, blockhashRetryCount: 1 };
 }
 
 export function disconnectPhantom(walletWindow = window, provider = null) {

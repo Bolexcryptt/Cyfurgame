@@ -5,7 +5,13 @@ const {
     serviceRequest,
     sendJson
 } = require("../server/lib/wallet");
-const { GENESIS_HASHES, TOKEN_PROGRAM_IDS, isBase58, solanaRpc } = require("../server/lib/solana-deposit");
+const {
+    GENESIS_HASHES,
+    TOKEN_PROGRAM_IDS,
+    isBase58,
+    sanitizeRpcErrorMessage,
+    solanaRpc
+} = require("../server/lib/solana-deposit");
 
 function notReady(response, error, message) {
     return sendJson(response, 503, { error, message });
@@ -37,6 +43,7 @@ function decodeSignedTransaction(value) {
 }
 
 module.exports = async function depositTransaction(request, response) {
+    let stage = "request_validation";
     if (handleApiCors(request, response)) return;
     if (request.method !== "POST") {
         response.setHeader("Allow", "POST");
@@ -47,6 +54,7 @@ module.exports = async function depositTransaction(request, response) {
     }
 
     try {
+        stage = "authentication";
         const user = await authenticate(request);
         if (!user) return sendJson(response, 401, { error: "authentication_required" });
 
@@ -74,6 +82,7 @@ module.exports = async function depositTransaction(request, response) {
             return notReady(response, "mainnet_deposits_disabled", "Mainnet deposits are not enabled.");
         }
 
+        stage = "database_configuration";
         const [configs, linkedWallets] = await Promise.all([
             serviceRequest("wallet_system_config?select=deposits_enabled,network,official_mint_address,token_program_id,token_decimals,credits_per_token,rounding_policy,treasury_address&id=eq.1"),
             serviceRequest(`player_solana_wallets?select=wallet_address&player_id=eq.${encodeURIComponent(user.id)}&limit=1`)
@@ -99,6 +108,7 @@ module.exports = async function depositTransaction(request, response) {
 
         const action = request.body?.action;
         if (action === "prepare") {
+            stage = "prepare_rpc";
             const [genesisHash, senderAccounts, treasuryAccounts] = await Promise.all([
                 solanaRpc(process.env.SOLANA_RPC_URL, "getGenesisHash", []),
                 solanaRpc(process.env.SOLANA_RPC_URL, "getTokenAccountsByOwner", [
@@ -132,10 +142,42 @@ module.exports = async function depositTransaction(request, response) {
         }
 
         if (action === "broadcast") {
+            stage = "broadcast_payload_validation";
+            const paymentIntentId = request.body?.paymentIntentId;
+            if (typeof paymentIntentId !== "string" ||
+                !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(paymentIntentId)) {
+                return sendJson(response, 400, { error: "payment_intent_required" });
+            }
             const transaction = decodeSignedTransaction(request.body?.transaction);
             if (!transaction) {
                 return sendJson(response, 400, { error: "invalid_signed_transaction" });
             }
+            stage = "broadcast_payment_intent";
+            const [intent] = await serviceRequest(
+                `wallet_payment_intents?select=id,player_id,source_wallet_address,network,mint_address,token_program_id,treasury_address,amount_raw,token_decimals,expires_at,status&id=eq.${encodeURIComponent(paymentIntentId)}&player_id=eq.${encodeURIComponent(user.id)}&limit=1`
+            );
+            const intentExpiresAt = Date.parse(intent?.expires_at);
+            const intentAmount = String(intent?.amount_raw ?? "");
+            if (!intent ||
+                intent.player_id !== user.id ||
+                intent.source_wallet_address !== linkedWallet ||
+                intent.network !== config.network ||
+                intent.mint_address !== config.official_mint_address ||
+                intent.token_program_id !== config.token_program_id ||
+                intent.treasury_address !== config.treasury_address ||
+                intent.token_decimals !== config.token_decimals ||
+                !/^[1-9]\d*$/.test(intentAmount) ||
+                intentAmount.length > 20 ||
+                BigInt(intentAmount) > 18446744073709551615n ||
+                !Number.isFinite(intentExpiresAt) ||
+                intentExpiresAt <= Date.now() ||
+                intent.status !== "pending") {
+                return sendJson(response, 409, {
+                    error: "payment_intent_invalid_or_expired",
+                    message: "The payment intent is no longer valid. No transaction was submitted."
+                });
+            }
+            stage = "broadcast_rpc_context";
             const [genesisHash, minContextSlot] = await Promise.all([
                 solanaRpc(process.env.SOLANA_RPC_URL, "getGenesisHash", []),
                 solanaRpc(process.env.SOLANA_RPC_URL, "getSlot", [
@@ -148,6 +190,7 @@ module.exports = async function depositTransaction(request, response) {
             if (!Number.isSafeInteger(minContextSlot) || minContextSlot < 0) {
                 throw new Error("The configured Solana RPC returned an invalid current slot.");
             }
+            stage = "broadcast_rpc_send";
             const signature = await solanaRpc(process.env.SOLANA_RPC_URL, "sendTransaction", [
                 transaction.toString("base64"),
                 {
@@ -167,9 +210,14 @@ module.exports = async function depositTransaction(request, response) {
         const blockhashExpired = error.rpcCode === -32002 &&
             /blockhash not found/i.test(error.rpcMessage ?? "");
         console.error("Deposit transaction request failed.", {
+            stage,
             status: error.status ?? (blockhashExpired ? 409 : 502),
             errorName: error.name || "Error",
-            errorMessage: error.message || "Unknown error",
+            errorMessage: blockhashExpired
+                ? "Solana RPC sendTransaction failed: blockhash not found."
+                : sanitizeRpcErrorMessage(error.message || "Unknown error"),
+            rpcCode: Number.isInteger(error.rpcCode) ? error.rpcCode : null,
+            rpcMessage: sanitizeRpcErrorMessage(error.rpcMessage),
             rpcForbidden: error.message?.includes("(403)") === true
         });
         if (blockhashExpired) {
