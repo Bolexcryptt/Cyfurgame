@@ -15,6 +15,7 @@ import {
     isMobileBrowser,
     readPhantomMobileCallback,
     savePhantomMobileSession,
+    signAndBroadcastWithBlockhashRetry,
     startPhantomMobileConnect,
     waitForPhantomProvider
 } from "../wallet-provider.mjs";
@@ -110,6 +111,98 @@ test("Phantom Wallet Standard registration supports connect, ownership signing, 
         await provider.signTransaction({ serialize: () => Uint8Array.from([7]) }),
         Uint8Array.from([4, 5, 6])
     );
+});
+
+test("blockhash rejection fetches a fresh transaction and requires a second Phantom signature", async () => {
+    const events = [];
+    const preparations = [
+        { blockhash: "old-blockhash", contextSlot: 100 },
+        { blockhash: "fresh-blockhash", contextSlot: 125 }
+    ];
+    const result = await signAndBroadcastWithBlockhashRetry({
+        async prepare() {
+            const preparation = preparations.shift();
+            events.push(["prepare", preparation.blockhash]);
+            return preparation;
+        },
+        async build(preparation) {
+            events.push(["build", preparation.blockhash]);
+            return { blockhash: preparation.blockhash };
+        },
+        async sign(transaction) {
+            events.push(["sign", transaction.blockhash]);
+            return `signed:${transaction.blockhash}`;
+        },
+        async broadcast(signedTransaction) {
+            events.push(["broadcast", signedTransaction]);
+            if (signedTransaction === "signed:old-blockhash") {
+                throw Object.assign(new Error("blockhash not found"), { code: "blockhash_expired" });
+            }
+            return { signature: "confirmed-signature" };
+        }
+    });
+
+    assert.deepEqual(result, { signature: "confirmed-signature" });
+    assert.deepEqual(events, [
+        ["prepare", "old-blockhash"],
+        ["build", "old-blockhash"],
+        ["sign", "old-blockhash"],
+        ["broadcast", "signed:old-blockhash"],
+        ["prepare", "fresh-blockhash"],
+        ["build", "fresh-blockhash"],
+        ["sign", "fresh-blockhash"],
+        ["broadcast", "signed:fresh-blockhash"]
+    ]);
+});
+
+test("blockhash retry does not retry non-blockhash or repeated broadcast failures", async () => {
+    let preparationCount = 0;
+    let signatureCount = 0;
+    await assert.rejects(
+        signAndBroadcastWithBlockhashRetry({
+            async prepare() {
+                preparationCount += 1;
+                return { blockhash: `blockhash-${preparationCount}` };
+            },
+            async build(preparation) {
+                return preparation;
+            },
+            async sign() {
+                signatureCount += 1;
+                return `signed-${signatureCount}`;
+            },
+            async broadcast() {
+                throw Object.assign(new Error("RPC unavailable"), { code: "solana_rpc_unavailable" });
+            }
+        }),
+        { code: "solana_rpc_unavailable" }
+    );
+    assert.equal(preparationCount, 1);
+    assert.equal(signatureCount, 1);
+
+    preparationCount = 0;
+    signatureCount = 0;
+    await assert.rejects(
+        signAndBroadcastWithBlockhashRetry({
+            async prepare() {
+                preparationCount += 1;
+                return { blockhash: `blockhash-${preparationCount}` };
+            },
+            async build(preparation) {
+                return preparation;
+            },
+            async sign() {
+                signatureCount += 1;
+                return `signed-${signatureCount}`;
+            },
+            async broadcast() {
+                throw Object.assign(new Error("Blockhash not found"), { code: "blockhash_expired" });
+            }
+        }),
+        { code: "blockhash_expired" }
+    );
+    assert.equal(preparationCount, 2);
+    assert.equal(signatureCount, 2);
 });
 
 test("Phantom provider discovery waits briefly for delayed extension injection", async () => {
@@ -218,6 +311,30 @@ test("Phantom mobile deeplink encrypts connect and message-sign requests and res
     );
     assert.equal(parsedPayload.session, "phantom-session-token");
     assert.equal(JSON.parse(storage.get("fluxgrid.phantom.deeplink.v1")).action, "wallet-link-sign");
+
+    const paymentIntentId = "8f9ef883-520e-45ef-96ae-62e621d3b31c";
+    void connection.provider.sendTransaction(
+        { serialize: () => Uint8Array.from([8, 9, 10]) },
+        null,
+        {
+            chain: "mainnet-beta",
+            contextSlot: 456,
+            paymentIntentId
+        }
+    );
+    const depositUrl = new URL(assignedUrl);
+    assert.equal(depositUrl.pathname, "/ul/v1/signTransaction");
+    const depositState = JSON.parse(storage.get("fluxgrid.phantom.deeplink.v1"));
+    assert.equal(depositState.action, "deposit-sign");
+    assert.equal(depositState.contextSlot, 456);
+    assert.equal(depositState.paymentIntentId, paymentIntentId);
+    const depositPayload = nacl.box.open.after(
+        decodeWalletBytes(depositUrl.searchParams.get("payload")),
+        decodeWalletBytes(depositUrl.searchParams.get("nonce")),
+        sharedSecret
+    );
+    const parsedDepositPayload = JSON.parse(new TextDecoder().decode(depositPayload));
+    assert.deepEqual(decodeWalletBytes(parsedDepositPayload.transaction), Uint8Array.from([8, 9, 10]));
 });
 
 test("mobile browser detection recognizes phones and touch-enabled iPads", () => {
@@ -892,6 +1009,100 @@ test("Solana verifier credits only successful finalized transfers to the mapped 
     assert.deepEqual(await verifyFinalizedDeposit(options), { state: "failed" });
 });
 
+test("deposit API rejects a failed on-chain transaction before requesting ledger credit", async () => {
+    const environment = {
+        SUPABASE_URL: "https://example.supabase.co",
+        SUPABASE_PUBLISHABLE_KEY: "public-test-key",
+        SUPABASE_SERVICE_ROLE_KEY: "server-only-test-key",
+        SOLANA_RPC_URL: "https://mainnet.example/rpc",
+        SOLANA_NETWORK: "mainnet-beta",
+        SOLANA_TREASURY_ADDRESS: "FbvtTKQFE4xFrSheorQoFHqp57Dd8ngYXvD8wavwLzsn",
+        WALLET_DIRECT_TREASURY_READY: "true",
+        WALLET_DEPOSITS_ENABLED: "true",
+        WALLET_MAINNET_DEPOSITS_ENABLED: "true"
+    };
+    const previousEnvironment = Object.fromEntries(
+        Object.keys(environment).map((name) => [name, process.env[name]])
+    );
+    Object.assign(process.env, environment);
+    const originalFetch = globalThis.fetch;
+    const rpcMethods = [];
+    const intentId = "8f9ef883-520e-45ef-96ae-62e621d3b31c";
+    const linkedWallet = "11111111111111111111111111111111";
+    const mintAddress = "9F4hLLngEAhepsH2HLTH6kBYmmq6dzm4GXRrcpME3uam";
+    globalThis.fetch = async (url, options = {}) => {
+        const target = String(url);
+        if (target.endsWith("/auth/v1/user")) {
+            return new Response(JSON.stringify({ id: "test-player" }), { status: 200 });
+        }
+        if (target.includes("/wallet_system_config?")) {
+            return new Response(JSON.stringify([{
+                deposits_enabled: true,
+                network: "mainnet-beta",
+                official_mint_address: mintAddress,
+                token_program_id: "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+                token_decimals: 8,
+                credits_per_token: "10000",
+                rounding_policy: "floor",
+                treasury_address: environment.SOLANA_TREASURY_ADDRESS
+            }]), { status: 200 });
+        }
+        if (target.includes("/player_solana_wallets?")) {
+            return new Response(JSON.stringify([{ wallet_address: linkedWallet }]), { status: 200 });
+        }
+        if (target.includes("/wallet_payment_intents?")) {
+            return new Response(JSON.stringify([{
+                id: intentId,
+                player_id: "test-player",
+                source_wallet_address: linkedWallet,
+                network: "mainnet-beta",
+                mint_address: mintAddress,
+                token_program_id: "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+                treasury_address: environment.SOLANA_TREASURY_ADDRESS,
+                amount_raw: "100000000",
+                token_decimals: 8,
+                expires_at: new Date(Date.now() + 60_000).toISOString(),
+                status: "pending",
+                transaction_signature: null
+            }]), { status: 200 });
+        }
+        if (target === environment.SOLANA_RPC_URL) {
+            const call = JSON.parse(options.body);
+            rpcMethods.push(call.method);
+            const result = call.method === "getGenesisHash"
+                ? "5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d"
+                : { value: [{ err: { InstructionError: [0, "Custom"] }, confirmationStatus: "finalized" }] };
+            return new Response(JSON.stringify({ result }), { status: 200 });
+        }
+        throw new Error(`Unexpected failed-deposit API request: ${target}`);
+    };
+
+    try {
+        const endpoint = require("../api/deposits.js");
+        const response = {
+            statusCode: 200,
+            status(code) { this.statusCode = code; return this; },
+            setHeader() {},
+            json(payload) { this.payload = payload; }
+        };
+        await endpoint({
+            method: "POST",
+            headers: { authorization: "Bearer test-token" },
+            body: { signature: "1".repeat(64), paymentIntentId: intentId }
+        }, response);
+
+        assert.equal(response.statusCode, 422);
+        assert.equal(response.payload.error, "transaction_failed");
+        assert.deepEqual(rpcMethods, ["getGenesisHash", "getSignatureStatuses"]);
+    } finally {
+        globalThis.fetch = originalFetch;
+        for (const [name, value] of Object.entries(previousEnvironment)) {
+            if (value === undefined) delete process.env[name];
+            else process.env[name] = value;
+        }
+    }
+});
+
 test("deposit amount parsing uses exact token base units and rejects malformed precision", () => {
     assert.equal(parseTokenAmount("1", 8), "100000000");
     assert.equal(parseTokenAmount("0.0001", 8), "10000");
@@ -1217,7 +1428,8 @@ test("deposit API requires explicit direct-treasury readiness", async () => {
         "SOLANA_NETWORK",
         "SOLANA_TREASURY_ADDRESS",
         "WALLET_DIRECT_TREASURY_READY",
-        "WALLET_DEPOSITS_ENABLED"
+        "WALLET_DEPOSITS_ENABLED",
+        "WALLET_MAINNET_DEPOSITS_ENABLED"
     ];
     const previous = Object.fromEntries(names.map((name) => [name, process.env[name]]));
     Object.assign(process.env, {
@@ -1334,13 +1546,13 @@ test("deposit transaction API prepares and broadcasts through the authenticated 
         SUPABASE_URL: "https://example.supabase.co",
         SUPABASE_PUBLISHABLE_KEY: "public-test-key",
         SUPABASE_SERVICE_ROLE_KEY: "server-only-test-key",
-        SOLANA_RPC_URL: "https://solana.example/rpc",
-        SOLANA_NETWORK: "devnet",
+        SOLANA_RPC_URL: "https://mainnet.example/rpc",
+        SOLANA_NETWORK: "mainnet-beta",
         SOLANA_TREASURY_ADDRESS: "11111111111111111111111111111112",
         WALLET_DIRECT_TREASURY_READY: "true",
-        WALLET_DEPOSITS_ENABLED: "true"
+        WALLET_DEPOSITS_ENABLED: "true",
+        WALLET_MAINNET_DEPOSITS_ENABLED: "true"
     });
-    delete process.env.WALLET_MAINNET_DEPOSITS_ENABLED;
 
     const linkedWallet = "11111111111111111111111111111111";
     const senderTokenAccount = "11111111111111111111111111111113";
@@ -1348,6 +1560,7 @@ test("deposit transaction API prepares and broadcasts through the authenticated 
     const signature = "1".repeat(64);
     const rpcCalls = [];
     let denyRpc = false;
+    let rpcError = null;
     const originalFetch = globalThis.fetch;
     globalThis.fetch = async (url, options = {}) => {
         const target = String(url);
@@ -1357,8 +1570,8 @@ test("deposit transaction API prepares and broadcasts through the authenticated 
         if (target.includes("/rest/v1/wallet_system_config")) {
             return new Response(JSON.stringify([{
                 deposits_enabled: true,
-                network: "devnet",
-                official_mint_address: "11111111111111111111111111111115",
+                network: "mainnet-beta",
+                official_mint_address: "9F4hLLngEAhepsH2HLTH6kBYmmq6dzm4GXRrcpME3uam",
                 token_program_id: "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
                 token_decimals: 8,
                 credits_per_token: 10000,
@@ -1373,14 +1586,18 @@ test("deposit transaction API prepares and broadcasts through the authenticated 
             if (denyRpc) return new Response("", { status: 403 });
             const call = JSON.parse(options.body);
             rpcCalls.push(call);
+            if (call.method === "sendTransaction" && rpcError) {
+                return new Response(JSON.stringify({ error: rpcError }), { status: 200 });
+            }
             const results = {
-                getGenesisHash: "EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG",
+                getGenesisHash: "5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d",
                 getTokenAccountsByOwner: {
                     value: [{ pubkey: call.params[0] === linkedWallet
                         ? senderTokenAccount
                         : treasuryTokenAccount }]
                 },
                 getLatestBlockhash: {
+                    context: { slot: 456 },
                     value: {
                         blockhash: "11111111111111111111111111111116",
                         lastValidBlockHeight: 123
@@ -1421,19 +1638,54 @@ test("deposit transaction API prepares and broadcasts through the authenticated 
             "getTokenAccountsByOwner",
             "getLatestBlockhash"
         ]);
+        assert.equal(rpcCalls.at(-1).params[0].commitment, "confirmed");
+        assert.equal(prepared.payload.contextSlot, 456);
 
+        const signedTransactionBase64 = Buffer.from([1, 2, 3]).toString("base64");
         const broadcast = await invoke({
             action: "broadcast",
-            transaction: Buffer.from([1, 2, 3]).toString("base64")
+            transaction: signedTransactionBase64,
+            minContextSlot: prepared.payload.contextSlot
         });
         assert.equal(broadcast.statusCode, 200);
         assert.equal(broadcast.payload.signature, signature);
         assert.equal(rpcCalls.at(-1).method, "sendTransaction");
         assert.equal(rpcCalls.at(-1).params[1].encoding, "base64");
+        assert.equal(rpcCalls.at(-1).params[0], signedTransactionBase64);
+        assert.equal(rpcCalls.at(-1).params[1].minContextSlot, 456);
 
         const invalid = await invoke({ action: "broadcast", transaction: "not base64!" });
         assert.equal(invalid.statusCode, 400);
         assert.equal(invalid.payload.error, "invalid_signed_transaction");
+        const missingContext = await invoke({
+            action: "broadcast",
+            transaction: signedTransactionBase64
+        });
+        assert.equal(missingContext.statusCode, 400);
+        assert.equal(missingContext.payload.error, "invalid_blockhash_context");
+
+        rpcError = {
+            code: -32002,
+            message: "Transaction simulation failed: Blockhash not found"
+        };
+        const staleBlockhash = await invoke({
+            action: "broadcast",
+            transaction: signedTransactionBase64,
+            minContextSlot: prepared.payload.contextSlot
+        });
+        assert.equal(staleBlockhash.statusCode, 409);
+        assert.equal(staleBlockhash.payload.error, "blockhash_expired");
+        rpcError = {
+            code: -32002,
+            message: "Transaction simulation failed: custom program error"
+        };
+        const failedSimulation = await invoke({
+            action: "broadcast",
+            transaction: signedTransactionBase64,
+            minContextSlot: prepared.payload.contextSlot
+        });
+        assert.equal(failedSimulation.statusCode, 502);
+        assert.equal(failedSimulation.payload.error, "solana_rpc_unavailable");
 
         denyRpc = true;
         const forbidden = await invoke({ action: "prepare" });

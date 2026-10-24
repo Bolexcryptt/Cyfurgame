@@ -99,7 +99,7 @@ module.exports = async function depositTransaction(request, response) {
 
         const action = request.body?.action;
         if (action === "prepare") {
-            const [genesisHash, senderAccounts, treasuryAccounts, latestBlockhash] = await Promise.all([
+            const [genesisHash, senderAccounts, treasuryAccounts] = await Promise.all([
                 solanaRpc(process.env.SOLANA_RPC_URL, "getGenesisHash", []),
                 solanaRpc(process.env.SOLANA_RPC_URL, "getTokenAccountsByOwner", [
                     linkedWallet,
@@ -110,22 +110,25 @@ module.exports = async function depositTransaction(request, response) {
                     config.treasury_address,
                     { mint: config.official_mint_address },
                     { commitment: "confirmed", encoding: "jsonParsed" }
-                ]),
-                solanaRpc(process.env.SOLANA_RPC_URL, "getLatestBlockhash", [
-                    { commitment: "confirmed" }
                 ])
             ]);
             if (genesisHash !== GENESIS_HASHES[network]) {
                 return notReady(response, "solana_rpc_network_mismatch", "Configured Solana RPC is connected to a different network.");
             }
+            const latestBlockhash = await solanaRpc(process.env.SOLANA_RPC_URL, "getLatestBlockhash", [
+                { commitment: "confirmed" }
+            ]);
             const blockhash = latestBlockhash?.value?.blockhash;
+            const contextSlot = latestBlockhash?.context?.slot;
             if (!isBase58(blockhash, 32) ||
-                !Number.isSafeInteger(latestBlockhash?.value?.lastValidBlockHeight)) {
+                !Number.isSafeInteger(latestBlockhash?.value?.lastValidBlockHeight) ||
+                !Number.isSafeInteger(contextSlot) || contextSlot < 0) {
                 throw new Error("The configured Solana RPC returned an invalid recent blockhash.");
             }
             return sendJson(response, 200, {
                 blockhash,
                 lastValidBlockHeight: latestBlockhash.value.lastValidBlockHeight,
+                contextSlot,
                 senderTokenAccounts: getTokenAccountAddresses(senderAccounts),
                 treasuryTokenAccounts: getTokenAccountAddresses(treasuryAccounts)
             });
@@ -136,9 +139,17 @@ module.exports = async function depositTransaction(request, response) {
             if (!transaction) {
                 return sendJson(response, 400, { error: "invalid_signed_transaction" });
             }
+            const minContextSlot = request.body?.minContextSlot;
+            if (!Number.isSafeInteger(minContextSlot) || minContextSlot < 0) {
+                return sendJson(response, 400, { error: "invalid_blockhash_context" });
+            }
             const signature = await solanaRpc(process.env.SOLANA_RPC_URL, "sendTransaction", [
                 transaction.toString("base64"),
-                { encoding: "base64", preflightCommitment: "confirmed" }
+                {
+                    encoding: "base64",
+                    preflightCommitment: "confirmed",
+                    minContextSlot
+                }
             ]);
             if (!isBase58(signature, 64)) {
                 throw new Error("The configured Solana RPC returned an invalid transaction signature.");
@@ -148,12 +159,20 @@ module.exports = async function depositTransaction(request, response) {
 
         return sendJson(response, 400, { error: "invalid_action" });
     } catch (error) {
+        const blockhashExpired = error.rpcCode === -32002 &&
+            /blockhash not found/i.test(error.rpcMessage ?? "");
         console.error("Deposit transaction request failed.", {
-            status: error.status ?? 502,
+            status: error.status ?? (blockhashExpired ? 409 : 502),
             errorName: error.name || "Error",
             errorMessage: error.message || "Unknown error",
             rpcForbidden: error.message?.includes("(403)") === true
         });
+        if (blockhashExpired) {
+            return sendJson(response, 409, {
+                error: "blockhash_expired",
+                message: "The Solana RPC rejected this blockhash. Refresh the transaction and approve the new transaction in Phantom."
+            });
+        }
         const forbidden = error.message?.includes("(403)") === true;
         return sendJson(response, 502, {
             error: forbidden ? "solana_rpc_forbidden" : "solana_rpc_unavailable",

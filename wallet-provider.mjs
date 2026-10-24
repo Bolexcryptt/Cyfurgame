@@ -136,6 +136,7 @@ function startPhantomTransactionSign(walletWindow, transaction, options = {}) {
         ...stored,
         action: "deposit-sign",
         network: options.chain ?? "mainnet-beta",
+        contextSlot: options.contextSlot,
         paymentIntentId: options.paymentIntentId
     });
     const url = new URL("https://phantom.com/ul/v1/signTransaction");
@@ -314,6 +315,25 @@ export function getConnectedPhantomWallet(walletWindow = window) {
     return connection.provider && connection.publicKey
         ? { provider: connection.provider, publicKey: connection.publicKey }
         : null;
+}
+
+export async function signAndBroadcastWithBlockhashRetry({ prepare, build, sign, broadcast }) {
+    if ([prepare, build, sign, broadcast].some((operation) => typeof operation !== "function")) {
+        throw new TypeError("Blockhash retry requires prepare, build, sign, and broadcast operations.");
+    }
+
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+        const preparation = await prepare();
+        const transaction = await build(preparation, attempt);
+        const signedTransaction = await sign(transaction, preparation, attempt);
+        try {
+            return await broadcast(signedTransaction, preparation, attempt);
+        } catch (error) {
+            if (error?.code !== "blockhash_expired" || attempt !== 0) throw error;
+        }
+    }
+
+    throw new Error("The refreshed Solana transaction could not be submitted.");
 }
 
 export function disconnectPhantom(walletWindow = window, provider = null) {

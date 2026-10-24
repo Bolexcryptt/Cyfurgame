@@ -13,6 +13,7 @@ import {
     isMobileBrowser,
     readPhantomMobileCallback,
     savePhantomMobileSession,
+    signAndBroadcastWithBlockhashRetry,
     setPhantomMobilePendingAction,
     startPhantomMobileConnect
 } from "./wallet-provider.mjs";
@@ -853,83 +854,107 @@ async function sendCyfurDeposit() {
             Date.parse(paymentIntent.expiresAt) <= Date.now()) {
             throw new Error("The server payment intent does not match the reviewed wallet, token, amount, recipient, and expiry.");
         }
-        const preparation = await requestDepositTransaction("prepare");
-        const senderInfo = preparation.senderTokenAccounts.includes(senderTokenAccount.toString());
-        const treasuryInfo = preparation.treasuryTokenAccounts.includes(treasuryTokenAccount.toString());
-        const instructions = [];
-        if (!senderInfo) {
-            instructions.push(createAssociatedTokenAccountInstruction(
-                TransactionInstruction,
-                PublicKey,
-                payer,
-                senderTokenAccount,
-                payer,
-                mint,
-                tokenProgramId
-            ));
-        }
-        if (!treasuryInfo) {
-            instructions.push(createAssociatedTokenAccountInstruction(
-                TransactionInstruction,
-                PublicKey,
-                payer,
-                treasuryTokenAccount,
-                treasury,
-                mint,
-                tokenProgramId
-            ));
-        }
-        const transferData = new Uint8Array(10);
-        transferData[0] = 12;
-        for (let index = 0; index < 8; index += 1) {
-            transferData[index + 1] = Number((rawAmount >> BigInt(index * 8)) & 0xffn);
-        }
-        transferData[9] = config.tokenDecimals;
-        instructions.push(new TransactionInstruction({
-            programId: tokenProgramId,
-            keys: [
-                { pubkey: senderTokenAccount, isSigner: false, isWritable: true },
-                { pubkey: mint, isSigner: false, isWritable: false },
-                { pubkey: treasuryTokenAccount, isSigner: false, isWritable: true },
-                { pubkey: payer, isSigner: true, isWritable: false }
-            ],
-            data: transferData
-        }));
-        instructions.push(new TransactionInstruction({
-            programId: new PublicKey("MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr"),
-            keys: [{ pubkey: payer, isSigner: true, isWritable: false }],
-            data: new TextEncoder().encode(paymentIntent.memo)
-        }));
-        const transaction = new Transaction({
-            feePayer: payer,
-            recentBlockhash: preparation.blockhash
-        }).add(...instructions);
         transferButton.disabled = true;
         mainButton.disabled = true;
         setWalletMessage("Review the CYFUR amount and recipient in Phantom, then approve the transfer. RelicGrid will verify it before crediting.", "pending");
-        if (provider.isMobileDeepLink) {
-            await provider.sendTransaction(transaction, null, {
-                preflightCommitment: "confirmed",
-                chain: config.network,
-                paymentIntentId
-            });
-            throw new Error("The Phantom mobile signing request did not return to RelicGrid.");
-        }
-        if (typeof provider.signTransaction !== "function") {
-            throw new Error("This Phantom provider cannot securely sign a transfer for server submission.");
-        }
-        const signed = await provider.signTransaction(transaction, {
-            preflightCommitment: "confirmed",
-            chain: config.network
-        });
-        const signedBytes = signed instanceof Uint8Array
-            ? signed
-            : signed?.serialize?.({ requireAllSignatures: true, verifySignatures: true });
-        if (!(signedBytes instanceof Uint8Array)) {
-            throw new Error("Phantom did not return a serialized signed transaction.");
-        }
-        const broadcast = await requestDepositTransaction("broadcast", {
-            transaction: bytesToWalletBase64(signedBytes)
+        const broadcast = await signAndBroadcastWithBlockhashRetry({
+            prepare: () => requestDepositTransaction("prepare"),
+            build: (preparation) => {
+                if (typeof preparation.blockhash !== "string" ||
+                    !Number.isSafeInteger(preparation.contextSlot) ||
+                    preparation.contextSlot < 0 ||
+                    !Number.isSafeInteger(preparation.lastValidBlockHeight) ||
+                    preparation.lastValidBlockHeight <= 0 ||
+                    !Array.isArray(preparation.senderTokenAccounts) ||
+                    !Array.isArray(preparation.treasuryTokenAccounts)) {
+                    throw new Error("The server returned invalid or incomplete transaction preparation.");
+                }
+                if (Date.parse(paymentIntent.expiresAt) <= Date.now()) {
+                    throw new Error("The payment intent expired. Start a new deposit to receive a fresh intent and blockhash.");
+                }
+                const senderInfo = preparation.senderTokenAccounts.includes(senderTokenAccount.toString());
+                const treasuryInfo = preparation.treasuryTokenAccounts.includes(treasuryTokenAccount.toString());
+                const instructions = [];
+                if (!senderInfo) {
+                    instructions.push(createAssociatedTokenAccountInstruction(
+                        TransactionInstruction,
+                        PublicKey,
+                        payer,
+                        senderTokenAccount,
+                        payer,
+                        mint,
+                        tokenProgramId
+                    ));
+                }
+                if (!treasuryInfo) {
+                    instructions.push(createAssociatedTokenAccountInstruction(
+                        TransactionInstruction,
+                        PublicKey,
+                        payer,
+                        treasuryTokenAccount,
+                        treasury,
+                        mint,
+                        tokenProgramId
+                    ));
+                }
+                const transferData = new Uint8Array(10);
+                transferData[0] = 12;
+                for (let index = 0; index < 8; index += 1) {
+                    transferData[index + 1] = Number((rawAmount >> BigInt(index * 8)) & 0xffn);
+                }
+                transferData[9] = config.tokenDecimals;
+                instructions.push(new TransactionInstruction({
+                    programId: tokenProgramId,
+                    keys: [
+                        { pubkey: senderTokenAccount, isSigner: false, isWritable: true },
+                        { pubkey: mint, isSigner: false, isWritable: false },
+                        { pubkey: treasuryTokenAccount, isSigner: false, isWritable: true },
+                        { pubkey: payer, isSigner: true, isWritable: false }
+                    ],
+                    data: transferData
+                }));
+                instructions.push(new TransactionInstruction({
+                    programId: new PublicKey("MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr"),
+                    keys: [{ pubkey: payer, isSigner: true, isWritable: false }],
+                    data: new TextEncoder().encode(paymentIntent.memo)
+                }));
+                return new Transaction({
+                    feePayer: payer,
+                    recentBlockhash: new PublicKey(preparation.blockhash).toBase58()
+                }).add(...instructions);
+            },
+            sign: async (transaction, preparation, attempt) => {
+                if (attempt > 0) {
+                    setWalletMessage("The RPC rejected the previous blockhash before submission. A fresh transaction is ready; approve the new transaction in Phantom.", "pending");
+                }
+                if (provider.isMobileDeepLink) {
+                    await provider.sendTransaction(transaction, null, {
+                        preflightCommitment: "confirmed",
+                        chain: config.network,
+                        contextSlot: preparation.contextSlot,
+                        paymentIntentId
+                    });
+                    throw new Error("The Phantom mobile signing request did not return to RelicGrid.");
+                }
+                if (typeof provider.signTransaction !== "function") {
+                    throw new Error("This Phantom provider cannot securely sign a transfer for server submission.");
+                }
+                const signed = await provider.signTransaction(transaction, {
+                    preflightCommitment: "confirmed",
+                    chain: config.network
+                });
+                const signedBytes = signed instanceof Uint8Array
+                    ? signed
+                    : signed?.serialize?.({ requireAllSignatures: true, verifySignatures: true });
+                if (!(signedBytes instanceof Uint8Array)) {
+                    throw new Error("Phantom did not return a serialized signed transaction.");
+                }
+                return signedBytes;
+            },
+            broadcast: (signedBytes, preparation) => requestDepositTransaction("broadcast", {
+                transaction: bytesToWalletBase64(signedBytes),
+                minContextSlot: preparation.contextSlot
+            })
         });
         signature = broadcast.signature;
         if (!signature) throw new Error("Phantom did not return a transaction signature.");
@@ -1133,7 +1158,10 @@ async function requestDepositTransaction(action, payload = {}) {
     });
     const result = await response.json().catch(() => ({}));
     if (!response.ok) {
-        throw new Error(result.message || result.error || `Deposit transaction request failed (${response.status}).`);
+        const error = new Error(result.message || result.error || `Deposit transaction request failed (${response.status}).`);
+        error.code = result.error;
+        error.status = response.status;
+        throw error;
     }
     return result;
 }
@@ -1227,7 +1255,8 @@ async function handlePhantomMobileCallback(callback) {
             }
             const transactionBytes = decodeWalletBytes(decrypted.data.transaction);
             const broadcast = await requestDepositTransaction("broadcast", {
-                transaction: bytesToWalletBase64(transactionBytes)
+                transaction: bytesToWalletBase64(transactionBytes),
+                minContextSlot: state.contextSlot
             });
             broadcastSignature = broadcast.signature;
             document.getElementById("deposit-signature").value = broadcastSignature;
@@ -1251,7 +1280,10 @@ async function handlePhantomMobileCallback(callback) {
             document.getElementById("deposit-intent-id").value = state.paymentIntentId;
             setWalletMessage(`Transaction was submitted, but credit verification did not complete. Keep the signature and use VERIFY & CREDIT. ${error.message}`, "error");
         } else {
-            setWalletMessage(`Phantom returned to RelicGrid, but the requested action did not complete. ${error.message}`, "error");
+            const message = error.code === "blockhash_expired"
+                ? "The signed transaction was rejected before submission. Start the deposit again to fetch a fresh blockhash and approve a new transaction. No credits were added."
+                : `Phantom returned to RelicGrid, but the requested action did not complete. ${error.message}`;
+            setWalletMessage(message, "error");
         }
     }
 }

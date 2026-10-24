@@ -92,17 +92,23 @@ async function solanaRpc(rpcUrl, method, params, fetchImpl = fetch) {
     }
 
     if (payload?.error) {
+        const rpcMessage = typeof payload.error.message === "string"
+            ? payload.error.message
+            : "";
         console.error("Solana JSON-RPC error.", {
             method,
             code: Number.isInteger(payload.error.code)
                 ? payload.error.code
                 : null,
-            message: typeof payload.error.message === "string"
-                ? payload.error.message.slice(0, 300)
+            message: /blockhash not found/i.test(rpcMessage)
+                ? "Transaction simulation failed: Blockhash not found"
                 : "Unknown RPC error"
         });
 
-        throw new Error(`Solana RPC ${method} failed.`);
+        const error = new Error(`Solana RPC ${method} failed.`);
+        error.rpcCode = Number.isInteger(payload.error.code) ? payload.error.code : null;
+        error.rpcMessage = rpcMessage.slice(0, 300);
+        throw error;
     }
 
     if (!Object.prototype.hasOwnProperty.call(payload ?? {}, "result")) {
