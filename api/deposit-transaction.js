@@ -191,14 +191,37 @@ module.exports = async function depositTransaction(request, response) {
                 throw new Error("The configured Solana RPC returned an invalid current slot.");
             }
             stage = "broadcast_rpc_send";
-            const signature = await solanaRpc(process.env.SOLANA_RPC_URL, "sendTransaction", [
-                transaction.toString("base64"),
-                {
-                    encoding: "base64",
-                    preflightCommitment: "confirmed",
-                    minContextSlot
+            const signedTransactionBase64 = transaction.toString("base64");
+            let signature;
+            try {
+                signature = await solanaRpc(process.env.SOLANA_RPC_URL, "sendTransaction", [
+                    signedTransactionBase64,
+                    {
+                        encoding: "base64",
+                        preflightCommitment: "confirmed",
+                        minContextSlot
+                    }
+                ]);
+            } catch (error) {
+                if (error.rpcCode !== -32016 ||
+                    !/minimum context slot has not been reached/i.test(error.rpcMessage ?? "")) {
+                    throw error;
                 }
-            ]);
+                console.warn("Solana RPC has not reached the requested broadcast context slot; retrying with preflight enabled.", {
+                    stage,
+                    rpcCode: error.rpcCode,
+                    rpcMessage: sanitizeRpcErrorMessage(error.rpcMessage),
+                    minContextSlot
+                });
+                stage = "broadcast_rpc_send_context_fallback";
+                signature = await solanaRpc(process.env.SOLANA_RPC_URL, "sendTransaction", [
+                    signedTransactionBase64,
+                    {
+                        encoding: "base64",
+                        preflightCommitment: "confirmed"
+                    }
+                ]);
+            }
             if (!isBase58(signature, 64)) {
                 throw new Error("The configured Solana RPC returned an invalid transaction signature.");
             }

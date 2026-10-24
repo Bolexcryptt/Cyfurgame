@@ -1736,6 +1736,7 @@ test("deposit transaction API prepares and broadcasts through the authenticated 
     const rpcCalls = [];
     let denyRpc = false;
     let rpcError = null;
+    let rpcErrorOnce = null;
     const originalFetch = globalThis.fetch;
     globalThis.fetch = async (url, options = {}) => {
         const target = String(url);
@@ -1776,6 +1777,11 @@ test("deposit transaction API prepares and broadcasts through the authenticated 
             if (denyRpc) return new Response("", { status: 403 });
             const call = JSON.parse(options.body);
             rpcCalls.push(call);
+            if (call.method === "sendTransaction" && rpcErrorOnce) {
+                const error = rpcErrorOnce;
+                rpcErrorOnce = null;
+                return new Response(JSON.stringify({ error }), { status: 200 });
+            }
             if (call.method === "sendTransaction" && rpcError) {
                 return new Response(JSON.stringify({ error: rpcError }), { status: 200 });
             }
@@ -1849,6 +1855,32 @@ test("deposit transaction API prepares and broadcasts through the authenticated 
             "getSlot",
             "sendTransaction"
         ]);
+
+        const broadcastCallsBeforeContextRetry = rpcCalls.length;
+        rpcErrorOnce = {
+            code: -32016,
+            message: "Minimum context slot has not been reached"
+        };
+        const contextRetry = await invoke({
+            action: "broadcast",
+            paymentIntentId,
+            transaction: signedTransactionBase64
+        });
+        assert.equal(contextRetry.statusCode, 200);
+        assert.equal(contextRetry.payload.signature, signature);
+        const contextRetryCalls = rpcCalls.slice(broadcastCallsBeforeContextRetry);
+        assert.deepEqual(contextRetryCalls.map((call) => call.method), [
+            "getGenesisHash",
+            "getSlot",
+            "sendTransaction",
+            "sendTransaction"
+        ]);
+        assert.equal(contextRetryCalls[2].params[0], signedTransactionBase64);
+        assert.equal(contextRetryCalls[3].params[0], signedTransactionBase64);
+        assert.equal(contextRetryCalls[2].params[1].minContextSlot, 456);
+        assert.equal("minContextSlot" in contextRetryCalls[3].params[1], false);
+        assert.equal(contextRetryCalls[3].params[1].preflightCommitment, "confirmed");
+        assert.equal(contextRetryCalls[3].params[1].skipPreflight, undefined);
 
         const invalid = await invoke({ action: "broadcast", transaction: "not base64!" });
         assert.equal(invalid.statusCode, 400);
