@@ -67,6 +67,8 @@ async function solanaRpc(rpcUrl, method, params, fetchImpl = fetch) {
         console.error("Solana RPC connection failed.", {
             method,
             errorName: error?.name || "Error",
+            errorMessage: error?.message || "Unknown error",
+            errorCause: error?.cause?.message || null,
             errorCode: error?.cause?.code || null
         });
         throw new Error(`Solana RPC ${method} connection failed.`);
