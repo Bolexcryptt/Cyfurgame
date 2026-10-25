@@ -1737,6 +1737,48 @@ test("deposit transaction API prepares and broadcasts through the authenticated 
     let denyRpc = false;
     let rpcError = null;
     let rpcErrorOnce = null;
+    const mintAddress = "9F4hLLngEAhepsH2HLTH6kBYmmq6dzm4GXRrcpME3uam";
+    const tokenProgramId = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
+    const associatedTokenProgramId = "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL";
+    const memoProgramId = "MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr";
+    const sourceAccountKey = Buffer.alloc(32, 6);
+    const treasuryAccountKey = Buffer.alloc(32, 8);
+    const sourceAccountAddress = encodeBase58(sourceAccountKey);
+    const treasuryAccountAddress = encodeBase58(treasuryAccountKey);
+    const shortVec = (value) => Buffer.from([value]);
+    const compiledInstruction = (programIndex, accountIndexes, data) => Buffer.concat([
+        Buffer.from([programIndex]),
+        shortVec(accountIndexes.length),
+        Buffer.from(accountIndexes),
+        shortVec(data.length),
+        Buffer.from(data)
+    ]);
+    const transferCheckedData = Buffer.alloc(10);
+    transferCheckedData[0] = 12;
+    const transactionMessage = Buffer.concat([
+        Buffer.from([1, 0, 6]),
+        shortVec(10),
+        Buffer.from(decodeWalletBytes(linkedWallet)),
+        Buffer.alloc(32, 4),
+        Buffer.from(decodeWalletBytes(linkedWallet)),
+        Buffer.from(decodeWalletBytes("11111111111111111111111111111111")),
+        Buffer.from(decodeWalletBytes(tokenProgramId)),
+        Buffer.from(decodeWalletBytes(associatedTokenProgramId)),
+        sourceAccountKey,
+        Buffer.from(decodeWalletBytes(mintAddress)),
+        treasuryAccountKey,
+        Buffer.from(decodeWalletBytes(memoProgramId)),
+        Buffer.alloc(32, 10),
+        shortVec(3),
+        compiledInstruction(5, [0, 1, 2, 7, 3, 4], [1]),
+        compiledInstruction(4, [6, 7, 8, 0], transferCheckedData),
+        compiledInstruction(9, [0], Buffer.from("RelicGrid test memo"))
+    ]);
+    const signedTransactionBase64 = Buffer.concat([
+        shortVec(1),
+        Buffer.alloc(64),
+        transactionMessage
+    ]).toString("base64");
     const originalFetch = globalThis.fetch;
     globalThis.fetch = async (url, options = {}) => {
         const target = String(url);
@@ -1798,6 +1840,26 @@ test("deposit transaction API prepares and broadcasts through the authenticated 
                         lastValidBlockHeight: 123
                     }
                 },
+                getBalance: 920000,
+                getMinimumBalanceForRentExemption: 2039280,
+                getFeeForMessage: { context: { slot: 456 }, value: 80000 },
+                getAccountInfo: {
+                    value: {
+                        owner: tokenProgramId,
+                        data: {
+                            parsed: {
+                                type: "account",
+                                info: {
+                                    owner: call.params[0] === sourceAccountAddress
+                                        ? linkedWallet
+                                        : process.env.SOLANA_TREASURY_ADDRESS,
+                                    mint: mintAddress,
+                                    tokenAmount: { amount: "100000000" }
+                                }
+                            }
+                        }
+                    }
+                },
                 getSlot: 456,
                 sendTransaction: signature
             };
@@ -1838,7 +1900,6 @@ test("deposit transaction API prepares and broadcasts through the authenticated 
         assert.equal(rpcCalls.at(-1).params[0].commitment, "confirmed");
         assert.equal("contextSlot" in prepared.payload, false);
 
-        const signedTransactionBase64 = Buffer.from([1, 2, 3]).toString("base64");
         const broadcast = await invoke({
             action: "broadcast",
             paymentIntentId,
@@ -1904,11 +1965,23 @@ test("deposit transaction API prepares and broadcasts through the authenticated 
 
         rpcError = {
             code: -32002,
-            message: "Transaction simulation failed: Blockhash not found at https://rpc.example/?api-key=dummy and address 11111111111111111111111111111111"
+            message: "Transaction simulation failed: Blockhash not found at https://rpc.example/?api-key=dummy and address 11111111111111111111111111111111",
+            data: {
+                err: { InstructionError: [2, { Custom: 1 }] },
+                logs: [
+                    "Program MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr invoke [1]",
+                    "Program log: account 11111111111111111111111111111113 failed",
+                    "Program MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr failed: custom program error: 0x1"
+                ],
+                unitsConsumed: 12000,
+                accounts: [{ lamports: 123, data: "private-account-data" }]
+            }
         };
         const originalConsoleError = console.error;
+        const originalConsoleInfo = console.info;
         const diagnosticLogs = [];
         console.error = (...args) => diagnosticLogs.push(args);
+        console.info = (...args) => diagnosticLogs.push(args);
         let staleBlockhash;
         try {
             staleBlockhash = await invoke({
@@ -1918,6 +1991,7 @@ test("deposit transaction API prepares and broadcasts through the authenticated 
             });
         } finally {
             console.error = originalConsoleError;
+            console.info = originalConsoleInfo;
         }
         assert.equal(staleBlockhash.statusCode, 409);
         assert.equal(staleBlockhash.payload.error, "blockhash_expired");
@@ -1927,7 +2001,39 @@ test("deposit transaction API prepares and broadcasts through the authenticated 
         assert.equal(diagnostic.stage, "broadcast_rpc_send");
         assert.equal(diagnostic.rpcCode, -32002);
         assert.match(diagnostic.rpcMessage, /Blockhash not found/);
-        assert.doesNotMatch(JSON.stringify(diagnostic), /rpc\.example|api-key|11111111111111111111111111111111/);
+        assert.deepEqual(JSON.parse(diagnostic.rpcData.err), {
+            InstructionError: [2, { Custom: 1 }]
+        });
+        assert.equal(diagnostic.rpcData.logs[0], "Program [memo-program] invoke [1]");
+        assert.match(diagnostic.rpcData.logs[1], /\[redacted-address\]/);
+        assert.equal(diagnostic.rpcData.unitsConsumed, 12000);
+        assert.equal(diagnostic.rpcData.accountCount, 1);
+        assert.equal("accounts" in diagnostic.rpcData, false);
+        assert.doesNotMatch(JSON.stringify(diagnostic), /rpc\.example|api-key|11111111111111111111111111111113|private-account-data/);
+        const fundingDiagnostic = diagnosticLogs.find(([message]) =>
+            message === "Deposit transaction simulation funding diagnostics."
+        )?.[1];
+        assert.deepEqual(fundingDiagnostic.instructionRoles, [
+            "associated_token_account_create",
+            "spl_token_transfer_checked",
+            "memo"
+        ]);
+        assert.equal(fundingDiagnostic.associatedTokenAccountCreateCount, 1);
+        assert.equal(fundingDiagnostic.payerLamports, 920000);
+        assert.equal(fundingDiagnostic.transactionFeeLamports, 80000);
+        assert.equal(fundingDiagnostic.tokenAccountRentLamports, 2039280);
+        assert.equal(fundingDiagnostic.requiredTotalLamports, 2119280);
+        assert.equal(fundingDiagnostic.payerBalanceCoversFeeAndRent, false);
+        assert.equal(fundingDiagnostic.sourceTokenAccountExists, true);
+        assert.equal(fundingDiagnostic.sourceTokenAccountOwnerMatchesPayer, true);
+        assert.equal(fundingDiagnostic.sourceTokenAccountMintMatchesIntent, true);
+        assert.equal(fundingDiagnostic.sourceTokenAmountCoversIntent, true);
+        assert.equal(fundingDiagnostic.treasuryTokenAccountExists, true);
+        assert.equal(fundingDiagnostic.treasuryTokenAccountOwnerMatchesTreasury, true);
+        assert.doesNotMatch(
+            JSON.stringify(fundingDiagnostic),
+            new RegExp(`${linkedWallet}|${sourceAccountAddress}|${treasuryAccountAddress}|${signedTransactionBase64}`)
+        );
         rpcError = {
             code: -32002,
             message: "Transaction simulation failed: custom program error"

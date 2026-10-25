@@ -55,11 +55,55 @@ function decodeBase58(value) {
 
 function sanitizeRpcErrorMessage(message) {
     if (typeof message !== "string") return "Unknown RPC error";
-    return message
+    const programLabels = [
+        ["TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA", "[spl-token-program]"],
+        ["ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL", "[associated-token-program]"],
+        ["MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr", "[memo-program]"],
+        ["ComputeBudget111111111111111111111111111111", "[compute-budget-program]"],
+        ["11111111111111111111111111111111", "[system-program]"]
+    ];
+    let sanitized = message;
+    for (const [programId, label] of programLabels) {
+        sanitized = sanitized.replaceAll(programId, label);
+    }
+    return sanitized
         .replace(/https?:\/\/\S+/gi, "[redacted-url]")
         .replace(/\b[1-9A-HJ-NP-Za-km-z]{32,44}\b/g, "[redacted-address]")
         .replace(/[A-Za-z0-9+/]{80,}={0,2}/g, "[redacted-data]")
         .slice(0, 300);
+}
+
+function sanitizeRpcErrorData(data) {
+    if (!data || typeof data !== "object") return null;
+    const details = {};
+    if (Object.prototype.hasOwnProperty.call(data, "err")) {
+        if (typeof data.err === "string") {
+            details.err = sanitizeRpcErrorMessage(data.err);
+        } else {
+            let serializedError;
+            try {
+                serializedError = JSON.stringify(data.err);
+            } catch {
+                serializedError = "Unserializable RPC simulation error";
+            }
+            details.err = sanitizeRpcErrorMessage(serializedError);
+        }
+    }
+    if (Array.isArray(data.logs)) {
+        details.logs = data.logs.slice(0, 20).map((line) =>
+            sanitizeRpcErrorMessage(line)
+        );
+        details.omittedLogCount = Math.max(0, data.logs.length - 20);
+    }
+    if (Number.isSafeInteger(data.unitsConsumed) && data.unitsConsumed >= 0) {
+        details.unitsConsumed = data.unitsConsumed;
+    }
+    if (Number.isSafeInteger(data.accountCount) && data.accountCount >= 0) {
+        details.accountCount = data.accountCount;
+    } else if (Array.isArray(data.accounts)) {
+        details.accountCount = data.accounts.length;
+    }
+    return details;
 }
 
 async function solanaRpc(rpcUrl, method, params, fetchImpl = fetch) {
@@ -111,12 +155,14 @@ async function solanaRpc(rpcUrl, method, params, fetchImpl = fetch) {
             code: Number.isInteger(payload.error.code)
                 ? payload.error.code
                 : null,
-            message: sanitizeRpcErrorMessage(rpcMessage)
+            message: sanitizeRpcErrorMessage(rpcMessage),
+            data: sanitizeRpcErrorData(payload.error.data)
         });
 
         const error = new Error(`Solana RPC ${method} failed.`);
         error.rpcCode = Number.isInteger(payload.error.code) ? payload.error.code : null;
         error.rpcMessage = sanitizeRpcErrorMessage(rpcMessage);
+        error.rpcData = sanitizeRpcErrorData(payload.error.data);
         throw error;
     }
 
@@ -292,6 +338,7 @@ module.exports = {
     TOKEN_PROGRAM_IDS,
     isBase58,
     sanitizeRpcErrorMessage,
+    sanitizeRpcErrorData,
     solanaRpc,
     verifyFinalizedDeposit
 };

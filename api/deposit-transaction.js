@@ -9,6 +9,7 @@ const {
     GENESIS_HASHES,
     TOKEN_PROGRAM_IDS,
     isBase58,
+    sanitizeRpcErrorData,
     sanitizeRpcErrorMessage,
     solanaRpc
 } = require("../server/lib/solana-deposit");
@@ -40,6 +41,205 @@ function decodeSignedTransaction(value) {
         return null;
     }
     return transaction;
+}
+
+function readShortVec(bytes, offset) {
+    let value = 0;
+    let shift = 0;
+    let cursor = offset;
+    while (cursor < bytes.length && shift <= 14) {
+        const byte = bytes[cursor];
+        value |= (byte & 0x7f) << shift;
+        cursor += 1;
+        if ((byte & 0x80) === 0) return { value, offset: cursor };
+        shift += 7;
+    }
+    return null;
+}
+
+function encodeBase58(bytes) {
+    const alphabet = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+    let value = 0n;
+    for (const byte of bytes) value = value * 256n + BigInt(byte);
+    let encoded = "";
+    while (value > 0n) {
+        encoded = alphabet[Number(value % 58n)] + encoded;
+        value /= 58n;
+    }
+    for (const byte of bytes) {
+        if (byte !== 0) break;
+        encoded = `1${encoded}`;
+    }
+    return encoded || "1";
+}
+
+function inspectLegacyTransaction(transaction) {
+    const signatureCount = readShortVec(transaction, 0);
+    if (!signatureCount) return null;
+    const messageOffset = signatureCount.offset + signatureCount.value * 64;
+    if (messageOffset >= transaction.length) return null;
+    const message = transaction.subarray(messageOffset);
+    if (message[0] & 0x80) return null;
+
+    let offset = 3;
+    const keyCount = readShortVec(message, offset);
+    if (!keyCount) return null;
+    offset = keyCount.offset;
+    const accountKeys = [];
+    for (let index = 0; index < keyCount.value; index += 1) {
+        if (offset + 32 > message.length) return null;
+        accountKeys.push(message.subarray(offset, offset + 32));
+        offset += 32;
+    }
+    if (offset + 32 > message.length) return null;
+    offset += 32;
+
+    const instructionCount = readShortVec(message, offset);
+    if (!instructionCount) return null;
+    offset = instructionCount.offset;
+    const instructionRoles = [];
+    let associatedTokenAccountCreateCount = 0;
+    let sourceTokenAccount;
+    let treasuryTokenAccount;
+
+    for (let index = 0; index < instructionCount.value; index += 1) {
+        if (offset >= message.length) return null;
+        const programIndex = message[offset];
+        offset += 1;
+        const accountIndexCount = readShortVec(message, offset);
+        if (!accountIndexCount) return null;
+        offset = accountIndexCount.offset;
+        const accountIndexes = message.subarray(offset, offset + accountIndexCount.value);
+        if (accountIndexes.length !== accountIndexCount.value ||
+            [...accountIndexes].some((accountIndex) => accountIndex >= accountKeys.length)) return null;
+        offset += accountIndexCount.value;
+        const dataLength = readShortVec(message, offset);
+        if (!dataLength) return null;
+        offset = dataLength.offset;
+        const data = message.subarray(offset, offset + dataLength.value);
+        if (data.length !== dataLength.value || programIndex >= accountKeys.length) return null;
+        offset += dataLength.value;
+
+        const programId = encodeBase58(accountKeys[programIndex]);
+        if (programId === "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL" &&
+            (data[0] === 0 || data[0] === 1)) {
+            instructionRoles.push("associated_token_account_create");
+            associatedTokenAccountCreateCount += 1;
+        } else if (programId === "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA" &&
+            data[0] === 12) {
+            instructionRoles.push("spl_token_transfer_checked");
+            if (accountIndexes.length >= 3) {
+                sourceTokenAccount = encodeBase58(accountKeys[accountIndexes[0]]);
+                treasuryTokenAccount = encodeBase58(accountKeys[accountIndexes[2]]);
+            }
+        } else if (programId === "MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr") {
+            instructionRoles.push("memo");
+        } else {
+            instructionRoles.push("other");
+        }
+    }
+
+    return {
+        message,
+        instructionRoles,
+        associatedTokenAccountCreateCount,
+        sourceTokenAccount,
+        treasuryTokenAccount
+    };
+}
+
+async function logSimulationFundingDiagnostics({
+    transaction,
+    payer,
+    treasuryOwner,
+    mint,
+    tokenProgramId,
+    expectedAmountRaw,
+    rpcUrl
+}) {
+    const inspected = inspectLegacyTransaction(transaction);
+    const diagnosticRpc = async (method, params) => {
+        try {
+            return await solanaRpc(rpcUrl, method, params);
+        } catch (error) {
+            console.error("Solana funding diagnostic RPC failed.", {
+                method,
+                rpcCode: Number.isInteger(error.rpcCode) ? error.rpcCode : null,
+                rpcMessage: sanitizeRpcErrorMessage(error.rpcMessage || error.message)
+            });
+            return null;
+        }
+    };
+    const requests = [
+        diagnosticRpc("getBalance", [payer, { commitment: "confirmed" }]),
+        diagnosticRpc("getMinimumBalanceForRentExemption", [165, { commitment: "confirmed" }]),
+        diagnosticRpc("getFeeForMessage", [
+            inspected?.message.toString("base64") ?? "",
+            { commitment: "confirmed" }
+        ]),
+        inspected?.sourceTokenAccount
+            ? diagnosticRpc("getAccountInfo", [
+                inspected.sourceTokenAccount,
+                { commitment: "confirmed", encoding: "jsonParsed" }
+            ])
+            : Promise.resolve(null),
+        inspected?.treasuryTokenAccount
+            ? diagnosticRpc("getAccountInfo", [
+                inspected.treasuryTokenAccount,
+                { commitment: "confirmed", encoding: "jsonParsed" }
+            ])
+            : Promise.resolve(null)
+    ];
+    const [balance, rent, fee, source, treasury] = await Promise.all(requests);
+    const payerLamports = Number.isSafeInteger(balance) && balance >= 0 ? balance : null;
+    const rentLamports = Number.isSafeInteger(rent) && rent >= 0 ? rent : null;
+    const feeLamports = Number.isSafeInteger(fee?.value) && fee.value >= 0
+        ? fee.value
+        : null;
+    const requiredRentLamports = rentLamports === null || !inspected
+        ? null
+        : rentLamports * inspected.associatedTokenAccountCreateCount;
+    const requiredTotalLamports = feeLamports === null || requiredRentLamports === null
+        ? null
+        : feeLamports + requiredRentLamports;
+    const sourceInfo = source?.value?.data?.parsed?.info;
+    const treasuryInfo = treasury?.value?.data?.parsed?.info;
+    const sourceAmountText = String(sourceInfo?.tokenAmount?.amount ?? "");
+    const sourceAmount = sourceAmountText.length <= 20 && /^\d+$/.test(sourceAmountText)
+        ? BigInt(sourceInfo.tokenAmount.amount)
+        : null;
+    let expectedAmount = null;
+    try {
+        if (/^[1-9]\d*$/.test(String(expectedAmountRaw))) {
+            expectedAmount = BigInt(expectedAmountRaw);
+        }
+    } catch {
+        expectedAmount = null;
+    }
+
+    console.info("Deposit transaction simulation funding diagnostics.", {
+        instructionRoles: inspected?.instructionRoles ?? null,
+        associatedTokenAccountCreateCount: inspected?.associatedTokenAccountCreateCount ?? null,
+        payerLamports,
+        transactionFeeLamports: feeLamports,
+        tokenAccountRentLamports: rentLamports,
+        requiredRentLamports,
+        requiredTotalLamports,
+        payerBalanceCoversFeeAndRent: payerLamports !== null &&
+            requiredTotalLamports !== null &&
+            payerLamports >= requiredTotalLamports,
+        sourceTokenAccountExists: Boolean(source?.value),
+        sourceTokenAccountOwnerMatchesPayer: sourceInfo?.owner === payer,
+        sourceTokenAccountMintMatchesIntent: sourceInfo?.mint === mint,
+        sourceTokenAccountProgramMatchesConfig: source?.value?.owner === tokenProgramId,
+        sourceTokenAmountCoversIntent: sourceAmount !== null &&
+            expectedAmount !== null &&
+            sourceAmount >= expectedAmount,
+        treasuryTokenAccountExists: Boolean(treasury?.value),
+        treasuryTokenAccountOwnerMatchesTreasury: treasuryInfo?.owner === treasuryOwner,
+        treasuryTokenAccountMintMatchesIntent: treasuryInfo?.mint === mint,
+        treasuryTokenAccountProgramMatchesConfig: treasury?.value?.owner === tokenProgramId
+    });
 }
 
 module.exports = async function depositTransaction(request, response) {
@@ -203,6 +403,26 @@ module.exports = async function depositTransaction(request, response) {
                     }
                 ]);
             } catch (error) {
+                if (error.rpcCode === -32002) {
+                    try {
+                        await logSimulationFundingDiagnostics({
+                            transaction,
+                            payer: linkedWallet,
+                            treasuryOwner: config.treasury_address,
+                            mint: config.official_mint_address,
+                            tokenProgramId: config.token_program_id,
+                            expectedAmountRaw: intentAmount,
+                            rpcUrl: process.env.SOLANA_RPC_URL
+                        });
+                    } catch (diagnosticError) {
+                        console.error("Deposit simulation diagnostics failed.", {
+                            errorName: diagnosticError?.name || "Error",
+                            errorMessage: sanitizeRpcErrorMessage(
+                                diagnosticError?.message || "Unknown diagnostic error"
+                            )
+                        });
+                    }
+                }
                 if (error.rpcCode !== -32016 ||
                     !/minimum context slot has not been reached/i.test(error.rpcMessage ?? "")) {
                     throw error;
@@ -241,6 +461,7 @@ module.exports = async function depositTransaction(request, response) {
                 : sanitizeRpcErrorMessage(error.message || "Unknown error"),
             rpcCode: Number.isInteger(error.rpcCode) ? error.rpcCode : null,
             rpcMessage: sanitizeRpcErrorMessage(error.rpcMessage),
+            rpcData: sanitizeRpcErrorData(error.rpcData),
             rpcForbidden: error.message?.includes("(403)") === true
         });
         if (blockhashExpired) {
