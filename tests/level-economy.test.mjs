@@ -12,6 +12,7 @@ import {
     encodeWalletBytes,
     getConnectedPhantomWallet,
     getDepositPreparationFieldErrors,
+    getFeePayerPreflightError,
     getPhantomProvider,
     getSolFundingStatus,
     isMobileBrowser,
@@ -287,6 +288,34 @@ test("SOL funding preflight calculates the ATA rent and fee shortfall before wal
         payerLamports: null,
         requiredTotalLamports: 1493440
     }).status, "unknown");
+});
+
+test("fee-payer preflight rejects a missing, non-system, or mismatched payer account", () => {
+    const valid = {
+        feePayerAccountExists: true,
+        feePayerSystemProgramOwned: true,
+        feePayerKeyMatchesConnectedPhantom: true,
+        feePayerKeyMatchesLinkedWallet: true,
+        payerBalanceQueryMatchesFeePayer: true
+    };
+    assert.equal(getFeePayerPreflightError(valid), null);
+    assert.match(getFeePayerPreflightError({
+        ...valid,
+        feePayerAccountExists: false
+    }), /does not exist/i);
+    assert.match(getFeePayerPreflightError({
+        ...valid,
+        feePayerSystemProgramOwned: false
+    }), /not owned by the Solana System Program/i);
+    assert.match(getFeePayerPreflightError({
+        ...valid,
+        feePayerKeyMatchesConnectedPhantom: false
+    }), /does not match/i);
+    assert.match(getFeePayerPreflightError({
+        ...valid,
+        payerBalanceQueryMatchesFeePayer: false
+    }), /does not match/i);
+    assert.match(getFeePayerPreflightError({}), /does not match/i);
 });
 
 test("blockhash retry does not retry non-blockhash or repeated broadcast failures", async () => {
@@ -1898,7 +1927,16 @@ test("deposit transaction API prepares and broadcasts through the authenticated 
                 getBalance: { context: { slot: 456 }, value: 920000 },
                 getMinimumBalanceForRentExemption: 2039280,
                 getFeeForMessage: { context: { slot: 456 }, value: 80000 },
-                getAccountInfo: call.params[0] === sourceAccountAddress && missingDiagnosticSource
+                getAccountInfo: call.params[0] === linkedWallet
+                    ? {
+                        value: {
+                            owner: "11111111111111111111111111111111",
+                            lamports: 920000,
+                            executable: false,
+                            data: ["", "base64"]
+                        }
+                    }
+                    : call.params[0] === sourceAccountAddress && missingDiagnosticSource
                     ? { value: null }
                     : {
                     value: {
@@ -1972,9 +2010,16 @@ test("deposit transaction API prepares and broadcasts through the authenticated 
         const readOnlyDiagnostic = await invoke({
             action: "diagnose",
             amountRaw: "100000000",
-            transaction: unsignedDiagnosticTransaction
+            transaction: unsignedDiagnosticTransaction,
+            connectedWalletPublicKey: linkedWallet
         });
         assert.equal(readOnlyDiagnostic.statusCode, 200);
+        assert.equal(readOnlyDiagnostic.payload.feePayerAccountExists, true);
+        assert.equal(readOnlyDiagnostic.payload.feePayerOwnerProgram, "11111111111111111111111111111111");
+        assert.equal(readOnlyDiagnostic.payload.feePayerSystemProgramOwned, true);
+        assert.equal(readOnlyDiagnostic.payload.feePayerKeyMatchesConnectedPhantom, true);
+        assert.equal(readOnlyDiagnostic.payload.feePayerKeyMatchesLinkedWallet, true);
+        assert.equal(readOnlyDiagnostic.payload.payerBalanceQueryMatchesFeePayer, true);
         assert.equal(readOnlyDiagnostic.payload.payerLamports, 920000);
         assert.equal(readOnlyDiagnostic.payload.transactionFeeLamports, 80000);
         assert.equal(readOnlyDiagnostic.payload.requiredRentLamports, 2039280);
@@ -2004,7 +2049,8 @@ test("deposit transaction API prepares and broadcasts through the authenticated 
         const simulatedFailure = await invoke({
             action: "diagnose",
             amountRaw: "100000000",
-            transaction: unsignedDiagnosticTransaction
+            transaction: unsignedDiagnosticTransaction,
+            connectedWalletPublicKey: linkedWallet
         });
         assert.equal(simulatedFailure.statusCode, 200);
         assert.equal(simulatedFailure.payload.simulationPassed, false);
@@ -2013,6 +2059,17 @@ test("deposit transaction API prepares and broadcasts through the authenticated 
         assert.match(simulatedFailure.payload.simulationError, /InstructionError/);
         assert.match(simulatedFailure.payload.simulationLogs[0], /\[memo-program\]/);
         assert.match(simulatedFailure.payload.simulationLogs[1], /\[redacted-address\]/);
+
+        const rpcCallsBeforeWalletMismatch = rpcCalls.length;
+        const walletMismatch = await invoke({
+            action: "diagnose",
+            amountRaw: "100000000",
+            transaction: unsignedDiagnosticTransaction,
+            connectedWalletPublicKey: "11111111111111111111111111111115"
+        });
+        assert.equal(walletMismatch.statusCode, 400);
+        assert.match(walletMismatch.payload.message, /public key.*must match/i);
+        assert.equal(rpcCalls.length, rpcCallsBeforeWalletMismatch);
         process.env.WALLET_DIRECT_TREASURY_READY = previousDirectTreasuryReady;
         process.env.WALLET_DEPOSITS_ENABLED = previousDepositsEnabled;
         process.env.WALLET_MAINNET_DEPOSITS_ENABLED = previousMainnetEnabled;

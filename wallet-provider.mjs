@@ -69,6 +69,21 @@ export function getSolFundingStatus(diagnostic) {
     return { status: "sufficient", balanceLamports, requiredLamports };
 }
 
+export function getFeePayerPreflightError(diagnostic) {
+    if (diagnostic?.feePayerKeyMatchesConnectedPhantom !== true ||
+        diagnostic?.feePayerKeyMatchesLinkedWallet !== true ||
+        diagnostic?.payerBalanceQueryMatchesFeePayer !== true) {
+        return "The transaction fee payer does not match the connected Phantom wallet, linked wallet, and balance check.";
+    }
+    if (diagnostic?.feePayerAccountExists !== true) {
+        return "The transaction fee-payer account does not exist on the configured Solana network.";
+    }
+    if (diagnostic?.feePayerSystemProgramOwned !== true) {
+        return "The transaction fee-payer account is not owned by the Solana System Program.";
+    }
+    return null;
+}
+
 function getNacl(walletWindow) {
     const nacl = walletWindow.nacl;
     if (!nacl?.box?.keyPair || !nacl.box.open?.after) {

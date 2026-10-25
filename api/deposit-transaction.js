@@ -271,10 +271,10 @@ async function runReadOnlyFundingDiagnostic({
         error.status = 400;
         throw error;
     }
-    if (connectedWalletPublicKey !== null &&
-        connectedWalletPublicKey !== undefined &&
-        !isBase58(connectedWalletPublicKey, 32)) {
-        const error = new Error("The connected Phantom public key is invalid.");
+    if (!isBase58(connectedWalletPublicKey, 32) ||
+        connectedWalletPublicKey !== payer ||
+        connectedWalletPublicKey !== inspected.payer) {
+        const error = new Error("The connected Phantom public key, linked wallet, and transaction fee payer must match.");
         error.status = 400;
         throw error;
     }
@@ -381,9 +381,7 @@ async function runReadOnlyFundingDiagnostic({
         feePayerOwnerProgram: feePayerAccount.value?.owner ?? null,
         feePayerSystemProgramOwned:
             feePayerAccount.value?.owner === "11111111111111111111111111111111",
-        feePayerKeyMatchesConnectedPhantom: connectedWalletPublicKey == null
-            ? null
-            : feePayer === connectedWalletPublicKey,
+        feePayerKeyMatchesConnectedPhantom: feePayer === connectedWalletPublicKey,
         feePayerKeyMatchesLinkedWallet: feePayer === payer,
         payerBalanceQueryMatchesFeePayer: true,
         payerLamports,

@@ -10,6 +10,7 @@ import {
     encodeWalletBytes,
     getConnectedPhantomWallet,
     getDepositPreparationFieldErrors,
+    getFeePayerPreflightError,
     getPhantomProvider,
     getSolFundingStatus,
     isMobileBrowser,
@@ -954,6 +955,7 @@ async function diagnoseCyfurDeposit() {
         const result = await requestCyfurFundingDiagnostic({
             config,
             payer: new PublicKey(config.linkedWalletAddress),
+            connectedWalletPublicKey: connectedWallet.publicKey,
             rawAmount,
             PublicKey,
             Transaction,
@@ -976,6 +978,7 @@ async function diagnoseCyfurDeposit() {
 async function requestCyfurFundingDiagnostic({
     config,
     payer,
+    connectedWalletPublicKey,
     rawAmount,
     PublicKey,
     Transaction,
@@ -1001,11 +1004,15 @@ async function requestCyfurFundingDiagnostic({
     return requestDepositTransaction("diagnose", {
         amountRaw: rawAmount.toString(),
         transaction: bytesToWalletBase64(transactionBytes),
-        connectedWalletPublicKey: connectedWallet?.publicKey ?? null
+        connectedWalletPublicKey
     });
 }
 
 function getFundingPreflightError(diagnostic) {
+    const feePayerError = getFeePayerPreflightError(diagnostic);
+    if (feePayerError) {
+        return new Error(`${feePayerError} No transaction approval was requested.`);
+    }
     const status = getSolFundingStatus(diagnostic);
     if (status.status === "insufficient") {
         const requirement = diagnostic.requiredRentLamports > 0
@@ -1060,14 +1067,25 @@ async function sendCyfurDeposit() {
             await loadSolanaWeb3();
         transferButton.disabled = true;
         mainButton.disabled = true;
+        setWalletMessage("Connecting to the linked Phantom wallet before checking the transaction. No transfer or transaction approval is requested yet.", "pending");
+        const walletConnection = await withWalletTimeout(
+            connectPhantom(window),
+            "Phantom connection"
+        );
+        if (!walletConnection ||
+            walletConnection.publicKey !== config.linkedWalletAddress ||
+            typeof walletConnection.provider.sendTransaction !== "function") {
+            throw new Error("The connected Phantom public key must match the wallet linked to this game account. No transaction was simulated or submitted.");
+        }
         setWalletMessage("Checking SOL balance, ATA rent, and transaction fee with a read-only simulation. Phantom will not be asked to approve anything during this check.", "pending");
         const diagnosticOutput = document.getElementById("wallet-preflight-results");
         diagnosticOutput.textContent = "Checking current SOL balance, CYFUR token accounts, ATA rent, fee, and transaction simulation. No transaction will be signed or broadcast.";
         diagnosticOutput.hidden = false;
-        const payer = new PublicKey(config.linkedWalletAddress);
+        const payer = new PublicKey(walletConnection.publicKey);
         const fundingDiagnostic = await requestCyfurFundingDiagnostic({
             config,
             payer,
+            connectedWalletPublicKey: walletConnection.publicKey,
             rawAmount,
             PublicKey,
             Transaction,
@@ -1080,15 +1098,6 @@ async function sendCyfurDeposit() {
         const fundingError = getFundingPreflightError(fundingDiagnostic);
         if (fundingError) throw fundingError;
 
-        const walletConnection = await withWalletTimeout(
-            connectPhantom(window),
-            "Phantom connection approval"
-        );
-        if (!walletConnection ||
-            walletConnection.publicKey !== config.linkedWalletAddress ||
-            typeof walletConnection.provider.sendTransaction !== "function") {
-            throw new Error("Connect the Phantom wallet linked to this game account to continue.");
-        }
         const { provider } = walletConnection;
         renderWalletConnectionState();
         const paymentIntent = await requestPaymentIntent(amountInput.value);
