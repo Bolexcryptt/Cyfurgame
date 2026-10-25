@@ -11,6 +11,7 @@ import {
     getConnectedPhantomWallet,
     getDepositPreparationFieldErrors,
     getPhantomProvider,
+    getSolFundingStatus,
     isMobileBrowser,
     readPhantomMobileCallback,
     rebuildMobileDepositAfterBlockhashRejection,
@@ -946,24 +947,13 @@ async function diagnoseCyfurDeposit() {
         const rawAmount = parseTokenAmount(amountInput.value, config.tokenDecimals);
         const { PublicKey, Transaction, TransactionInstruction } =
             await loadSolanaWeb3();
-        const preparation = await requestDepositTransaction("prepare-diagnostic");
-        const transaction = buildCyfurDepositTransaction({
-            preparation,
+        const result = await requestCyfurFundingDiagnostic({
             config,
             payer: new PublicKey(config.linkedWalletAddress),
             rawAmount,
-            paymentIntentMemo: "RelicGrid read-only preflight",
             PublicKey,
             Transaction,
             TransactionInstruction
-        });
-        const transactionBytes = transaction.serialize({
-            requireAllSignatures: false,
-            verifySignatures: false
-        });
-        const result = await requestDepositTransaction("diagnose", {
-            amountRaw: rawAmount.toString(),
-            transaction: bytesToWalletBase64(transactionBytes)
         });
         output.textContent = renderFundingDiagnostic(result, config.tokenDecimals);
         output.hidden = false;
@@ -977,6 +967,68 @@ async function diagnoseCyfurDeposit() {
             !Number.isInteger(walletStatusSnapshot?.tokenDecimals) ||
             !walletStatusSnapshot?.network;
     }
+}
+
+async function requestCyfurFundingDiagnostic({
+    config,
+    payer,
+    rawAmount,
+    PublicKey,
+    Transaction,
+    TransactionInstruction
+}) {
+    const preparation = await requestDepositTransaction("prepare-diagnostic");
+    const diagnosticMemo = "RelicGrid payment intent: 00000000-0000-4000-8000-000000000000";
+    const transaction = buildCyfurDepositTransaction({
+        preparation,
+        config,
+        payer,
+        rawAmount,
+        paymentIntentMemo: diagnosticMemo,
+        PublicKey,
+        Transaction,
+        TransactionInstruction
+    });
+    const transactionBytes = transaction.serialize({
+        requireAllSignatures: false,
+        verifySignatures: false
+    });
+    return requestDepositTransaction("diagnose", {
+        amountRaw: rawAmount.toString(),
+        transaction: bytesToWalletBase64(transactionBytes)
+    });
+}
+
+function getFundingPreflightError(diagnostic) {
+    const status = getSolFundingStatus(diagnostic);
+    if (status.status === "insufficient") {
+        const requirement = diagnostic.requiredRentLamports > 0
+            ? "create the missing CYFUR token account and pay the transaction fee"
+            : "pay the transaction fee";
+        return new Error(
+            `Not enough SOL to ${requirement}. ` +
+            `Balance: ${formatLamportsAsSol(status.balanceLamports)} SOL; ` +
+            `estimated requirement: ${formatLamportsAsSol(status.requiredLamports)} SOL ` +
+            `(${formatLamportsAsSol(diagnostic.requiredRentLamports)} SOL ATA rent + ` +
+            `${formatLamportsAsSol(diagnostic.transactionFeeLamports)} SOL fee); ` +
+            `short by ${formatLamportsAsSol(status.shortfallLamports)} SOL. ` +
+            `No Phantom transaction approval was requested.`
+        );
+    }
+    if (status.status !== "sufficient") {
+        return new Error("Could not verify the wallet SOL balance, ATA rent, and transaction fee. No Phantom transaction approval was requested.");
+    }
+    if (diagnostic.simulationPassed !== true) {
+        const failedInstruction = diagnostic.failedInstructionIndex === null
+            ? ""
+            : ` Instruction #${diagnostic.failedInstructionIndex} (${diagnostic.failedInstructionRole || "unknown"}) failed.`;
+        return new Error(
+            `The read-only Solana simulation did not pass.${failedInstruction} ` +
+            `${diagnostic.simulationError || "Review the diagnostic output for details."} ` +
+            "No Phantom transaction approval was requested."
+        );
+    }
+    return null;
 }
 
 async function sendCyfurDeposit() {
@@ -997,23 +1049,42 @@ async function sendCyfurDeposit() {
             showPhantomUnavailableMessage();
             return;
         }
+        const rawAmount = parseTokenAmount(amountInput.value, config.tokenDecimals);
+        const { PublicKey, Transaction, TransactionInstruction } =
+            await loadSolanaWeb3();
+        transferButton.disabled = true;
+        mainButton.disabled = true;
+        setWalletMessage("Checking SOL balance, ATA rent, and transaction fee with a read-only simulation. Phantom will not be asked to approve anything during this check.", "pending");
+        const diagnosticOutput = document.getElementById("wallet-preflight-results");
+        diagnosticOutput.textContent = "Checking current SOL balance, CYFUR token accounts, ATA rent, fee, and transaction simulation. No transaction will be signed or broadcast.";
+        diagnosticOutput.hidden = false;
+        const payer = new PublicKey(config.linkedWalletAddress);
+        const fundingDiagnostic = await requestCyfurFundingDiagnostic({
+            config,
+            payer,
+            rawAmount,
+            PublicKey,
+            Transaction,
+            TransactionInstruction
+        });
+        diagnosticOutput.textContent = renderFundingDiagnostic(
+            fundingDiagnostic,
+            config.tokenDecimals
+        );
+        const fundingError = getFundingPreflightError(fundingDiagnostic);
+        if (fundingError) throw fundingError;
+
         const walletConnection = await withWalletTimeout(
             connectPhantom(window),
             "Phantom connection approval"
         );
-        if (!walletConnection || typeof walletConnection.provider.sendTransaction !== "function") {
-            showPhantomUnavailableMessage();
-            return;
+        if (!walletConnection ||
+            walletConnection.publicKey !== config.linkedWalletAddress ||
+            typeof walletConnection.provider.sendTransaction !== "function") {
+            throw new Error("Connect the Phantom wallet linked to this game account to continue.");
         }
         const { provider } = walletConnection;
         renderWalletConnectionState();
-        const rawAmount = parseTokenAmount(amountInput.value, config.tokenDecimals);
-        const { PublicKey, Transaction, TransactionInstruction } =
-            await loadSolanaWeb3();
-        const payer = new PublicKey(walletConnection.publicKey);
-        if (payer.toString() !== config.linkedWalletAddress) {
-            throw new Error("The connected Phantom account differs from the wallet linked to this game account. Relink the correct wallet first.");
-        }
         const paymentIntent = await requestPaymentIntent(amountInput.value);
         paymentIntentId = paymentIntent.intentId;
         if (paymentIntent.network !== config.network ||

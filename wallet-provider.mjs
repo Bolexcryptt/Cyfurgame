@@ -51,6 +51,24 @@ export function getDepositPreparationFieldErrors(preparation) {
     return errors;
 }
 
+export function getSolFundingStatus(diagnostic) {
+    const balanceLamports = diagnostic?.payerLamports;
+    const requiredLamports = diagnostic?.requiredTotalLamports;
+    if (!Number.isSafeInteger(balanceLamports) || balanceLamports < 0 ||
+        !Number.isSafeInteger(requiredLamports) || requiredLamports < 0) {
+        return { status: "unknown" };
+    }
+    if (balanceLamports < requiredLamports) {
+        return {
+            status: "insufficient",
+            balanceLamports,
+            requiredLamports,
+            shortfallLamports: requiredLamports - balanceLamports
+        };
+    }
+    return { status: "sufficient", balanceLamports, requiredLamports };
+}
+
 function getNacl(walletWindow) {
     const nacl = walletWindow.nacl;
     if (!nacl?.box?.keyPair || !nacl.box.open?.after) {

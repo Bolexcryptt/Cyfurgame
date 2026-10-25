@@ -13,6 +13,7 @@ import {
     getConnectedPhantomWallet,
     getDepositPreparationFieldErrors,
     getPhantomProvider,
+    getSolFundingStatus,
     isMobileBrowser,
     readPhantomMobileCallback,
     rebuildMobileDepositAfterBlockhashRejection,
@@ -265,6 +266,27 @@ test("deposit preparation validation matches API JSON and identifies invalid fie
             invalidAccountCount: 1
         }
     ]);
+});
+
+test("SOL funding preflight calculates the ATA rent and fee shortfall before wallet approval", () => {
+    const result = getSolFundingStatus({
+        payerLamports: 919037,
+        requiredTotalLamports: 1493440
+    });
+    assert.deepEqual(result, {
+        status: "insufficient",
+        balanceLamports: 919037,
+        requiredLamports: 1493440,
+        shortfallLamports: 574403
+    });
+    assert.equal(getSolFundingStatus({
+        payerLamports: 1493440,
+        requiredTotalLamports: 1493440
+    }).status, "sufficient");
+    assert.equal(getSolFundingStatus({
+        payerLamports: null,
+        requiredTotalLamports: 1493440
+    }).status, "unknown");
 });
 
 test("blockhash retry does not retry non-blockhash or repeated broadcast failures", async () => {
