@@ -1707,8 +1707,21 @@ button { -webkit-tap-highlight-color: transparent; }
     }
     .wallet-transfer-controls input:disabled { opacity: .55; }
     .wallet-transfer-controls .button { min-height: 42px; }
+    #wallet-preflight-button { justify-self: start; min-height: 36px; }
+    .wallet-preflight-results {
+        overflow-wrap: anywhere;
+        margin: 0;
+        padding: 10px;
+        border: 1px solid #87c4d324;
+        border-radius: 5px;
+        background: #080f17;
+        color: #a9d9de;
+        font: 9px/1.6 "Consolas", monospace;
+        white-space: pre-wrap;
+    }
 
     @media (max-width: 680px) {
         .wallet-transfer-controls { grid-template-columns: 1fr; }
         .wallet-transfer-controls .button { width: 100%; }
+        #wallet-preflight-button { width: 100%; }
     }

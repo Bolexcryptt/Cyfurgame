@@ -157,6 +157,8 @@
                                 <input id="wallet-transfer-amount" name="amount" type="number" inputmode="decimal" min="0.0001" step="0.00000001" placeholder="0.0001" required disabled>
                                 <button id="wallet-transfer-button" class="button button-primary" type="submit" disabled>DEPOSIT CYFUR</button>
                             </div>
+                            <button id="wallet-preflight-button" class="button button-quiet" type="button" disabled>RUN READ-ONLY DIAGNOSTIC</button>
+                            <pre id="wallet-preflight-results" class="wallet-preflight-results" role="status" aria-live="polite" hidden></pre>
                         </form>
                         <form id="deposit-signature-form" class="deposit-signature-form">
                             <label class="wallet-field-label" for="deposit-intent-id">PAYMENT INTENT ID</label>

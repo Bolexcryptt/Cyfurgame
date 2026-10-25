@@ -1656,7 +1656,8 @@ test("deposit API remains disabled unless the explicit server flag is enabled", 
         "SOLANA_NETWORK",
         "SOLANA_TREASURY_ADDRESS",
         "WALLET_DIRECT_TREASURY_READY",
-        "WALLET_DEPOSITS_ENABLED"
+        "WALLET_DEPOSITS_ENABLED",
+        "WALLET_MAINNET_DEPOSITS_ENABLED"
     ];
     const previous = Object.fromEntries(envNames.map((name) => [name, process.env[name]]));
     for (const [name, value] of Object.entries({
@@ -1737,6 +1738,9 @@ test("deposit transaction API prepares and broadcasts through the authenticated 
     let denyRpc = false;
     let rpcError = null;
     let rpcErrorOnce = null;
+    let missingDiagnosticSource = false;
+    let paymentIntentReadCount = 0;
+    let diagnosticSimulation = { err: null, logs: [], unitsConsumed: 15000 };
     const mintAddress = "9F4hLLngEAhepsH2HLTH6kBYmmq6dzm4GXRrcpME3uam";
     const tokenProgramId = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
     const associatedTokenProgramId = "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL";
@@ -1755,6 +1759,10 @@ test("deposit transaction API prepares and broadcasts through the authenticated 
     ]);
     const transferCheckedData = Buffer.alloc(10);
     transferCheckedData[0] = 12;
+    transferCheckedData[9] = 8;
+    for (let index = 0; index < 8; index += 1) {
+        transferCheckedData[index + 1] = Number((100000000n >> BigInt(index * 8)) & 0xffn);
+    }
     const transactionMessage = Buffer.concat([
         Buffer.from([1, 0, 6]),
         shortVec(10),
@@ -1779,6 +1787,30 @@ test("deposit transaction API prepares and broadcasts through the authenticated 
         Buffer.alloc(64),
         transactionMessage
     ]).toString("base64");
+    const diagnosticMessage = Buffer.concat([
+        Buffer.from([1, 0, 6]),
+        shortVec(10),
+        Buffer.from(decodeWalletBytes(linkedWallet)),
+        Buffer.alloc(32, 4),
+        Buffer.from(decodeWalletBytes(linkedWallet)),
+        Buffer.from(decodeWalletBytes("11111111111111111111111111111111")),
+        Buffer.from(decodeWalletBytes(tokenProgramId)),
+        Buffer.from(decodeWalletBytes(associatedTokenProgramId)),
+        sourceAccountKey,
+        Buffer.from(decodeWalletBytes(mintAddress)),
+        treasuryAccountKey,
+        Buffer.from(decodeWalletBytes(memoProgramId)),
+        Buffer.alloc(32, 10),
+        shortVec(3),
+        compiledInstruction(5, [0, 6, 2, 7, 3, 4], [1]),
+        compiledInstruction(4, [6, 7, 8, 0], transferCheckedData),
+        compiledInstruction(9, [0], Buffer.from("RelicGrid read-only preflight"))
+    ]);
+    const unsignedDiagnosticTransaction = Buffer.concat([
+        shortVec(1),
+        Buffer.alloc(64),
+        diagnosticMessage
+    ]).toString("base64");
     const originalFetch = globalThis.fetch;
     globalThis.fetch = async (url, options = {}) => {
         const target = String(url);
@@ -1801,6 +1833,7 @@ test("deposit transaction API prepares and broadcasts through the authenticated 
             return new Response(JSON.stringify([{ wallet_address: linkedWallet }]), { status: 200 });
         }
         if (target.includes("/rest/v1/wallet_payment_intents")) {
+            paymentIntentReadCount += 1;
             return new Response(JSON.stringify([{
                 id: paymentIntentId,
                 player_id: "test-player",
@@ -1840,10 +1873,12 @@ test("deposit transaction API prepares and broadcasts through the authenticated 
                         lastValidBlockHeight: 123
                     }
                 },
-                getBalance: 920000,
+                getBalance: { context: { slot: 456 }, value: 920000 },
                 getMinimumBalanceForRentExemption: 2039280,
                 getFeeForMessage: { context: { slot: 456 }, value: 80000 },
-                getAccountInfo: {
+                getAccountInfo: call.params[0] === sourceAccountAddress && missingDiagnosticSource
+                    ? { value: null }
+                    : {
                     value: {
                         owner: tokenProgramId,
                         data: {
@@ -1860,6 +1895,7 @@ test("deposit transaction API prepares and broadcasts through the authenticated 
                         }
                     }
                 },
+                simulateTransaction: { value: diagnosticSimulation },
                 getSlot: 456,
                 sendTransaction: signature
             };
@@ -1899,6 +1935,66 @@ test("deposit transaction API prepares and broadcasts through the authenticated 
         ]);
         assert.equal(rpcCalls.at(-1).params[0].commitment, "confirmed");
         assert.equal("contextSlot" in prepared.payload, false);
+
+        const previousDirectTreasuryReady = process.env.WALLET_DIRECT_TREASURY_READY;
+        const previousDepositsEnabled = process.env.WALLET_DEPOSITS_ENABLED;
+        const previousMainnetEnabled = process.env.WALLET_MAINNET_DEPOSITS_ENABLED;
+        process.env.WALLET_DIRECT_TREASURY_READY = "false";
+        process.env.WALLET_DEPOSITS_ENABLED = "false";
+        process.env.WALLET_MAINNET_DEPOSITS_ENABLED = "false";
+        const intentReadsBeforeDiagnostic = paymentIntentReadCount;
+        const rpcCallsBeforeDiagnostic = rpcCalls.length;
+        missingDiagnosticSource = true;
+        const diagnosticPreparation = await invoke({ action: "prepare-diagnostic" });
+        assert.equal(diagnosticPreparation.statusCode, 200);
+        const readOnlyDiagnostic = await invoke({
+            action: "diagnose",
+            amountRaw: "100000000",
+            transaction: unsignedDiagnosticTransaction
+        });
+        assert.equal(readOnlyDiagnostic.statusCode, 200);
+        assert.equal(readOnlyDiagnostic.payload.payerLamports, 920000);
+        assert.equal(readOnlyDiagnostic.payload.transactionFeeLamports, 80000);
+        assert.equal(readOnlyDiagnostic.payload.requiredRentLamports, 2039280);
+        assert.equal(readOnlyDiagnostic.payload.requiredTotalLamports, 2119280);
+        assert.equal(readOnlyDiagnostic.payload.payerBalanceCoversFeeAndRent, false);
+        assert.equal(readOnlyDiagnostic.payload.sourceTokenAccountExists, false);
+        assert.equal(readOnlyDiagnostic.payload.treasuryTokenAccountExists, true);
+        assert.equal(readOnlyDiagnostic.payload.simulationPassed, true);
+        const diagnosticRpcCalls = rpcCalls.slice(rpcCallsBeforeDiagnostic);
+        assert.equal(diagnosticRpcCalls.some((call) => call.method === "sendTransaction"), false);
+        assert.deepEqual(diagnosticRpcCalls.at(-1).params[1], {
+            encoding: "base64",
+            commitment: "confirmed",
+            sigVerify: false,
+            replaceRecentBlockhash: true
+        });
+        assert.equal(paymentIntentReadCount, intentReadsBeforeDiagnostic);
+
+        diagnosticSimulation = {
+            err: { InstructionError: [0, { Custom: 1 }] },
+            logs: [
+                "Program MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr failed: custom program error: 0x1",
+                "Program log: account 11111111111111111111111111111113 failed"
+            ],
+            unitsConsumed: 1234
+        };
+        const simulatedFailure = await invoke({
+            action: "diagnose",
+            amountRaw: "100000000",
+            transaction: unsignedDiagnosticTransaction
+        });
+        assert.equal(simulatedFailure.statusCode, 200);
+        assert.equal(simulatedFailure.payload.simulationPassed, false);
+        assert.equal(simulatedFailure.payload.failedInstructionIndex, 0);
+        assert.equal(simulatedFailure.payload.failedInstructionRole, "associated_token_account_create");
+        assert.match(simulatedFailure.payload.simulationError, /InstructionError/);
+        assert.match(simulatedFailure.payload.simulationLogs[0], /\[memo-program\]/);
+        assert.match(simulatedFailure.payload.simulationLogs[1], /\[redacted-address\]/);
+        process.env.WALLET_DIRECT_TREASURY_READY = previousDirectTreasuryReady;
+        process.env.WALLET_DEPOSITS_ENABLED = previousDepositsEnabled;
+        process.env.WALLET_MAINNET_DEPOSITS_ENABLED = previousMainnetEnabled;
+        missingDiagnosticSource = false;
 
         const broadcast = await invoke({
             action: "broadcast",

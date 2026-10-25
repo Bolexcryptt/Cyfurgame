@@ -84,6 +84,7 @@ function inspectLegacyTransaction(transaction) {
     let offset = 3;
     const keyCount = readShortVec(message, offset);
     if (!keyCount) return null;
+    const requiredSignatureCount = message[0];
     offset = keyCount.offset;
     const accountKeys = [];
     for (let index = 0; index < keyCount.value; index += 1) {
@@ -101,6 +102,7 @@ function inspectLegacyTransaction(transaction) {
     let associatedTokenAccountCreateCount = 0;
     let sourceTokenAccount;
     let treasuryTokenAccount;
+    const instructions = [];
 
     for (let index = 0; index < instructionCount.value; index += 1) {
         if (offset >= message.length) return null;
@@ -122,29 +124,269 @@ function inspectLegacyTransaction(transaction) {
 
         const programId = encodeBase58(accountKeys[programIndex]);
         if (programId === "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL" &&
+            data.length === 1 &&
             (data[0] === 0 || data[0] === 1)) {
             instructionRoles.push("associated_token_account_create");
             associatedTokenAccountCreateCount += 1;
-        } else if (programId === "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA" &&
-            data[0] === 12) {
+            instructions.push({
+                type: "associated_token_account_create",
+                payer: accountIndexes.length === 6 ? encodeBase58(accountKeys[accountIndexes[0]]) : null,
+                account: accountIndexes.length === 6 ? encodeBase58(accountKeys[accountIndexes[1]]) : null,
+                owner: accountIndexes.length === 6 ? encodeBase58(accountKeys[accountIndexes[2]]) : null,
+                mint: accountIndexes.length === 6 ? encodeBase58(accountKeys[accountIndexes[3]]) : null,
+                tokenProgramId: accountIndexes.length === 6 ? encodeBase58(accountKeys[accountIndexes[5]]) : null
+            });
+        } else if (TOKEN_PROGRAM_IDS.has(programId) &&
+            data[0] === 12 && data.length === 10) {
             instructionRoles.push("spl_token_transfer_checked");
             if (accountIndexes.length >= 3) {
                 sourceTokenAccount = encodeBase58(accountKeys[accountIndexes[0]]);
                 treasuryTokenAccount = encodeBase58(accountKeys[accountIndexes[2]]);
             }
+            instructions.push({
+                type: "spl_token_transfer_checked",
+                programId,
+                source: accountIndexes.length === 4 ? encodeBase58(accountKeys[accountIndexes[0]]) : null,
+                mint: accountIndexes.length === 4 ? encodeBase58(accountKeys[accountIndexes[1]]) : null,
+                destination: accountIndexes.length === 4 ? encodeBase58(accountKeys[accountIndexes[2]]) : null,
+                authority: accountIndexes.length === 4 ? encodeBase58(accountKeys[accountIndexes[3]]) : null,
+                amountRaw: data.length === 10
+                    ? data.subarray(1, 9).reduceRight((amount, byte) => amount * 256n + BigInt(byte), 0n).toString()
+                    : null,
+                decimals: data.length === 10 ? data[9] : null
+            });
         } else if (programId === "MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr") {
             instructionRoles.push("memo");
+            instructions.push({
+                type: "memo",
+                signers: [...accountIndexes].map((accountIndex) => encodeBase58(accountKeys[accountIndex]))
+            });
         } else {
             instructionRoles.push("other");
+            instructions.push({ type: "other" });
         }
     }
+    if (offset !== message.length) return null;
 
     return {
         message,
+        signatureCount: signatureCount.value,
+        requiredSignatureCount,
+        signaturesAreZero: transaction
+            .subarray(signatureCount.offset, messageOffset)
+            .every((byte) => byte === 0),
+        payer: accountKeys.length ? encodeBase58(accountKeys[0]) : null,
         instructionRoles,
         associatedTokenAccountCreateCount,
         sourceTokenAccount,
-        treasuryTokenAccount
+        treasuryTokenAccount,
+        instructions
+    };
+}
+
+function validateUnsignedDiagnosticTransaction({
+    transaction,
+    payer,
+    mint,
+    tokenProgramId,
+    treasury,
+    amountRaw,
+    tokenDecimals
+}) {
+    const inspected = inspectLegacyTransaction(transaction);
+    if (!inspected ||
+        inspected.signatureCount !== 1 ||
+        inspected.requiredSignatureCount !== 1 ||
+        !inspected.signaturesAreZero ||
+        inspected.payer !== payer) {
+        return null;
+    }
+    const transfers = inspected.instructions.filter((item) =>
+        item.type === "spl_token_transfer_checked"
+    );
+    const creates = inspected.instructions.filter((item) =>
+        item.type === "associated_token_account_create"
+    );
+    const memos = inspected.instructions.filter((item) => item.type === "memo");
+    if (inspected.instructions.some((item) => item.type === "other") ||
+        transfers.length !== 1 ||
+        memos.length !== 1 ||
+        creates.length > 2) {
+        return null;
+    }
+    const transfer = transfers[0];
+    if (transfer.programId !== tokenProgramId ||
+        transfer.source !== inspected.sourceTokenAccount ||
+        transfer.destination !== inspected.treasuryTokenAccount ||
+        transfer.mint !== mint ||
+        transfer.authority !== payer ||
+        transfer.amountRaw !== amountRaw ||
+        transfer.decimals !== tokenDecimals ||
+        memos[0].signers.length !== 1 ||
+        memos[0].signers[0] !== payer) {
+        return null;
+    }
+    const createdAccounts = new Set();
+    for (const create of creates) {
+        if (create.payer !== payer ||
+            create.mint !== mint ||
+            create.tokenProgramId !== tokenProgramId ||
+            ![transfer.source, transfer.destination].includes(create.account) ||
+            ![payer, treasury].includes(create.owner) ||
+            createdAccounts.has(create.account)) {
+            return null;
+        }
+        if ((create.account === transfer.source && create.owner !== payer) ||
+            (create.account === transfer.destination && create.owner !== treasury)) {
+            return null;
+        }
+        createdAccounts.add(create.account);
+    }
+    return inspected;
+}
+
+async function runReadOnlyFundingDiagnostic({
+    transaction,
+    payer,
+    treasury,
+    mint,
+    tokenProgramId,
+    tokenDecimals,
+    amountRaw,
+    rpcUrl,
+    network
+}) {
+    const inspected = validateUnsignedDiagnosticTransaction({
+        transaction,
+        payer,
+        treasury,
+        mint,
+        tokenProgramId,
+        tokenDecimals,
+        amountRaw
+    });
+    if (!inspected) {
+        const error = new Error("The read-only diagnostic transaction did not match the linked wallet and configured CYFUR transfer.");
+        error.status = 400;
+        throw error;
+    }
+    const genesisHash = await solanaRpc(rpcUrl, "getGenesisHash", []);
+    if (genesisHash !== GENESIS_HASHES[network]) {
+        const error = new Error("Configured Solana RPC is connected to a different network.");
+        error.status = 503;
+        throw error;
+    }
+
+    const accountRequests = [
+        ["source", inspected.sourceTokenAccount],
+        ["treasury", inspected.treasuryTokenAccount]
+    ];
+    const rentRequest = tokenProgramId === "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        ? solanaRpc(rpcUrl, "getMinimumBalanceForRentExemption", [
+            165,
+            { commitment: "confirmed" }
+        ])
+        : Promise.resolve(null);
+    const requests = [
+        solanaRpc(rpcUrl, "getBalance", [payer, { commitment: "confirmed" }]),
+        rentRequest,
+        solanaRpc(rpcUrl, "getFeeForMessage", [
+            inspected.message.toString("base64"),
+            { commitment: "confirmed" }
+        ]),
+        ...accountRequests.map(([, address]) => solanaRpc(rpcUrl, "getAccountInfo", [
+            address,
+            { commitment: "confirmed", encoding: "jsonParsed" }
+        ])),
+        solanaRpc(rpcUrl, "simulateTransaction", [
+            transaction.toString("base64"),
+            {
+                encoding: "base64",
+                commitment: "confirmed",
+                sigVerify: false,
+                replaceRecentBlockhash: true
+            }
+        ])
+    ];
+    const [balance, rent, fee, source, treasuryAccount, simulation] = await Promise.all(requests);
+    if (!source || !Object.prototype.hasOwnProperty.call(source, "value") ||
+        !treasuryAccount || !Object.prototype.hasOwnProperty.call(treasuryAccount, "value")) {
+        throw new Error("The configured Solana RPC returned an invalid token-account response.");
+    }
+    const payerLamports = Number.isSafeInteger(balance?.value) && balance.value >= 0
+        ? balance.value
+        : null;
+    const rentLamports = Number.isSafeInteger(rent) && rent >= 0 ? rent : null;
+    const feeLamports = Number.isSafeInteger(fee?.value) && fee.value >= 0
+        ? fee.value
+        : null;
+    const sourceExists = Boolean(source?.value);
+    const treasuryExists = Boolean(treasuryAccount?.value);
+    const createInstructions = new Set(inspected.instructions
+        .filter((item) => item.type === "associated_token_account_create")
+        .map((item) => item.account));
+    const requiredRentLamports = rentLamports === null
+        ? null
+        : (sourceExists || !createInstructions.has(inspected.sourceTokenAccount) ? 0 : rentLamports) +
+            (treasuryExists || !createInstructions.has(inspected.treasuryTokenAccount) ? 0 : rentLamports);
+    const requiredTotalLamports = feeLamports === null || requiredRentLamports === null
+        ? null
+        : feeLamports + requiredRentLamports;
+    const sourceInfo = source?.value?.data?.parsed?.info;
+    const treasuryInfo = treasuryAccount?.value?.data?.parsed?.info;
+    const amountText = String(sourceInfo?.tokenAmount?.amount ?? "");
+    const sourceAmountRaw = amountText.length <= 20 && /^\d+$/.test(amountText)
+        ? amountText
+        : null;
+    const sourceAmount = sourceAmountRaw === null ? null : BigInt(sourceAmountRaw);
+    const expectedAmount = BigInt(amountRaw);
+    const simulationError = simulation?.value?.err ?? null;
+    if (!simulation?.value || typeof simulation.value !== "object") {
+        throw new Error("The configured Solana RPC returned an invalid simulation response.");
+    }
+    const sanitizedSimulation = sanitizeRpcErrorData({
+        logs: simulation.value.logs,
+        unitsConsumed: simulation.value.unitsConsumed
+    });
+    const instructionFailure = Array.isArray(simulationError?.InstructionError) &&
+        Number.isSafeInteger(simulationError.InstructionError[0])
+        ? simulationError.InstructionError[0]
+        : null;
+
+    return {
+        network,
+        payerLamports,
+        transactionFeeLamports: feeLamports,
+        tokenAccountRentLamports: rentLamports,
+        requiredRentLamports,
+        requiredTotalLamports,
+        payerBalanceCoversFeeAndRent: payerLamports === null || requiredTotalLamports === null
+            ? null
+            : payerLamports >= requiredTotalLamports,
+        sourceTokenAccountExists: sourceExists,
+        sourceTokenAccountOwnerMatchesPayer: sourceInfo?.owner === payer,
+        sourceTokenAccountMintMatchesConfiguredMint: sourceInfo?.mint === mint,
+        sourceTokenAccountProgramMatchesConfig: source?.value?.owner === tokenProgramId,
+        sourceTokenAmountRaw: sourceAmountRaw,
+        sourceTokenAmountCoversTransfer: sourceAmount === null
+            ? null
+            : sourceAmount >= expectedAmount,
+        treasuryTokenAccountExists: treasuryExists,
+        treasuryTokenAccountOwnerMatchesTreasury: treasuryInfo?.owner === treasury,
+        treasuryTokenAccountMintMatchesConfiguredMint: treasuryInfo?.mint === mint,
+        treasuryTokenAccountProgramMatchesConfig: treasuryAccount?.value?.owner === tokenProgramId,
+        instructionRoles: inspected.instructionRoles,
+        failedInstructionIndex: instructionFailure,
+        failedInstructionRole: instructionFailure === null
+            ? null
+            : inspected.instructionRoles[instructionFailure] ?? "unknown",
+        simulationPassed: Object.prototype.hasOwnProperty.call(simulation.value, "err") &&
+            simulationError === null,
+        simulationError: simulationError === null
+            ? null
+            : sanitizeRpcErrorData({ err: simulationError })?.err ?? "Unknown simulation error",
+        simulationLogs: sanitizedSimulation?.logs ?? [],
+        simulationUnitsConsumed: sanitizedSimulation?.unitsConsumed ?? null
     };
 }
 
@@ -172,7 +414,9 @@ async function logSimulationFundingDiagnostics({
     };
     const requests = [
         diagnosticRpc("getBalance", [payer, { commitment: "confirmed" }]),
-        diagnosticRpc("getMinimumBalanceForRentExemption", [165, { commitment: "confirmed" }]),
+        tokenProgramId === "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+            ? diagnosticRpc("getMinimumBalanceForRentExemption", [165, { commitment: "confirmed" }])
+            : Promise.resolve(null),
         diagnosticRpc("getFeeForMessage", [
             inspected?.message.toString("base64") ?? "",
             { commitment: "confirmed" }
@@ -191,7 +435,9 @@ async function logSimulationFundingDiagnostics({
             : Promise.resolve(null)
     ];
     const [balance, rent, fee, source, treasury] = await Promise.all(requests);
-    const payerLamports = Number.isSafeInteger(balance) && balance >= 0 ? balance : null;
+    const payerLamports = Number.isSafeInteger(balance?.value) && balance.value >= 0
+        ? balance.value
+        : null;
     const rentLamports = Number.isSafeInteger(rent) && rent >= 0 ? rent : null;
     const feeLamports = Number.isSafeInteger(fee?.value) && fee.value >= 0
         ? fee.value
@@ -257,6 +503,8 @@ module.exports = async function depositTransaction(request, response) {
         stage = "authentication";
         const user = await authenticate(request);
         if (!user) return sendJson(response, 401, { error: "authentication_required" });
+        const action = request.body?.action;
+        const readOnlyAction = action === "diagnose" || action === "prepare-diagnostic";
 
         const missing = [
             "SUPABASE_SERVICE_ROLE_KEY",
@@ -270,15 +518,16 @@ module.exports = async function depositTransaction(request, response) {
                 `Deposit preparation is disabled. Configure server-only ${missing.join(", ")}.`
             );
         }
-        if (process.env.WALLET_DIRECT_TREASURY_READY !== "true") {
+        if (!readOnlyAction && process.env.WALLET_DIRECT_TREASURY_READY !== "true") {
             return notReady(response, "direct_treasury_not_ready", "Direct treasury deposits are not approved.");
         }
         const network = process.env.SOLANA_NETWORK;
-        if (process.env.WALLET_DEPOSITS_ENABLED !== "true" ||
+        if ((!readOnlyAction && process.env.WALLET_DEPOSITS_ENABLED !== "true") ||
             !["devnet", "mainnet-beta"].includes(network)) {
             return notReady(response, "deposits_disabled", "Deposit preparation is disabled by server configuration.");
         }
-        if (network === "mainnet-beta" && process.env.WALLET_MAINNET_DEPOSITS_ENABLED !== "true") {
+        if (!readOnlyAction && network === "mainnet-beta" &&
+            process.env.WALLET_MAINNET_DEPOSITS_ENABLED !== "true") {
             return notReady(response, "mainnet_deposits_disabled", "Mainnet deposits are not enabled.");
         }
 
@@ -289,7 +538,8 @@ module.exports = async function depositTransaction(request, response) {
         ]);
         const config = configs[0];
         const linkedWallet = linkedWallets[0]?.wallet_address;
-        if (!config || config.deposits_enabled !== true || config.network !== network ||
+        if (!config || (!readOnlyAction && config.deposits_enabled !== true) ||
+            config.network !== network ||
             !isBase58(config.official_mint_address, 32) ||
             !TOKEN_PROGRAM_IDS.has(config.token_program_id) ||
             !Number.isInteger(config.token_decimals) ||
@@ -306,8 +556,33 @@ module.exports = async function depositTransaction(request, response) {
             });
         }
 
-        const action = request.body?.action;
-        if (action === "prepare") {
+        if (action === "diagnose") {
+            stage = "diagnostic_payload_validation";
+            const transaction = decodeSignedTransaction(request.body?.transaction);
+            const amountRaw = request.body?.amountRaw;
+            if (!transaction ||
+                typeof amountRaw !== "string" ||
+                !/^[1-9]\d*$/.test(amountRaw) ||
+                amountRaw.length > 20 ||
+                BigInt(amountRaw) > 18446744073709551615n) {
+                return sendJson(response, 400, { error: "invalid_diagnostic_transaction" });
+            }
+            stage = "diagnostic_rpc";
+            const diagnostic = await runReadOnlyFundingDiagnostic({
+                transaction,
+                payer: linkedWallet,
+                treasury: config.treasury_address,
+                mint: config.official_mint_address,
+                tokenProgramId: config.token_program_id,
+                tokenDecimals: config.token_decimals,
+                amountRaw,
+                rpcUrl: process.env.SOLANA_RPC_URL,
+                network
+            });
+            return sendJson(response, 200, diagnostic);
+        }
+
+        if (action === "prepare" || action === "prepare-diagnostic") {
             stage = "prepare_rpc";
             const [genesisHash, senderAccounts, treasuryAccounts] = await Promise.all([
                 solanaRpc(process.env.SOLANA_RPC_URL, "getGenesisHash", []),
@@ -450,6 +725,15 @@ module.exports = async function depositTransaction(request, response) {
 
         return sendJson(response, 400, { error: "invalid_action" });
     } catch (error) {
+        if (error.status === 400) {
+            return sendJson(response, 400, {
+                error: "invalid_diagnostic_transaction",
+                message: error.message
+            });
+        }
+        if (error.status === 503 && stage === "diagnostic_rpc") {
+            return notReady(response, "solana_rpc_network_mismatch", error.message);
+        }
         const blockhashExpired = error.rpcCode === -32002 &&
             /blockhash not found/i.test(error.rpcMessage ?? "");
         console.error("Deposit transaction request failed.", {

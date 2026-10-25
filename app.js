@@ -645,12 +645,14 @@ async function refreshWallet() {
     const balanceRefreshButton = document.getElementById("wallet-balance-refresh");
     const amountInput = document.getElementById("wallet-transfer-amount");
     const transferButton = document.getElementById("wallet-transfer-button");
+    const diagnosticButton = document.getElementById("wallet-preflight-button");
     walletStatusSnapshot = null;
     refreshButton.disabled = true;
     refreshButton.textContent = "LOADING";
     balanceRefreshButton.disabled = true;
     balanceRefreshButton.textContent = "CHECKING BALANCE…";
     transferButton.disabled = true;
+    diagnosticButton.disabled = true;
     copyButton.disabled = true;
     address.textContent = "Not configured";
     status.textContent = "DISABLED";
@@ -713,8 +715,14 @@ async function refreshWallet() {
             Boolean(result.officialMintAddress) &&
             Boolean(result.tokenProgramId) &&
             Number.isInteger(result.tokenDecimals);
-        amountInput.disabled = !depositReady;
+        const diagnosticReady = Boolean(result.linkedWalletAddress) &&
+            Boolean(result.officialMintAddress) &&
+            Boolean(result.tokenProgramId) &&
+            Number.isInteger(result.tokenDecimals) &&
+            Boolean(result.network);
+        amountInput.disabled = !diagnosticReady;
         transferButton.disabled = !depositReady;
+        diagnosticButton.disabled = !diagnosticReady;
         signatureInput.disabled = result.depositsEnabled !== true || !result.linkedWalletAddress;
         intentInput.disabled = signatureInput.disabled;
         signatureSubmit.disabled = result.depositsEnabled !== true || !result.linkedWalletAddress;
@@ -873,6 +881,102 @@ function buildCyfurDepositTransaction({
         feePayer: payer,
         recentBlockhash: preparation.blockhash
     }).add(...instructions);
+}
+
+function formatLamportsAsSol(lamports) {
+    if (!Number.isSafeInteger(lamports) || lamports < 0) return "unavailable";
+    const value = BigInt(lamports);
+    const whole = value / 1_000_000_000n;
+    const fraction = (value % 1_000_000_000n).toString().padStart(9, "0");
+    return `${whole}.${fraction}`.replace(/\.?0+$/, "");
+}
+
+function formatRawTokenAmount(amountRaw, decimals) {
+    if (typeof amountRaw !== "string" || !/^\d+$/.test(amountRaw)) return "unavailable";
+    const scale = 10n ** BigInt(decimals);
+    const value = BigInt(amountRaw);
+    const whole = value / scale;
+    const fraction = (value % scale).toString().padStart(decimals, "0").replace(/0+$/, "");
+    return fraction ? `${whole}.${fraction}` : whole.toString();
+}
+
+function renderFundingDiagnostic(result, tokenDecimals) {
+    const sourceAmountCoverage = result.sourceTokenAmountCoversTransfer === null
+        ? "unknown"
+        : result.sourceTokenAmountCoversTransfer ? "yes" : "no";
+    const lines = [
+        `SOL balance: ${formatLamportsAsSol(result.payerLamports)} SOL`,
+        `Estimated transaction fee: ${formatLamportsAsSol(result.transactionFeeLamports)} SOL`,
+        `Source CYFUR account: ${result.sourceTokenAccountExists ? "exists" : "missing"}; balance ${formatRawTokenAmount(result.sourceTokenAmountRaw, tokenDecimals)} CYFUR; enough for transfer: ${sourceAmountCoverage}`,
+        `Source account checks — wallet owner: ${result.sourceTokenAccountOwnerMatchesPayer ? "yes" : "no"}; CYFUR mint: ${result.sourceTokenAccountMintMatchesConfiguredMint ? "yes" : "no"}; token program: ${result.sourceTokenAccountProgramMatchesConfig ? "yes" : "no"}`,
+        `Treasury CYFUR account: ${result.treasuryTokenAccountExists ? "exists" : "missing"}`,
+        `Treasury account checks — treasury owner: ${result.treasuryTokenAccountOwnerMatchesTreasury ? "yes" : "no"}; CYFUR mint: ${result.treasuryTokenAccountMintMatchesConfiguredMint ? "yes" : "no"}; token program: ${result.treasuryTokenAccountProgramMatchesConfig ? "yes" : "no"}`,
+        `ATA rent-exempt minimum: ${formatLamportsAsSol(result.tokenAccountRentLamports)} SOL per account`,
+        `Required ATA rent: ${formatLamportsAsSol(result.requiredRentLamports)} SOL`,
+        `Fee plus required rent: ${formatLamportsAsSol(result.requiredTotalLamports)} SOL`,
+        `Wallet covers fee plus required rent: ${result.payerBalanceCoversFeeAndRent === null ? "unknown" : result.payerBalanceCoversFeeAndRent ? "yes" : "no"}`,
+        `Simulation: ${result.simulationPassed ? "passed" : "failed"}`,
+        `Failing instruction: ${result.failedInstructionIndex === null ? "none identified" : `#${result.failedInstructionIndex} (${result.failedInstructionRole || "unknown"})`}`,
+        `Failed instruction/program error: ${result.simulationError || "none"}`
+    ];
+    if (Array.isArray(result.simulationLogs) && result.simulationLogs.length > 0) {
+        lines.push("Sanitized simulation logs:", ...result.simulationLogs);
+    }
+    if (Number.isSafeInteger(result.simulationUnitsConsumed)) {
+        lines.push(`Compute units: ${result.simulationUnitsConsumed}`);
+    }
+    return lines.join("\n");
+}
+
+async function diagnoseCyfurDeposit() {
+    const output = document.getElementById("wallet-preflight-results");
+    const button = document.getElementById("wallet-preflight-button");
+    const amountInput = document.getElementById("wallet-transfer-amount");
+    const config = walletStatusSnapshot;
+    try {
+        if (!config?.linkedWalletAddress || !config.officialMintAddress ||
+            !config.tokenProgramId || !Number.isInteger(config.tokenDecimals)) {
+            throw new Error("The server has not provided the linked wallet and CYFUR configuration needed for a diagnostic.");
+        }
+        const connectedWallet = getConnectedPhantomWallet(window);
+        if (!connectedWallet ||
+            connectedWallet.publicKey !== config.linkedWalletAddress) {
+            throw new Error("Connect Phantom to the wallet linked to this game account before running the read-only diagnostic.");
+        }
+        const rawAmount = parseTokenAmount(amountInput.value, config.tokenDecimals);
+        const { PublicKey, Transaction, TransactionInstruction } =
+            await loadSolanaWeb3();
+        const preparation = await requestDepositTransaction("prepare-diagnostic");
+        const transaction = buildCyfurDepositTransaction({
+            preparation,
+            config,
+            payer: new PublicKey(config.linkedWalletAddress),
+            rawAmount,
+            paymentIntentMemo: "RelicGrid read-only preflight",
+            PublicKey,
+            Transaction,
+            TransactionInstruction
+        });
+        const transactionBytes = transaction.serialize({
+            requireAllSignatures: false,
+            verifySignatures: false
+        });
+        const result = await requestDepositTransaction("diagnose", {
+            amountRaw: rawAmount.toString(),
+            transaction: bytesToWalletBase64(transactionBytes)
+        });
+        output.textContent = renderFundingDiagnostic(result, config.tokenDecimals);
+        output.hidden = false;
+    } catch (error) {
+        output.textContent = `Read-only diagnostic could not complete: ${error.message}`;
+        output.hidden = false;
+    } finally {
+        button.disabled = !walletStatusSnapshot?.linkedWalletAddress ||
+            !walletStatusSnapshot?.officialMintAddress ||
+            !walletStatusSnapshot?.tokenProgramId ||
+            !Number.isInteger(walletStatusSnapshot?.tokenDecimals) ||
+            !walletStatusSnapshot?.network;
+    }
 }
 
 async function sendCyfurDeposit() {
@@ -1658,6 +1762,14 @@ document.getElementById("fund-account-button").addEventListener("click", () => {
 document.getElementById("wallet-transfer-form").addEventListener("submit", (event) => {
     event.preventDefault();
     void sendCyfurDeposit();
+});
+document.getElementById("wallet-preflight-button").addEventListener("click", () => {
+    const button = document.getElementById("wallet-preflight-button");
+    button.disabled = true;
+    document.getElementById("wallet-preflight-results").textContent =
+        "Checking the connected wallet through read-only Solana RPC calls. No transaction will be signed or broadcast.";
+    document.getElementById("wallet-preflight-results").hidden = false;
+    void diagnoseCyfurDeposit();
 });
 document.getElementById("wallet-copy-address").addEventListener("click", async () => {
     const address = document.getElementById("wallet-address").textContent.trim();
