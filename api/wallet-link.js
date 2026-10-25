@@ -6,7 +6,11 @@ const {
     serviceRequest,
     sendJson
 } = require("../server/lib/wallet");
-const { isBase58 } = require("../server/lib/solana-deposit");
+const {
+    GENESIS_HASHES,
+    isBase58,
+    solanaRpc
+} = require("../server/lib/solana-deposit");
 const { verifyWalletSignature } = require("../server/lib/solana-wallet-link");
 
 module.exports = async function walletLink(request, response) {
@@ -71,6 +75,35 @@ module.exports = async function walletLink(request, response) {
         }
         if (!verifyWalletSignature(walletAddress, challenge.challenge, signature)) {
             return sendJson(response, 422, { error: "wallet_signature_invalid" });
+        }
+        const network = process.env.SOLANA_NETWORK;
+        const rpcUrl = process.env.SOLANA_RPC_URL?.trim();
+        if (!rpcUrl || !Object.prototype.hasOwnProperty.call(GENESIS_HASHES, network)) {
+            return sendJson(response, 503, {
+                error: "solana_wallet_validation_unavailable",
+                message: "The configured Solana network is not available to validate this wallet for transaction fees."
+            });
+        }
+        const genesisHash = await solanaRpc(rpcUrl, "getGenesisHash", []);
+        if (genesisHash !== GENESIS_HASHES[network]) {
+            return sendJson(response, 503, {
+                error: "solana_rpc_network_mismatch",
+                message: "The configured Solana RPC is connected to a different network. The wallet was not linked."
+            });
+        }
+        const accountInfo = await solanaRpc(rpcUrl, "getAccountInfo", [
+            walletAddress,
+            { commitment: "confirmed", encoding: "base64" }
+        ]);
+        if (!accountInfo || !Object.prototype.hasOwnProperty.call(accountInfo, "value")) {
+            throw new Error("The configured Solana RPC returned an invalid wallet account response.");
+        }
+        if (accountInfo.value &&
+            accountInfo.value.owner !== "11111111111111111111111111111111") {
+            return sendJson(response, 409, {
+                error: "wallet_not_valid_fee_payer",
+                message: "This wallet account is not owned by the Solana System Program and cannot pay RelicGrid transaction fees. Link a standard System Program-owned wallet instead."
+            });
         }
         await serviceRequest("rpc/link_player_solana_wallet", {
             method: "POST",

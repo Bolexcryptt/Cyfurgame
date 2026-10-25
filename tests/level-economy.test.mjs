@@ -15,6 +15,7 @@ import {
     getFeePayerPreflightError,
     getPhantomProvider,
     getSolFundingStatus,
+    isLinkedPhantomWallet,
     isMobileBrowser,
     readPhantomMobileCallback,
     rebuildMobileDepositAfterBlockhashRejection,
@@ -316,6 +317,14 @@ test("fee-payer preflight rejects a missing, non-system, or mismatched payer acc
         payerBalanceQueryMatchesFeePayer: false
     }), /does not match/i);
     assert.match(getFeePayerPreflightError({}), /does not match/i);
+});
+
+test("deposit flow requires the connected Phantom key to match the server-linked wallet", () => {
+    const linkedAddress = "GsDBmSGr1sVy7YoDxzZekwQYeSxrxCUpTswwzbA81Har";
+    const wrongLinkedAddress = "FWc2DZyCf4dCwJXRavjNxssuz4ppPhd3ie1Tvb36jYs7";
+    assert.equal(isLinkedPhantomWallet({ publicKey: linkedAddress }, linkedAddress), true);
+    assert.equal(isLinkedPhantomWallet({ publicKey: linkedAddress }, wrongLinkedAddress), false);
+    assert.equal(isLinkedPhantomWallet(null, linkedAddress), false);
 });
 
 test("blockhash retry does not retry non-blockhash or repeated broadcast failures", async () => {
@@ -740,23 +749,45 @@ test("wallet ownership proof verifies Ed25519 signatures and rejects altered mes
     assert.equal(verifyWalletSignature(walletAddress, challenge, "invalid"), false);
 });
 
-test("wallet-link API issues a challenge and links only after a valid player signature", async () => {
-    const envNames = ["SUPABASE_URL", "SUPABASE_PUBLISHABLE_KEY", "SUPABASE_SERVICE_ROLE_KEY"];
+test("wallet-link API validates the configured cluster and fee-payer account before linking", async () => {
+    const envNames = [
+        "SUPABASE_URL",
+        "SUPABASE_PUBLISHABLE_KEY",
+        "SUPABASE_SERVICE_ROLE_KEY",
+        "SOLANA_RPC_URL",
+        "SOLANA_NETWORK"
+    ];
     const previous = Object.fromEntries(envNames.map((name) => [name, process.env[name]]));
     Object.assign(process.env, {
         SUPABASE_URL: "https://example.supabase.co",
         SUPABASE_PUBLISHABLE_KEY: "public-test-key",
-        SUPABASE_SERVICE_ROLE_KEY: "server-only-test-key"
+        SUPABASE_SERVICE_ROLE_KEY: "server-only-test-key",
+        SOLANA_RPC_URL: "https://mainnet.example/rpc",
+        SOLANA_NETWORK: "mainnet-beta"
     });
     const { publicKey, privateKey } = generateKeyPairSync("ed25519");
     const walletAddress = encodeBase58(publicKey.export({ format: "der", type: "spki" }).subarray(-32));
+    const existingWrappedSolAccount = "FWc2DZyCf4dCwJXRavjNxssuz4ppPhd3ie1Tvb36jYs7";
     const originalFetch = globalThis.fetch;
     let storedChallenge;
-    let linkedWallet;
+    let linkedWallet = existingWrappedSolAccount;
+    let accountOwner = "11111111111111111111111111111111";
+    let rpcGenesisHash = "5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d";
+    const rpcCalls = [];
     globalThis.fetch = async (url, options = {}) => {
         const target = String(url);
         if (target.includes("/auth/v1/user")) {
             return new Response(JSON.stringify({ id: "test-player" }), { status: 200 });
+        }
+        if (target === process.env.SOLANA_RPC_URL) {
+            const call = JSON.parse(options.body);
+            rpcCalls.push(call);
+            const result = call.method === "getGenesisHash"
+                ? rpcGenesisHash
+                : call.method === "getAccountInfo"
+                    ? { value: { owner: accountOwner, lamports: 1000000, data: ["", "base64"] } }
+                    : null;
+            return new Response(JSON.stringify({ result }), { status: 200 });
         }
         if (target.includes("wallet_link_challenges?on_conflict=player_id")) {
             storedChallenge = JSON.parse(options.body);
@@ -794,6 +825,7 @@ test("wallet-link API issues a challenge and links only after a valid player sig
         }, challengeResponse);
         assert.equal(challengeResponse.statusCode, 200);
         assert.equal(typeof challengeResponse.payload.challenge, "string");
+        assert.equal(rpcCalls.length, 0);
 
         const signature = signMessage(
             null,
@@ -808,9 +840,66 @@ test("wallet-link API issues a challenge and links only after a valid player sig
         }, verifyResponse);
         assert.equal(verifyResponse.statusCode, 200);
         assert.deepEqual(verifyResponse.payload, { linked: true, walletAddress });
-        assert.equal(linkedWallet.p_player_id, "test-player");
         assert.equal(linkedWallet.p_wallet_address, walletAddress);
+        assert.equal(linkedWallet.p_player_id, "test-player");
         assert.equal(linkedWallet.p_challenge, challengeResponse.payload.challenge);
+        assert.deepEqual(rpcCalls.map((call) => call.method), [
+            "getGenesisHash",
+            "getAccountInfo"
+        ]);
+        assert.equal(rpcCalls[1].params[0], walletAddress);
+        assert.deepEqual(rpcCalls[1].params[1], {
+            commitment: "confirmed",
+            encoding: "base64"
+        });
+
+        rpcGenesisHash = "EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG";
+        const wrongClusterChallenge = makeResponse();
+        await endpoint({
+            method: "POST",
+            headers,
+            body: { action: "challenge", walletAddress }
+        }, wrongClusterChallenge);
+        const wrongClusterSignature = signMessage(
+            null,
+            Buffer.from(wrongClusterChallenge.payload.challenge),
+            privateKey
+        ).toString("base64");
+        const linkedWalletBeforeWrongCluster = linkedWallet;
+        const wrongClusterResponse = makeResponse();
+        await endpoint({
+            method: "POST",
+            headers,
+            body: { action: "verify", walletAddress, signature: wrongClusterSignature }
+        }, wrongClusterResponse);
+        assert.equal(wrongClusterResponse.statusCode, 503);
+        assert.equal(wrongClusterResponse.payload.error, "solana_rpc_network_mismatch");
+        assert.equal(linkedWallet, linkedWalletBeforeWrongCluster);
+
+        rpcGenesisHash = "5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d";
+        accountOwner = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
+        const rejectedChallenge = makeResponse();
+        await endpoint({
+            method: "POST",
+            headers,
+            body: { action: "challenge", walletAddress }
+        }, rejectedChallenge);
+        const rejectedSignature = signMessage(
+            null,
+            Buffer.from(rejectedChallenge.payload.challenge),
+            privateKey
+        ).toString("base64");
+        const linkCountBeforeRejectedWallet = linkedWallet;
+        const rejectedLink = makeResponse();
+        await endpoint({
+            method: "POST",
+            headers,
+            body: { action: "verify", walletAddress, signature: rejectedSignature }
+        }, rejectedLink);
+        assert.equal(rejectedLink.statusCode, 409);
+        assert.equal(rejectedLink.payload.error, "wallet_not_valid_fee_payer");
+        assert.equal(linkedWallet, linkCountBeforeRejectedWallet);
+        assert.equal(rpcCalls.at(-1).params[0], walletAddress);
     } finally {
         globalThis.fetch = originalFetch;
         for (const name of envNames) {

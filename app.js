@@ -13,6 +13,7 @@ import {
     getFeePayerPreflightError,
     getPhantomProvider,
     getSolFundingStatus,
+    isLinkedPhantomWallet,
     isMobileBrowser,
     readPhantomMobileCallback,
     rebuildMobileDepositAfterBlockhashRejection,
@@ -945,8 +946,7 @@ async function diagnoseCyfurDeposit() {
             throw new Error("The server has not provided the linked wallet and CYFUR configuration needed for a diagnostic.");
         }
         const connectedWallet = getConnectedPhantomWallet(window);
-        if (!connectedWallet ||
-            connectedWallet.publicKey !== config.linkedWalletAddress) {
+        if (!isLinkedPhantomWallet(connectedWallet, config.linkedWalletAddress)) {
             throw new Error("Connect Phantom to the wallet linked to this game account before running the read-only diagnostic.");
         }
         const rawAmount = parseTokenAmount(amountInput.value, config.tokenDecimals);
@@ -1072,8 +1072,7 @@ async function sendCyfurDeposit() {
             connectPhantom(window),
             "Phantom connection"
         );
-        if (!walletConnection ||
-            walletConnection.publicKey !== config.linkedWalletAddress ||
+        if (!isLinkedPhantomWallet(walletConnection, config.linkedWalletAddress) ||
             typeof walletConnection.provider.sendTransaction !== "function") {
             throw new Error("The connected Phantom public key must match the wallet linked to this game account. No transaction was simulated or submitted.");
         }

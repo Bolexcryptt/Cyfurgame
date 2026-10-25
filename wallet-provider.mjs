@@ -397,6 +397,14 @@ export function getConnectedPhantomWallet(walletWindow = window) {
         : null;
 }
 
+export function isLinkedPhantomWallet(walletConnection, linkedWalletAddress) {
+    return Boolean(
+        walletConnection?.publicKey &&
+        typeof linkedWalletAddress === "string" &&
+        walletConnection.publicKey === linkedWalletAddress
+    );
+}
+
 export async function signAndBroadcastWithBlockhashRetry({ prepare, build, sign, broadcast }) {
     if ([prepare, build, sign, broadcast].some((operation) => typeof operation !== "function")) {
         throw new TypeError("Blockhash retry requires prepare, build, sign, and broadcast operations.");
