@@ -908,6 +908,10 @@ function renderFundingDiagnostic(result, tokenDecimals) {
     const lines = [
         `SOL balance: ${formatLamportsAsSol(result.payerLamports)} SOL`,
         `Estimated transaction fee: ${formatLamportsAsSol(result.transactionFeeLamports)} SOL`,
+        `Fee payer account: ${result.feePayerAccountExists ? "exists" : "missing"}; owner program: ${result.feePayerOwnerProgram || "unknown"}; system-owned: ${result.feePayerSystemProgramOwned === null ? "unknown" : result.feePayerSystemProgramOwned ? "yes" : "no"}`,
+        `Fee payer matches connected Phantom: ${result.feePayerKeyMatchesConnectedPhantom === null ? "unknown" : result.feePayerKeyMatchesConnectedPhantom ? "yes" : "no"}`,
+        `Fee payer matches linked wallet: ${result.feePayerKeyMatchesLinkedWallet === null ? "unknown" : result.feePayerKeyMatchesLinkedWallet ? "yes" : "no"}`,
+        `Balance query matches fee payer: ${result.payerBalanceQueryMatchesFeePayer === null ? "unknown" : result.payerBalanceQueryMatchesFeePayer ? "yes" : "no"}`,
         `Source CYFUR account: ${result.sourceTokenAccountExists ? "exists" : "missing"}; balance ${formatRawTokenAmount(result.sourceTokenAmountRaw, tokenDecimals)} CYFUR; enough for transfer: ${sourceAmountCoverage}`,
         `Source account checks — wallet owner: ${result.sourceTokenAccountOwnerMatchesPayer ? "yes" : "no"}; CYFUR mint: ${result.sourceTokenAccountMintMatchesConfiguredMint ? "yes" : "no"}; token program: ${result.sourceTokenAccountProgramMatchesConfig ? "yes" : "no"}`,
         `Treasury CYFUR account: ${result.treasuryTokenAccountExists ? "exists" : "missing"}`,
@@ -993,9 +997,11 @@ async function requestCyfurFundingDiagnostic({
         requireAllSignatures: false,
         verifySignatures: false
     });
+    const connectedWallet = getConnectedPhantomWallet(window);
     return requestDepositTransaction("diagnose", {
         amountRaw: rawAmount.toString(),
-        transaction: bytesToWalletBase64(transactionBytes)
+        transaction: bytesToWalletBase64(transactionBytes),
+        connectedWalletPublicKey: connectedWallet?.publicKey ?? null
     });
 }
 

@@ -248,6 +248,7 @@ function validateUnsignedDiagnosticTransaction({
 async function runReadOnlyFundingDiagnostic({
     transaction,
     payer,
+    connectedWalletPublicKey,
     treasury,
     mint,
     tokenProgramId,
@@ -270,6 +271,14 @@ async function runReadOnlyFundingDiagnostic({
         error.status = 400;
         throw error;
     }
+    if (connectedWalletPublicKey !== null &&
+        connectedWalletPublicKey !== undefined &&
+        !isBase58(connectedWalletPublicKey, 32)) {
+        const error = new Error("The connected Phantom public key is invalid.");
+        error.status = 400;
+        throw error;
+    }
+    const feePayer = inspected.payer;
     const genesisHash = await solanaRpc(rpcUrl, "getGenesisHash", []);
     if (genesisHash !== GENESIS_HASHES[network]) {
         const error = new Error("Configured Solana RPC is connected to a different network.");
@@ -288,7 +297,7 @@ async function runReadOnlyFundingDiagnostic({
         ])
         : Promise.resolve(null);
     const requests = [
-        solanaRpc(rpcUrl, "getBalance", [payer, { commitment: "confirmed" }]),
+        solanaRpc(rpcUrl, "getBalance", [feePayer, { commitment: "confirmed" }]),
         rentRequest,
         solanaRpc(rpcUrl, "getFeeForMessage", [
             inspected.message.toString("base64"),
@@ -298,6 +307,10 @@ async function runReadOnlyFundingDiagnostic({
             address,
             { commitment: "confirmed", encoding: "jsonParsed" }
         ])),
+        solanaRpc(rpcUrl, "getAccountInfo", [
+            feePayer,
+            { commitment: "confirmed", encoding: "base64" }
+        ]),
         solanaRpc(rpcUrl, "simulateTransaction", [
             transaction.toString("base64"),
             {
@@ -308,9 +321,18 @@ async function runReadOnlyFundingDiagnostic({
             }
         ])
     ];
-    const [balance, rent, fee, source, treasuryAccount, simulation] = await Promise.all(requests);
+    const [
+        balance,
+        rent,
+        fee,
+        source,
+        treasuryAccount,
+        feePayerAccount,
+        simulation
+    ] = await Promise.all(requests);
     if (!source || !Object.prototype.hasOwnProperty.call(source, "value") ||
-        !treasuryAccount || !Object.prototype.hasOwnProperty.call(treasuryAccount, "value")) {
+        !treasuryAccount || !Object.prototype.hasOwnProperty.call(treasuryAccount, "value") ||
+        !feePayerAccount || !Object.prototype.hasOwnProperty.call(feePayerAccount, "value")) {
         throw new Error("The configured Solana RPC returned an invalid token-account response.");
     }
     const payerLamports = Number.isSafeInteger(balance?.value) && balance.value >= 0
@@ -355,6 +377,15 @@ async function runReadOnlyFundingDiagnostic({
 
     return {
         network,
+        feePayerAccountExists: Boolean(feePayerAccount.value),
+        feePayerOwnerProgram: feePayerAccount.value?.owner ?? null,
+        feePayerSystemProgramOwned:
+            feePayerAccount.value?.owner === "11111111111111111111111111111111",
+        feePayerKeyMatchesConnectedPhantom: connectedWalletPublicKey == null
+            ? null
+            : feePayer === connectedWalletPublicKey,
+        feePayerKeyMatchesLinkedWallet: feePayer === payer,
+        payerBalanceQueryMatchesFeePayer: true,
         payerLamports,
         transactionFeeLamports: feeLamports,
         tokenAccountRentLamports: rentLamports,
@@ -571,6 +602,7 @@ module.exports = async function depositTransaction(request, response) {
             const diagnostic = await runReadOnlyFundingDiagnostic({
                 transaction,
                 payer: linkedWallet,
+                connectedWalletPublicKey: request.body?.connectedWalletPublicKey,
                 treasury: config.treasury_address,
                 mint: config.official_mint_address,
                 tokenProgramId: config.token_program_id,
