@@ -722,6 +722,8 @@ test("deposit UI does not require a connected wallet and exposes memo-confirm ve
     assert.match(app, /async function createCyfurDepositInstructions/);
     assert.match(app, /BQa1gxbBP2jNJEzyHHtMAUfJepXjTnqQEhBuojL9E3ts/);
     assert.match(app, /relicgrid\.payment-intent\.v1/);
+    assert.match(app, /body: JSON\.stringify\(\{ signature: signatureOrLink \}\)/);
+    assert.doesNotMatch(app, /body: JSON\.stringify\(\{ signature: signatureOrLink, paymentIntentId \}\)/);
     assert.match(app, /Deposit not detected yet\. Please wait and check again/);
 });
 
@@ -1405,6 +1407,10 @@ test("Solana verifier credits only successful finalized transfers to the mapped 
         }
     ];
     transaction = directTreasuryTransaction;
+    assert.deepEqual(await verifyFinalizedDeposit({
+        ...options,
+        requirePaymentIntentMemo: true
+    }), { state: "payment_intent_mismatch" });
     assert.deepEqual(await verifyFinalizedDeposit({ ...options, expectedSourceWallet: sourceWallet }), {
         state: "finalized",
         amountRaw: "10000",
@@ -1430,6 +1436,17 @@ test("Solana verifier credits only successful finalized transfers to the mapped 
         sourceWalletAddress: sourceWallet,
         finalizedSlot: 500,
         finalizedAt: 1700000000
+    });
+    assert.deepEqual(await verifyFinalizedDeposit({
+        ...options,
+        requirePaymentIntentMemo: true
+    }), {
+        state: "finalized",
+        amountRaw: "10000",
+        sourceWalletAddress: sourceWallet,
+        finalizedSlot: 500,
+        finalizedAt: 1700000000,
+        paymentIntentId: intentId
     });
     assert.deepEqual(await verifyFinalizedDeposit({ ...intentOptions, expectedAmountRaw: "10001" }), {
         state: "wrong_amount"
@@ -1553,7 +1570,7 @@ test("deposit API rejects a failed on-chain transaction before requesting ledger
         await endpoint({
             method: "POST",
             headers: { authorization: "Bearer test-token" },
-            body: { signature: "1".repeat(64), paymentIntentId }
+            body: { signature: "1".repeat(64) }
         }, response);
 
         assert.equal(response.statusCode, 422);
@@ -1750,7 +1767,7 @@ test("deposit API credits a finalized transfer only with its authenticated playe
         await endpoint({
             method: "POST",
             headers: { authorization },
-            body: { signature, paymentIntentId }
+            body: { signature: `https://solscan.io/tx/${signature}` }
         }, otherPlayerResponse);
         assert.equal(otherPlayerResponse.statusCode, 409);
         assert.equal(otherPlayerResponse.payload.error, "payment_intent_invalid_or_claimed");
@@ -1766,7 +1783,7 @@ test("deposit API credits a finalized transfer only with its authenticated playe
         await endpoint({
             method: "POST",
             headers: { authorization: "Bearer walletless-deposit-test-token" },
-            body: { signature, paymentIntentId }
+            body: { signature }
         }, response);
 
         assert.equal(response.statusCode, 200, JSON.stringify(response.payload));
@@ -1787,7 +1804,7 @@ test("deposit API credits a finalized transfer only with its authenticated playe
         await endpoint({
             method: "POST",
             headers: { authorization },
-            body: { signature, paymentIntentId }
+            body: { signature }
         }, duplicateResponse);
         assert.equal(duplicateResponse.statusCode, 200);
         assert.equal(duplicateResponse.payload.alreadyProcessed, true);
@@ -2894,8 +2911,12 @@ test("all 99 generated layouts are unique, valid, and solvable through every ord
     ];
     const slashReflection = [1, 0, 3, 2];
     const backslashReflection = [3, 2, 1, 0];
+    const scene = readFileSync(new URL("../script.js", import.meta.url), "utf8");
 
     assert.equal(levels.length, 99);
+    assert.match(scene, /coreSystem\.scale\.setScalar\(0\.42\)/);
+    assert.match(scene, /decorativeTerminalGroup\.visible = false/);
+    assert.match(scene, /new THREE\.IcosahedronGeometry\(0\.29, 1\)/);
     for (const [index, level] of levels.entries()) {
         assert.equal(level.number, index + 1);
         assert.ok(level.start.row >= 0 && level.start.row < 6);
@@ -2922,13 +2943,21 @@ test("all 99 generated layouts are unique, valid, and solvable through every ord
             crystal
         ]));
         const mirrors = new Map(level.solutionMirrors.map((mirror) => [`${mirror.row},${mirror.col}`, mirror.orientation]));
+        const crystalCells = [...crystals.keys()];
         assert.equal(level.crystals.length, 1 + Math.floor((level.band - 1) / 2));
+        assert.equal(crystalCells.length, level.crystals.length);
         for (const crystal of level.crystals) {
             const key = `${crystal.row},${crystal.col}`;
             assert.equal(obstacles.has(key), false);
             assert.equal(mirrorCells.has(key), false);
+            assert.notEqual(key, `${level.start.row},${level.start.col}`);
+            assert.notEqual(key, `${level.target.row},${level.target.col}`);
             assert.ok(crystal.inputColor >= 0 && crystal.inputColor < 3);
             assert.ok(crystal.outputColor >= 0 && crystal.outputColor < 3);
+            const targetDistance = Math.hypot(crystal.row - level.target.row, crystal.col - level.target.col);
+            const sourceDistance = Math.hypot(crystal.row - level.start.row, crystal.col - level.start.col);
+            assert.ok(targetDistance >= 1, `Level ${level.number} crystal overlaps the battery cell.`);
+            assert.ok(sourceDistance >= 1, `Level ${level.number} crystal overlaps the source cell.`);
         }
         assert.equal(obstacles.has(`${level.start.row},${level.start.col}`), false);
         assert.equal(obstacles.has(`${level.target.row},${level.target.col}`), false);

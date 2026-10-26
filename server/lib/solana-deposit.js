@@ -234,6 +234,7 @@ async function verifyFinalizedDeposit({
     expectedAmountRaw,
     minimumAmountRaw,
     requiredMemo,
+    requirePaymentIntentMemo = false,
     fetchImpl = fetch
 }) {
     if (!isBase58(signature, 64)) throw new TypeError("Invalid Solana transaction signature.");
@@ -266,6 +267,9 @@ async function verifyFinalizedDeposit({
     if (requiredMemo !== undefined &&
         (typeof requiredMemo !== "string" || requiredMemo.length < 1 || requiredMemo.length > 128)) {
         throw new TypeError("Invalid required payment-intent memo.");
+    }
+    if (typeof requirePaymentIntentMemo !== "boolean") {
+        throw new TypeError("Invalid payment-intent memo requirement.");
     }
 
     const genesisHash = await solanaRpc(rpcUrl, "getGenesisHash", [], fetchImpl);
@@ -381,20 +385,27 @@ async function verifyFinalizedDeposit({
         ...(transaction.transaction.message.instructions ?? []),
         ...(transaction.meta.innerInstructions ?? []).flatMap((group) => group.instructions ?? [])
     ];
-    if (requiredMemo !== undefined) {
-        const memoProgramId = "MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr";
-        const memoBytes = new TextEncoder().encode(requiredMemo);
-        const hasIntentMemo = instructions.some((instruction) => {
-            if (getPublicKey(instruction.programId) !== memoProgramId) return false;
-            if (instruction.parsed === requiredMemo || instruction.parsed?.info === requiredMemo) return true;
-            const encoded = typeof instruction.data === "string"
-                ? decodeBase58(instruction.data)
-                : null;
-            return encoded !== null &&
-                Buffer.from(encoded).equals(Buffer.from(memoBytes));
-        });
-        if (!hasIntentMemo) return { state: "payment_intent_mismatch" };
+    const memoProgramId = "MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr";
+    const memoTexts = instructions.flatMap((instruction) => {
+        if (getPublicKey(instruction.programId) !== memoProgramId) return [];
+        if (typeof instruction.parsed === "string") return [instruction.parsed];
+        if (typeof instruction.parsed?.info === "string") return [instruction.parsed.info];
+        if (typeof instruction.data !== "string") return [];
+        const decoded = decodeBase58(instruction.data);
+        return decoded ? [new TextDecoder().decode(decoded)] : [];
+    });
+    if (requiredMemo !== undefined && !memoTexts.includes(requiredMemo)) {
+        return { state: "payment_intent_mismatch" };
     }
+    const paymentIntentMemos = memoTexts.map((memo) =>
+        /^RelicGrid payment intent: ([0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$/i.exec(memo)
+    ).filter(Boolean);
+    if (requirePaymentIntentMemo && paymentIntentMemos.length !== 1) {
+        return { state: "payment_intent_mismatch" };
+    }
+    const paymentIntentId = paymentIntentMemos.length === 1
+        ? paymentIntentMemos[0][1]
+        : null;
     let instructionAmount = 0n;
     const sourceWallets = new Set();
     for (const instruction of instructions) {
@@ -427,13 +438,15 @@ async function verifyFinalizedDeposit({
         return { state: "wrong_amount" };
     }
 
-    return {
+    const result = {
         state: "finalized",
         amountRaw: receivedAmount.toString(),
         sourceWalletAddress: [...sourceWallets][0],
         finalizedSlot: transaction.slot,
         finalizedAt: transaction.blockTime
     };
+    if (requirePaymentIntentMemo) result.paymentIntentId = paymentIntentId;
+    return result;
 }
 
 module.exports = {

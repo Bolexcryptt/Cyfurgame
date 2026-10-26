@@ -79,11 +79,6 @@ module.exports = async function deposits(request, response) {
         if (!signature) {
             return sendJson(response, 400, { error: "invalid_transaction_signature" });
         }
-        const paymentIntentId = request.body?.paymentIntentId;
-        if (typeof paymentIntentId !== "string" ||
-            !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(paymentIntentId)) {
-            return sendJson(response, 400, { error: "payment_intent_required", credited: false });
-        }
 
         const transactionUrl =
             `https://explorer.solana.com/tx/${signature}?cluster=${encodeURIComponent(configuredNetwork)}`;
@@ -107,27 +102,7 @@ module.exports = async function deposits(request, response) {
                 "Deposit verification is disabled: the approved network, mint, token metadata, treasury address, floor-rounding policy, and enabled database configuration must match. Do not send CYFUR."
             );
         }
-        const [intent] = await serviceRequest(
-            `wallet_payment_intents?select=id,player_id,network,mint_address,token_program_id,treasury_address,amount_raw,token_decimals,created_at,expires_at,status,transaction_signature&id=eq.${encodeURIComponent(paymentIntentId)}&player_id=eq.${encodeURIComponent(user.id)}&limit=1`
-        );
         const minimumAmountRaw = (10n ** BigInt(config.token_decimals)).toString();
-        if (!intent ||
-            intent.player_id !== user.id ||
-            intent.network !== config.network ||
-            intent.mint_address !== config.official_mint_address ||
-            intent.token_program_id !== config.token_program_id ||
-            intent.treasury_address !== config.treasury_address ||
-            intent.token_decimals !== config.token_decimals ||
-            String(intent.amount_raw) !== minimumAmountRaw ||
-            !["pending", "confirmed"].includes(intent.status) ||
-            (intent.status === "confirmed" && intent.transaction_signature !== signature)) {
-            return sendJson(response, 409, {
-                error: "payment_intent_invalid_or_claimed",
-                credited: false,
-                transactionUrl
-            });
-        }
-        const memo = `RelicGrid payment intent: ${intent.id}`;
         const treasuryTokenAccount = deriveAssociatedTokenAccount(
             config.treasury_address,
             config.official_mint_address,
@@ -143,7 +118,7 @@ module.exports = async function deposits(request, response) {
             network: config.network,
             rpcUrl: process.env.SOLANA_RPC_URL,
             minimumAmountRaw,
-            requiredMemo: memo
+            requirePaymentIntentMemo: true
         });
         if (verified.state === "pending") {
             return sendJson(response, 202, { status: "pending", credited: false, transactionUrl });
@@ -183,6 +158,34 @@ module.exports = async function deposits(request, response) {
         }
         if (verified.state !== "finalized") {
             return sendJson(response, 503, { error: "finalized_transaction_unavailable", credited: false });
+        }
+        const paymentIntentId = verified.paymentIntentId;
+        if (!paymentIntentId) {
+            return sendJson(response, 422, {
+                error: "payment_intent_mismatch",
+                credited: false,
+                transactionUrl
+            });
+        }
+        const [intent] = await serviceRequest(
+            `wallet_payment_intents?select=id,player_id,network,mint_address,token_program_id,treasury_address,amount_raw,token_decimals,created_at,expires_at,status,transaction_signature&id=eq.${encodeURIComponent(paymentIntentId)}&player_id=eq.${encodeURIComponent(user.id)}&limit=1`
+        );
+        if (!intent ||
+            intent.id !== paymentIntentId ||
+            intent.player_id !== user.id ||
+            intent.network !== config.network ||
+            intent.mint_address !== config.official_mint_address ||
+            intent.token_program_id !== config.token_program_id ||
+            intent.treasury_address !== config.treasury_address ||
+            intent.token_decimals !== config.token_decimals ||
+            String(intent.amount_raw) !== minimumAmountRaw ||
+            !["pending", "confirmed"].includes(intent.status) ||
+            (intent.status === "confirmed" && intent.transaction_signature !== signature)) {
+            return sendJson(response, 409, {
+                error: "payment_intent_invalid_or_claimed",
+                credited: false,
+                transactionUrl
+            });
         }
         if (!Number.isSafeInteger(verified.finalizedAt) || !intent.created_at || !intent.expires_at) {
             return sendJson(response, 422, { error: "payment_intent_time_unverifiable", credited: false, transactionUrl });

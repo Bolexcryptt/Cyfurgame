@@ -1241,15 +1241,13 @@ async function verifyDepositSignature(signatureOrLink) {
     if (error) throw error;
     const accessToken = data.session?.access_token;
     if (!accessToken) throw new Error("Sign in before submitting a transaction signature.");
-    const paymentIntentId = sessionStorage.getItem("relicgrid.payment-intent.v1");
-    if (!paymentIntentId) throw new Error("Your secure payment reference is missing. Refresh the wallet panel before submitting.");
     const response = await fetch(apiUrl("deposits"), {
         method: "POST",
         headers: {
             Authorization: `Bearer ${accessToken}`,
             "Content-Type": "application/json"
         },
-        body: JSON.stringify({ signature: signatureOrLink, paymentIntentId }),
+        body: JSON.stringify({ signature: signatureOrLink }),
         cache: "no-store"
     });
     const result = await response.json().catch(() => ({}));
@@ -1278,7 +1276,6 @@ async function verifyDepositSignature(signatureOrLink) {
             wrong_amount: "The finalized CYFUR transfer is below the 1 CYFUR minimum. No credits were added.",
             payment_intent_mismatch: "This transfer does not include your unique RelicGrid payment memo. No credits were added.",
             transaction_already_claimed: "This transaction has already been claimed or credited to another player. No credits were added.",
-            payment_intent_required: "Your player-specific payment reference is missing. Refresh the deposit panel and include its memo.",
             payment_intent_invalid_or_claimed: "This payment reference is invalid, belongs to another player, or was used for a different transaction.",
             invalid_treasury_address: "The configured treasury is not a valid wallet authority. Do not send CYFUR.",
             invalid_treasury_token_account: "The treasury CYFUR account is missing or misconfigured. Deposits are disabled; do not send CYFUR.",
@@ -1489,7 +1486,7 @@ async function handlePhantomMobileCallback(callback) {
             setWalletMessage("Phantom approved the transaction. Waiting for the server to verify its finalized transfer before crediting.", "pending");
             sessionStorage.setItem("relicgrid.payment-intent.v1", state.paymentIntentId);
             stage = "deposit_verification";
-            await verifyDepositSignature(broadcastSignature, state.paymentIntentId);
+            await verifyDepositSignature(broadcastSignature);
             setPhantomMobilePendingAction(window, { action: "connected" });
             await refreshWallet();
             return;

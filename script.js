@@ -137,6 +137,7 @@ function startScene() {
     let activeLevel = levels[0];
     let previewRoute = null;
     let sourcePylon = null;
+    let decorativeTerminalGroup = null;
     let sourceMarkerGroup = null;
     let sourceHitArea = null;
     let coreSystem = null;
@@ -939,6 +940,7 @@ function startScene() {
     }
 
     function placeLevelTarget() {
+        coreSystem.scale.setScalar(0.42);
         coreSystem.position.set(
             gridX(GRID.target.col) - 1.35,
             0,
@@ -991,13 +993,14 @@ function startScene() {
             const material = new THREE.MeshStandardMaterial({
                 color: crystalColors[definition.inputColor],
                 emissive: crystalColors[definition.inputColor],
-                emissiveIntensity: 0.32,
-                metalness: 0.18,
-                roughness: 0.2,
+                emissiveIntensity: 0.46,
+                metalness: 0.24,
+                roughness: 0.16,
                 transparent: true,
-                opacity: 0.9
+                opacity: 0.94,
+                flatShading: true
             });
-            const prism = new THREE.Mesh(new THREE.OctahedronGeometry(0.3, 0), material);
+            const prism = new THREE.Mesh(new THREE.IcosahedronGeometry(0.29, 1), material);
             prism.position.y = 0.53;
             prism.rotation.set(0.2, 0.3 + index * 0.2, 0.12);
             prism.castShadow = true;
@@ -1026,15 +1029,23 @@ function startScene() {
             label.position.y = 1.02;
             label.scale.set(0.62, 0.27, 1);
             crystalGroup.add(label);
-            levelCrystals.set(cellKey, { definition: { ...definition, index }, material, activated: false });
+            levelCrystals.set(cellKey, {
+                definition: { ...definition, index },
+                material,
+                ringMaterial: ring.material,
+                prism,
+                activated: false
+            });
         });
     }
 
     function resetCrystalStates() {
         for (const crystal of levelCrystals.values()) {
             crystal.activated = false;
-            crystal.material.emissiveIntensity = 0.32;
+            crystal.material.emissiveIntensity = 0.46;
             crystal.material.color.setHex(crystalColors[crystal.definition.inputColor]);
+            crystal.ringMaterial.color.setHex(crystalColors[crystal.definition.inputColor]);
+            crystal.prism.scale.setScalar(1);
         }
     }
 
@@ -1045,6 +1056,7 @@ function startScene() {
             return;
         }
         activeLevel = level;
+        if (decorativeTerminalGroup) decorativeTerminalGroup.visible = false;
         firstLevelTutorial = level.number === 1 && levelDetails?.tutorial === true;
         firstLevelTutorialStage = "observe";
         const tutorialMirror = level.solutionMirrors[0];
@@ -1290,7 +1302,7 @@ function startScene() {
             : `all ${activeLevel.crystals.length} numbered crystals`;
         setStatus(
             `Level ${String(activeLevel.number).padStart(2, "0")} — ${activeLevel.title}`,
-            `Route through ${crystalObjective} in order using at least ${activeLevel.par} mirror${activeLevel.par === 1 ? "" : "s"}. Mirrors shift beam color; match each crystal, then reach the battery.`
+            `Objective: aim through ${crystalObjective} in order, then reach the battery. Tap tiles to place or rotate mirrors; every reflection shifts beam color. Follow the live preview and press POWER SOURCE to launch.`
         );
         previewRoute = traceLight();
         drawActiveRoute(previewRoute, previewRoute.segments.length, true);
@@ -1531,7 +1543,9 @@ function startScene() {
     function createPylon(x, z, color, scale = 1, type = "relay") {
         const group = new THREE.Group();
         group.position.set(x, 0.05, z);
-        platform.add(group);
+        const parent = type === "source" ? platform : decorativeTerminalGroup ?? platform;
+        const isBeacon = type === "beacon" || type === "source";
+        parent.add(group);
         const colorMaterial = new THREE.MeshStandardMaterial({
             color,
             emissive: color,
@@ -1545,7 +1559,7 @@ function startScene() {
         addBox(group, [0.62 * scale, 0.09, 0.48 * scale], [0, 0.23, 0], materials.metalEdge);
         addBox(group, [0.43 * scale, 0.045, 0.34 * scale], [0, 0.3, 0], colorMaterial);
 
-        const shaftHeight = (type === "beacon" ? 1.14 : 0.72) * scale;
+        const shaftHeight = (isBeacon ? 1.14 : 0.72) * scale;
         const crystal = new THREE.Mesh(
             new THREE.BoxGeometry(0.25 * scale, shaftHeight, 0.25 * scale),
             colorMaterial
@@ -1558,18 +1572,20 @@ function startScene() {
 
         const pointLight = configureQualityLight(new THREE.PointLight(
             color,
-            type === "beacon" ? 7 : 3,
-            type === "beacon" ? 3.8 : 2.4,
+            isBeacon ? 7 : 3,
+            isBeacon ? 3.8 : 2.4,
             2
         ));
         pointLight.position.set(0, 0.85 + shaftHeight, 0);
         group.add(pointLight);
-        if (type === "beacon") group.userData.beaconLight = pointLight;
+        if (isBeacon) group.userData.beaconLight = pointLight;
         return group;
     }
 
     function createTerminals() {
-        sourcePylon = createPylon(-2.55, -3.55, colors.pink, 0.8, "beacon");
+        decorativeTerminalGroup = new THREE.Group();
+        platform.add(decorativeTerminalGroup);
+        sourcePylon = createPylon(-2.55, -3.55, colors.pink, 0.8, "source");
         createPylon(-5.1, -1.15, colors.pink, 0.76, "beacon");
         createPylon(-1.15, -1.78, colors.pink, 0.68, "relay");
         createPylon(0.02, -0.82, colors.pink, 0.84, "beacon");
@@ -2027,8 +2043,15 @@ function startScene() {
                 const crystal = levelCrystals.get(cellKey);
                 if (!crystal || crystal.activated) return;
                 crystal.activated = true;
-                crystal.material.emissiveIntensity = 1.8;
-                crystal.material.color.setHex(crystalColors[crystal.definition.outputColor]);
+                const outputColor = crystalColors[crystal.definition.outputColor];
+                crystal.material.emissiveIntensity = 1.65;
+                crystal.material.color.setHex(outputColor);
+                crystal.ringMaterial.color.setHex(outputColor);
+                crystal.prism.scale.setScalar(1.16);
+                setFeedback(
+                    `Crystal ${String(crystal.definition.index + 1).padStart(2, "0")} / ${String(activeLevel.crystals.length).padStart(2, "0")} charged. Following the beam to the battery…`,
+                    "success"
+                );
             });
 
             if (progress >= 1) {
