@@ -25,6 +25,26 @@ function isBase58(value, expectedBytes) {
     return byteLength === expectedBytes;
 }
 
+function normalizeTransactionSignature(value) {
+    if (typeof value !== "string") return null;
+    const candidate = value.trim();
+    if (isBase58(candidate, 64)) return candidate;
+
+    let parsed;
+    try {
+        parsed = new URL(candidate);
+    } catch {
+        return null;
+    }
+    if (parsed.protocol !== "https:" ||
+        !["explorer.solana.com", "solscan.io", "www.solscan.io"].includes(parsed.hostname) ||
+        parsed.username || parsed.password || parsed.port) {
+        return null;
+    }
+    const match = parsed.pathname.match(/^\/tx\/([^/]+)\/?$/);
+    return match && isBase58(match[1], 64) ? match[1] : null;
+}
+
 function getPublicKey(key) {
     return typeof key === "string" ? key : key?.pubkey;
 }
@@ -184,6 +204,7 @@ async function verifyFinalizedDeposit({
     network,
     rpcUrl,
     expectedAmountRaw,
+    minimumAmountRaw,
     requiredMemo,
     fetchImpl = fetch
 }) {
@@ -208,6 +229,10 @@ async function verifyFinalizedDeposit({
         (typeof expectedAmountRaw !== "string" || !/^[1-9]\d*$/.test(expectedAmountRaw))) {
         throw new TypeError("Invalid expected token transfer amount.");
     }
+    if (minimumAmountRaw !== undefined &&
+        (typeof minimumAmountRaw !== "string" || !/^[1-9]\d*$/.test(minimumAmountRaw))) {
+        throw new TypeError("Invalid minimum token transfer amount.");
+    }
     if (requiredMemo !== undefined &&
         (typeof requiredMemo !== "string" || requiredMemo.length < 1 || requiredMemo.length > 128)) {
         throw new TypeError("Invalid required payment-intent memo.");
@@ -225,7 +250,7 @@ async function verifyFinalizedDeposit({
     if (status.err) return { state: "failed" };
     if (status.confirmationStatus !== "finalized") return { state: "pending" };
 
-    const [transaction, mintAccount] = await Promise.all([
+    const [transaction, mintAccount, treasuryAccount] = await Promise.all([
         solanaRpc(rpcUrl, "getTransaction", [signature, {
             commitment: "finalized",
             encoding: "jsonParsed",
@@ -234,9 +259,16 @@ async function verifyFinalizedDeposit({
         solanaRpc(rpcUrl, "getAccountInfo", [officialMint, {
             commitment: "finalized",
             encoding: "jsonParsed"
+        }], fetchImpl),
+        solanaRpc(rpcUrl, "getAccountInfo", [depositAddress, {
+            commitment: "finalized",
+            encoding: "base64"
         }], fetchImpl)
     ]);
-    if (!transaction || !mintAccount?.value) return { state: "unavailable" };
+    if (!transaction || !mintAccount?.value || !treasuryAccount?.value) return { state: "unavailable" };
+    if (treasuryAccount.value.owner !== "11111111111111111111111111111111") {
+        return { state: "invalid_treasury" };
+    }
     if (transaction.meta?.err || !Number.isSafeInteger(transaction.slot) ||
         !transaction.transaction?.signatures?.includes(signature)) {
         return { state: "failed" };
@@ -335,6 +367,9 @@ async function verifyFinalizedDeposit({
     if (expectedAmountRaw !== undefined && receivedAmount !== BigInt(expectedAmountRaw)) {
         return { state: "wrong_amount" };
     }
+    if (minimumAmountRaw !== undefined && receivedAmount < BigInt(minimumAmountRaw)) {
+        return { state: "wrong_amount" };
+    }
 
     return {
         state: "finalized",
@@ -349,6 +384,7 @@ module.exports = {
     GENESIS_HASHES,
     TOKEN_PROGRAM_IDS,
     isBase58,
+    normalizeTransactionSignature,
     sanitizeRpcErrorMessage,
     sanitizeRpcErrorData,
     solanaRpc,

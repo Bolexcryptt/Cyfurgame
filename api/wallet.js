@@ -7,6 +7,7 @@ const {
     serviceRequest,
     sendJson
 } = require("../server/lib/wallet");
+const { GENESIS_HASHES, isBase58, solanaRpc } = require("../server/lib/solana-deposit");
 
 module.exports = async function wallet(request, response) {
     if (handleApiCors(request, response)) return;
@@ -64,6 +65,27 @@ module.exports = async function wallet(request, response) {
             process.env.SOLANA_TREASURY_ADDRESS !== treasuryAddress) {
             readinessChecks.push("SOLANA_TREASURY_ADDRESS must exactly match Supabase treasury_address.");
         }
+        if (process.env.SOLANA_RPC_URL?.trim() &&
+            GENESIS_HASHES[network] &&
+            config?.network === network &&
+            treasuryAddress &&
+            isBase58(treasuryAddress, 32) &&
+            process.env.SOLANA_TREASURY_ADDRESS === treasuryAddress) {
+            const [genesisHash, treasuryAccount] = await Promise.all([
+                solanaRpc(process.env.SOLANA_RPC_URL, "getGenesisHash", []),
+                solanaRpc(process.env.SOLANA_RPC_URL, "getAccountInfo", [treasuryAddress, {
+                    commitment: "finalized",
+                    encoding: "base64"
+                }])
+            ]);
+            if (genesisHash !== GENESIS_HASHES[network]) {
+                readinessChecks.push("SOLANA_RPC_URL is connected to a different Solana network.");
+            } else if (!treasuryAccount?.value) {
+                readinessChecks.push("The configured treasury wallet does not exist on the selected Solana network.");
+            } else if (treasuryAccount.value.owner !== "11111111111111111111111111111111") {
+                readinessChecks.push("The configured treasury address is not a System Program-owned wallet authority; token accounts are not valid treasury wallets.");
+            }
+        }
         if (process.env.WALLET_DIRECT_TREASURY_READY !== "true") {
             readinessChecks.push("Set WALLET_DIRECT_TREASURY_READY=true in Vercel.");
         }
@@ -94,7 +116,7 @@ module.exports = async function wallet(request, response) {
             disabledReason: depositsEnabled ? null : "direct_treasury_setup_incomplete",
             readinessChecks,
             disabledMessage: depositsEnabled
-                ? "Deposit verification is ready. Send the exact CYFUR amount to the displayed treasury address with the unique payment memo, then submit the transaction signature. RelicGrid verifies finality before crediting."
+                ? "Deposit verification is ready. Send at least 1 CYFUR to the displayed treasury address, then submit the transaction signature or explorer link. RelicGrid verifies finality before crediting."
                 : `${readinessChecks.join(" ")} Do not send CYFUR until status is READY.`,
             exchangeRateCreditsPerToken: CYFUR_CREDITS_PER_TOKEN,
             treasuryAddress,

@@ -34,7 +34,10 @@ const {
     getLevelEntryCostCredits,
     parseTokenAmount
 } = require("../server/lib/wallet.js");
-const { verifyFinalizedDeposit } = require("../server/lib/solana-deposit.js");
+const {
+    normalizeTransactionSignature,
+    verifyFinalizedDeposit
+} = require("../server/lib/solana-deposit.js");
 const { getLevelEconomyAndStars, verifyLevelProof } = require("../server/lib/level-completion.js");
 const { verifyWalletSignature } = require("../server/lib/solana-wallet-link.js");
 
@@ -58,6 +61,20 @@ test("Phantom provider detection supports current and legacy injection without a
     assert.equal(getPhantomProvider({ phantom: { solana: currentProvider } }), currentProvider);
     assert.equal(getPhantomProvider({ solana: currentProvider }), currentProvider);
     assert.equal(getPhantomProvider({ solana: { isPhantom: false, connect() {}, signMessage() {} } }), null);
+});
+
+test("deposit signature input accepts raw signatures and trusted explorer links only", () => {
+    const signature = "1".repeat(64);
+    assert.equal(normalizeTransactionSignature(signature), signature);
+    assert.equal(
+        normalizeTransactionSignature(`https://explorer.solana.com/tx/${signature}?cluster=mainnet-beta`),
+        signature
+    );
+    assert.equal(normalizeTransactionSignature(`https://solscan.io/tx/${signature}`), signature);
+    assert.equal(normalizeTransactionSignature(`https://evil.example/tx/${signature}`), null);
+    assert.equal(normalizeTransactionSignature(`http://explorer.solana.com/tx/${signature}`), null);
+    assert.equal(normalizeTransactionSignature(`https://explorer.solana.com/account/${signature}`), null);
+    assert.equal(normalizeTransactionSignature("not-a-transaction"), null);
 });
 
 test("Phantom Wallet Standard registration supports connect, ownership signing, and transaction approval", async () => {
@@ -1231,14 +1248,17 @@ test("Solana verifier credits only successful finalized transfers to the mapped 
     };
     let status = { err: null, confirmationStatus: "finalized" };
     const fakeFetch = async (_url, options) => {
-        const { method } = JSON.parse(options.body);
+        const call = JSON.parse(options.body);
+        const { method } = call;
         const result = method === "getGenesisHash"
             ? "EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG"
             : method === "getSignatureStatuses"
                 ? { value: [status] }
                 : method === "getTransaction"
                     ? transaction
-                    : { value: { owner: tokenProgramId, data: { parsed: { type: "mint", info: { decimals: 8 } } } } };
+                    : call.params[0] === depositAddress
+                        ? { value: { owner: "11111111111111111111111111111111", data: ["", "base64"] } }
+                        : { value: { owner: tokenProgramId, data: { parsed: { type: "mint", info: { decimals: 8 } } } } };
         return new Response(JSON.stringify({ result }), { status: 200 });
     };
     const options = {
@@ -1312,6 +1332,20 @@ test("Solana verifier credits only successful finalized transfers to the mapped 
         state: "wrong_amount"
     });
     assert.deepEqual(await verifyFinalizedDeposit({
+        ...options,
+        minimumAmountRaw: "100000000"
+    }), { state: "wrong_amount" });
+    assert.deepEqual(await verifyFinalizedDeposit({
+        ...options,
+        minimumAmountRaw: "10000"
+    }), {
+        state: "finalized",
+        amountRaw: "10000",
+        sourceWalletAddress: sourceWallet,
+        finalizedSlot: 500,
+        finalizedAt: 1700000000
+    });
+    assert.deepEqual(await verifyFinalizedDeposit({
         ...intentOptions,
         requiredMemo: "RelicGrid payment intent: 00000000-0000-4000-8000-000000000000"
     }), { state: "payment_intent_mismatch" });
@@ -1359,8 +1393,6 @@ test("deposit API rejects a failed on-chain transaction before requesting ledger
     Object.assign(process.env, environment);
     const originalFetch = globalThis.fetch;
     const rpcMethods = [];
-    const intentId = "8f9ef883-520e-45ef-96ae-62e621d3b31c";
-    const linkedWallet = "11111111111111111111111111111111";
     const mintAddress = "9F4hLLngEAhepsH2HLTH6kBYmmq6dzm4GXRrcpME3uam";
     globalThis.fetch = async (url, options = {}) => {
         const target = String(url);
@@ -1377,25 +1409,6 @@ test("deposit API rejects a failed on-chain transaction before requesting ledger
                 credits_per_token: "10000",
                 rounding_policy: "floor",
                 treasury_address: environment.SOLANA_TREASURY_ADDRESS
-            }]), { status: 200 });
-        }
-        if (target.includes("/player_solana_wallets?")) {
-            return new Response(JSON.stringify([{ wallet_address: linkedWallet }]), { status: 200 });
-        }
-        if (target.includes("/wallet_payment_intents?")) {
-            return new Response(JSON.stringify([{
-                id: intentId,
-                player_id: "test-player",
-                source_wallet_address: linkedWallet,
-                network: "mainnet-beta",
-                mint_address: mintAddress,
-                token_program_id: "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
-                treasury_address: environment.SOLANA_TREASURY_ADDRESS,
-                amount_raw: "100000000",
-                token_decimals: 8,
-                expires_at: new Date(Date.now() + 60_000).toISOString(),
-                status: "pending",
-                transaction_signature: null
             }]), { status: 200 });
         }
         if (target === environment.SOLANA_RPC_URL) {
@@ -1420,7 +1433,7 @@ test("deposit API rejects a failed on-chain transaction before requesting ledger
         await endpoint({
             method: "POST",
             headers: { authorization: "Bearer test-token" },
-            body: { signature: "1".repeat(64), paymentIntentId: intentId }
+            body: { signature: "1".repeat(64) }
         }, response);
 
         assert.equal(response.statusCode, 422);
@@ -1435,7 +1448,7 @@ test("deposit API rejects a failed on-chain transaction before requesting ledger
     }
 });
 
-test("deposit API credits a finalized exact-memo transfer from an unlinked wallet", async () => {
+test("deposit API credits a finalized transfer of at least one CYFUR without a payment intent", async () => {
     const environment = {
         SUPABASE_URL: "https://example.supabase.co",
         SUPABASE_PUBLISHABLE_KEY: "public-test-key",
@@ -1452,14 +1465,14 @@ test("deposit API credits a finalized exact-memo transfer from an unlinked walle
     );
     Object.assign(process.env, environment);
     const originalFetch = globalThis.fetch;
-    const intentId = "8f9ef883-520e-45ef-96ae-62e621d3b31c";
     const signature = "1".repeat(64);
     const sourceWallet = "11111111111111111111111111111111";
+    let rpcSourceWallet = null;
+    let linkedWalletLookup = false;
     const sourceTokenAccount = "So11111111111111111111111111111111111111112";
     const treasuryTokenAccount = "Stake11111111111111111111111111111111111111";
     const mintAddress = "9F4hLLngEAhepsH2HLTH6kBYmmq6dzm4GXRrcpME3uam";
     const tokenProgramId = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
-    const memoProgramId = "MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr";
     const transaction = {
         slot: 500,
         blockTime: Math.floor(Date.now() / 1000),
@@ -1481,13 +1494,9 @@ test("deposit API credits a finalized exact-memo transfer from an unlinked walle
                                 source: sourceTokenAccount,
                                 destination: treasuryTokenAccount,
                                 authority: sourceWallet,
-                                tokenAmount: { amount: "25000000" }
+                                tokenAmount: { amount: "100000000" }
                             }
                         }
-                    },
-                    {
-                        programId: memoProgramId,
-                        data: encodeBase58(Buffer.from(`RelicGrid payment intent: ${intentId}`))
                     }
                 ]
             }
@@ -1499,7 +1508,7 @@ test("deposit API credits a finalized exact-memo transfer from an unlinked walle
                     accountIndex: 1,
                     mint: mintAddress,
                     owner: sourceWallet,
-                    uiTokenAmount: { amount: "100000000" }
+                    uiTokenAmount: { amount: "1000000000" }
                 },
                 {
                     accountIndex: 2,
@@ -1513,19 +1522,18 @@ test("deposit API credits a finalized exact-memo transfer from an unlinked walle
                     accountIndex: 1,
                     mint: mintAddress,
                     owner: sourceWallet,
-                    uiTokenAmount: { amount: "75000000" }
+                    uiTokenAmount: { amount: "750000000" }
                 },
                 {
                     accountIndex: 2,
                     mint: mintAddress,
                     owner: environment.SOLANA_TREASURY_ADDRESS,
-                    uiTokenAmount: { amount: "25000000" }
+                    uiTokenAmount: { amount: "100000000" }
                 }
             ]
         }
     };
-    let rpcSourceWallet;
-    let linkedWalletLookup = false;
+    let rpcPayload;
     globalThis.fetch = async (url, options = {}) => {
         const target = String(url);
         if (target.endsWith("/auth/v1/user")) {
@@ -1543,26 +1551,6 @@ test("deposit API credits a finalized exact-memo transfer from an unlinked walle
                 treasury_address: environment.SOLANA_TREASURY_ADDRESS
             }]), { status: 200 });
         }
-        if (target.includes("/player_solana_wallets?")) {
-            linkedWalletLookup = true;
-            return new Response(JSON.stringify([]), { status: 200 });
-        }
-        if (target.includes("/wallet_payment_intents?")) {
-            return new Response(JSON.stringify([{
-                id: intentId,
-                player_id: "test-player",
-                source_wallet_address: null,
-                network: "mainnet-beta",
-                mint_address: mintAddress,
-                token_program_id: tokenProgramId,
-                treasury_address: environment.SOLANA_TREASURY_ADDRESS,
-                amount_raw: "25000000",
-                token_decimals: 8,
-                expires_at: new Date(Date.now() + 60_000).toISOString(),
-                status: "pending",
-                transaction_signature: null
-            }]), { status: 200 });
-        }
         if (target === environment.SOLANA_RPC_URL) {
             const call = JSON.parse(options.body);
             const result = call.method === "getGenesisHash"
@@ -1571,11 +1559,15 @@ test("deposit API credits a finalized exact-memo transfer from an unlinked walle
                     ? { value: [{ err: null, confirmationStatus: "finalized" }] }
                     : call.method === "getTransaction"
                         ? transaction
-                        : { value: { owner: tokenProgramId, data: { parsed: { type: "mint", info: { decimals: 8 } } } } };
+                        : call.params[0] === environment.SOLANA_TREASURY_ADDRESS
+                            ? { value: { owner: "11111111111111111111111111111111", data: ["", "base64"] } }
+                            : { value: { owner: tokenProgramId, data: { parsed: { type: "mint", info: { decimals: 8 } } } } };
             return new Response(JSON.stringify({ result }), { status: 200 });
         }
-        if (target.includes("/rpc/process_verified_payment_intent")) {
-            rpcSourceWallet = JSON.parse(options.body).p_source_wallet_address;
+        if (target.includes("/rpc/process_verified_treasury_deposit")) {
+            rpcPayload = JSON.parse(options.body);
+            rpcSourceWallet = rpcPayload.p_source_wallet_address;
+            linkedWalletLookup = false;
             return new Response(JSON.stringify([{
                 balance_credits: "250000",
                 already_applied: false
@@ -1595,13 +1587,13 @@ test("deposit API credits a finalized exact-memo transfer from an unlinked walle
         await endpoint({
             method: "POST",
             headers: { authorization: "Bearer walletless-deposit-test-token" },
-            body: { signature, paymentIntentId: intentId }
+            body: { signature }
         }, response);
 
         assert.equal(response.statusCode, 200, JSON.stringify(response.payload));
         assert.equal(response.payload.status, "confirmed");
         assert.equal(response.payload.credited, true);
-        assert.equal(response.payload.creditAmountCredits, "2500");
+        assert.equal(response.payload.creditAmountCredits, "10000");
         assert.equal(rpcSourceWallet, sourceWallet);
         assert.equal(linkedWalletLookup, false);
     } finally {

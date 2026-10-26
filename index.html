@@ -134,7 +134,7 @@
                             <code id="wallet-player-address">No wallet linked</code>
                         </div>
                         <p id="wallet-player-state" class="wallet-player-state" aria-live="polite">SEND FROM ANY SOLANA WALLET · NO CONNECTION REQUIRED</p>
-                        <button id="fund-account-button" class="button button-primary wallet-fund-button" type="button" aria-controls="wallet-api-status">CREATE DEPOSIT INSTRUCTIONS <span>→</span></button>
+                        <button id="fund-account-button" class="button button-primary wallet-fund-button" type="button" aria-controls="wallet-api-status">SHOW DEPOSIT ADDRESS <span>→</span></button>
                     </div>
                     <div class="wallet-home-details">
                         <div class="wallet-gates" id="wallet-gates">
@@ -150,30 +150,30 @@
                             <span>DEPOSIT STATUS</span><b id="wallet-status-value">DISABLED</b>
                         </div>
                         <p id="wallet-api-status" class="wallet-api-status" tabindex="-1" role="status" aria-live="polite">Wallet linking and deposits are disabled until the owner-controlled treasury and backend verification are configured. Do not send CYFUR.</p>
-                        <p class="wallet-transfer-instructions">Create deposit instructions first. Send the exact amount to the displayed treasury address and include the unique memo in your wallet's transaction. Then paste the transaction signature and confirm. Use a Solana wallet that supports transaction memos. The backend independently checks the configured CYFUR mint, exact amount, treasury, successful finalized status, and duplicate signature. For an 8-decimal mint, transfers below 0.0001 CYFUR convert to zero credits and are rejected.</p>
+                        <p class="wallet-transfer-instructions">Send at least 1 CYFUR from any compatible Solana wallet to the treasury address above. Then paste the transaction signature or a Solana Explorer/Solscan transaction link and confirm. RelicGrid checks the official mint, destination, amount, successful finalized status, and duplicate claims on Solana before awarding credits. Never send while deposit status is DISABLED.</p>
                         <form id="wallet-transfer-form" class="wallet-transfer-form">
-                            <label class="wallet-field-label" for="wallet-transfer-amount">CYFUR AMOUNT</label>
+                            <input id="wallet-transfer-amount" type="hidden" value="1">
                             <div class="wallet-transfer-controls">
-                                <input id="wallet-transfer-amount" name="amount" type="number" inputmode="decimal" min="0.0001" step="0.00000001" placeholder="0.0001" required disabled>
-                                <button id="wallet-transfer-button" class="button button-primary" type="submit" disabled>CREATE DEPOSIT INSTRUCTIONS</button>
+                                <button id="wallet-transfer-button" class="button button-primary" type="submit" disabled>SHOW DEPOSIT ADDRESS</button>
                             </div>
                             <button id="wallet-preflight-button" class="button button-quiet" type="button" disabled hidden>RUN READ-ONLY DIAGNOSTIC</button>
                             <pre id="wallet-preflight-results" class="wallet-preflight-results" role="status" aria-live="polite" hidden></pre>
                         </form>
                         <section id="wallet-deposit-instructions" class="wallet-deposit-instructions" hidden aria-live="polite">
-                            <h3>Send this exact deposit</h3>
-                            <p>Amount: <strong id="deposit-required-amount"></strong></p>
+                            <h3>Shared CYFUR treasury</h3>
+                            <p>Minimum deposit: <strong id="deposit-required-amount">1 CYFUR</strong></p>
                             <p>Destination: use the owner-controlled treasury address above.</p>
                             <p>CYFUR mint: <code id="deposit-required-mint"></code></p>
-                            <p>Memo: <code id="deposit-required-memo"></code></p>
-                            <button id="deposit-copy-memo" class="button button-quiet" type="button">COPY MEMO</button>
+                            <p>Required memo: <code id="deposit-required-memo">RelicGrid payment intent: 00000000-0000-4000-8000-000000000000</code></p>
+                            <button id="wallet-copy-memo" class="button button-quiet" type="button" disabled>COPY MEMO</button>
                         </section>
                         <form id="deposit-signature-form" class="deposit-signature-form">
                             <input id="deposit-intent-id" name="paymentIntentId" type="hidden">
-                            <label class="wallet-field-label" for="deposit-signature">SOLANA TRANSACTION SIGNATURE</label>
-                            <input id="deposit-signature" name="signature" type="text" inputmode="text" autocomplete="off" spellcheck="false" maxlength="100" placeholder="Paste transaction signature" required disabled>
+                            <label class="wallet-field-label" for="deposit-signature">SOLANA TRANSACTION SIGNATURE OR LINK</label>
+                            <input id="deposit-signature" name="signature" type="text" inputmode="url" autocomplete="off" spellcheck="false" maxlength="300" placeholder="Paste signature or Solana Explorer/Solscan link" required disabled>
                             <button id="deposit-verify-button" class="button button-quiet" type="submit" disabled>CONFIRM DEPOSIT</button>
                         </form>
+                        <p id="deposit-transaction-result" class="wallet-api-status" hidden><a id="deposit-transaction-link" href="#" target="_blank" rel="noopener noreferrer">View transaction on Solana Explorer</a></p>
                         <div class="wallet-history-heading">
                             <span class="wallet-field-label">DEPOSIT HISTORY</span>
                             <button id="wallet-refresh" class="wallet-refresh" type="button">REFRESH</button>

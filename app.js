@@ -1027,43 +1027,25 @@ function getFundingPreflightError(diagnostic) {
 
 async function createCyfurDepositInstructions() {
     const config = walletStatusSnapshot;
-    if (!config?.depositsEnabled ||
-        !config.treasuryAddress || !config.officialMintAddress ||
+    if (!config?.treasuryAddress || !config.officialMintAddress ||
         !config.tokenProgramId || !Number.isInteger(config.tokenDecimals)) {
-        setWalletMessage("The server has not marked deposits READY. Do not send CYFUR.", "disabled");
+        setWalletMessage("A verified treasury and CYFUR mint are not configured. Do not send CYFUR.", "disabled");
         return;
     }
-    const transferButton = document.getElementById("wallet-transfer-button");
-    const amountInput = document.getElementById("wallet-transfer-amount");
-    try {
-        transferButton.disabled = true;
-        setWalletMessage("Preparing a unique deposit memo and amount for your account. No wallet connection is needed.", "pending");
-        const requestedAmountRaw = parseTokenAmount(amountInput.value, config.tokenDecimals).toString();
-        const paymentIntent = await requestPaymentIntent(amountInput.value);
-        if (paymentIntent.network !== config.network ||
-            paymentIntent.mintAddress !== config.officialMintAddress ||
-            paymentIntent.tokenProgramId !== config.tokenProgramId ||
-            paymentIntent.treasuryAddress !== config.treasuryAddress ||
-            paymentIntent.amountRaw !== requestedAmountRaw ||
-            Date.parse(paymentIntent.expiresAt) <= Date.now()) {
-            throw new Error("The server returned deposit instructions that do not match the configured CYFUR token, treasury, or expiry.");
-        }
-        document.getElementById("deposit-intent-id").value = paymentIntent.intentId;
-        document.getElementById("deposit-required-amount").textContent =
-            `${formatTokenAmount(paymentIntent.amountRaw, paymentIntent.tokenDecimals)} CYFUR`;
-        document.getElementById("deposit-required-mint").textContent = paymentIntent.mintAddress;
-        document.getElementById("deposit-required-memo").textContent = paymentIntent.memo;
-        document.getElementById("wallet-deposit-instructions").hidden = false;
-        document.getElementById("deposit-signature").disabled = false;
-        document.getElementById("deposit-verify-button").disabled = false;
-        amountInput.value = "";
-        setWalletMessage("Deposit instructions are ready. Send the exact amount to the treasury and include the unique memo. Then paste your transaction signature and confirm.", "ready");
-    } catch (error) {
-        console.error("Deposit instructions could not be created.", error);
-        setWalletMessage(`Deposit instructions could not be created. ${error.message}`, "error");
-    } finally {
-        transferButton.disabled = walletStatusSnapshot?.depositsEnabled !== true;
-    }
+    const memoValue = "RelicGrid payment intent: 00000000-0000-4000-8000-000000000000";
+    document.getElementById("deposit-required-amount").textContent = "1 CYFUR minimum";
+    document.getElementById("deposit-required-mint").textContent = config.officialMintAddress;
+    document.getElementById("deposit-required-memo").textContent = memoValue;
+    document.getElementById("wallet-copy-memo").disabled = !config.depositsEnabled;
+    document.getElementById("wallet-deposit-instructions").hidden = false;
+    document.getElementById("deposit-signature").disabled = !config.depositsEnabled;
+    document.getElementById("deposit-verify-button").disabled = !config.depositsEnabled;
+    setWalletMessage(
+        config.depositsEnabled
+            ? "Deposit address is ready. Send at least 1 CYFUR to the shared treasury, then submit the transaction signature or explorer link."
+            : `${config.disabledMessage || "Deposit verification is disabled."} Do not send CYFUR.`,
+        config.depositsEnabled ? "ready" : "disabled"
+    );
 }
 
 async function requestPaymentIntent(amount) {
@@ -1197,10 +1179,7 @@ async function connectSolanaWallet() {
     }
 }
 
-async function verifyDepositSignature(signature, paymentIntentId) {
-    if (typeof paymentIntentId !== "string" || !/^[0-9a-f-]{36}$/i.test(paymentIntentId)) {
-        throw new Error("Enter the payment intent ID created for this exact deposit.");
-    }
+async function verifyDepositSignature(signatureOrLink) {
     if (!supabaseConfigured || !supabase) throw new Error("Supabase authentication is unavailable.");
     const { data, error } = await supabase.auth.getSession();
     if (error) throw error;
@@ -1212,10 +1191,18 @@ async function verifyDepositSignature(signature, paymentIntentId) {
             Authorization: `Bearer ${accessToken}`,
             "Content-Type": "application/json"
         },
-        body: JSON.stringify({ signature, paymentIntentId }),
+        body: JSON.stringify({ signature: signatureOrLink }),
         cache: "no-store"
     });
     const result = await response.json().catch(() => ({}));
+    const transactionLink = document.getElementById("deposit-transaction-link");
+    const transactionResult = document.getElementById("deposit-transaction-result");
+    if (typeof result.transactionUrl === "string") {
+        transactionLink.href = result.transactionUrl;
+        transactionResult.hidden = false;
+    } else {
+        transactionResult.hidden = true;
+    }
     if (response.status === 202) {
         setWalletMessage("Deposit not detected yet. Please wait and check again; no credits have been added.", "pending");
         return false;
@@ -1230,16 +1217,15 @@ async function verifyDepositSignature(signature, paymentIntentId) {
             transaction_not_found: "Transaction was not found on the configured Solana network.",
             transaction_failed: "Solana reports this transaction failed. No credits were added.",
             wrong_token_or_destination: "This transaction does not contain a verified CYFUR transfer to the configured treasury. No credits were added.",
-            wrong_amount: "The finalized CYFUR amount does not match these deposit instructions. No credits were added.",
-            payment_intent_mismatch: "The transaction is missing this deposit's exact memo or the intent has expired. No credits were added.",
-            payment_intent_rejected: "This deposit intent expired or was already used by another transaction. No credits were added.",
+            wrong_amount: "The finalized CYFUR transfer is below the 1 CYFUR minimum. No credits were added.",
+            transaction_already_claimed: "This transaction has already been claimed or credited to another player. No credits were added.",
+            invalid_treasury_address: "The configured treasury is not a valid wallet authority. Do not send CYFUR.",
             mainnet_deposits_disabled: "Mainnet deposits are not enabled. Do not send CYFUR.",
             deposits_disabled: result.message || "Deposit verification is disabled. Do not send CYFUR.",
             direct_treasury_not_ready: result.message,
-            solana_wallet_not_linked: result.message,
             wallet_configuration_incomplete: result.message
         };
-        throw new Error(messages[result.error] || result.message || result.error || `Deposit verification failed (${response.status}).`);
+        throw new Error(`Rejected: ${messages[result.error] || result.message || result.error || `Deposit verification failed (${response.status}).`}`);
     }
     if (result.status !== "confirmed" || !/^\d+$/.test(String(result.creditAmountCredits)) ||
         !/^\d+$/.test(String(result.balanceCredits))) {
@@ -1722,8 +1708,8 @@ document.getElementById("wallet-balance-refresh").addEventListener("click", () =
     void refreshWallet();
 });
 document.getElementById("fund-account-button").addEventListener("click", () => {
-    document.getElementById("wallet-transfer-amount").focus({ preventScroll: true });
-    document.getElementById("wallet-transfer-amount").scrollIntoView({ behavior: "smooth", block: "center" });
+    void createCyfurDepositInstructions();
+    document.getElementById("wallet-deposit-instructions").scrollIntoView({ behavior: "smooth", block: "center" });
 });
 document.getElementById("wallet-transfer-form").addEventListener("submit", (event) => {
     event.preventDefault();
@@ -1757,36 +1743,34 @@ document.getElementById("wallet-copy-address").addEventListener("click", async (
         setWalletMessage(`Address copy failed. Select and copy it manually. ${error.message}`, "error");
     }
 });
-document.getElementById("deposit-copy-memo").addEventListener("click", async () => {
-    const memo = document.getElementById("deposit-required-memo").textContent.trim();
-    if (!memo) return;
+document.getElementById("wallet-copy-memo").addEventListener("click", async () => {
     try {
+        const memo = document.getElementById("deposit-required-memo").textContent.trim();
+        if (!memo) return;
         await navigator.clipboard.writeText(memo);
-        setWalletMessage("Unique payment memo copied. Include it exactly in the Solana transaction.", "ready");
+        setWalletMessage("Payment memo copied. Paste it into your wallet transfer instructions exactly as shown.", "ready");
     } catch (error) {
-        console.error("Payment memo could not be copied.", error);
-        setWalletMessage(`Memo copy failed. Select and copy it manually. ${error.message}`, "error");
+        console.error("Memo could not be copied.", error);
+        setWalletMessage(`Memo copy failed. Copy it manually. ${error.message}`, "error");
     }
 });
 document.getElementById("deposit-signature-form").addEventListener("submit", async (event) => {
     event.preventDefault();
     const input = document.getElementById("deposit-signature");
-    const intentInput = document.getElementById("deposit-intent-id");
     const button = document.getElementById("deposit-verify-button");
-    const signature = input.value.trim();
-    if (!signature) return;
+    const signatureOrLink = input.value.trim();
+    if (!signatureOrLink) return;
     button.disabled = true;
     button.textContent = "CHECKING ON SOLANA…";
     setWalletMessage("Verifying your CYFUR transaction on Solana…", "pending");
     try {
-        const paymentIntentId = intentInput.value.trim();
-        await verifyDepositSignature(signature, paymentIntentId);
+        await verifyDepositSignature(signatureOrLink);
     } catch (error) {
         console.error("Deposit signature verification failed.", error);
         setWalletMessage(error.message, "error");
     } finally {
         button.disabled = document.getElementById("wallet-status-value").textContent.startsWith("READY") === false ||
-            !intentInput.value;
+            !document.getElementById("wallet-deposit-instructions").hidden;
         button.textContent = "CONFIRM DEPOSIT";
     }
 });
