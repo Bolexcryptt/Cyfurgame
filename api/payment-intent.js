@@ -11,6 +11,7 @@ const {
     deriveAssociatedTokenAccount,
     GENESIS_HASHES,
     isBase58,
+    RELICGRID_TREASURY_ADDRESS,
     solanaRpc,
     TOKEN_PROGRAM_IDS
 } = require("../server/lib/solana-deposit");
@@ -66,6 +67,7 @@ module.exports = async function paymentIntent(request, response) {
             String(config.credits_per_token) !== "10000" ||
             config.rounding_policy !== "floor" ||
             !isBase58(config.treasury_address, 32) ||
+            config.treasury_address !== RELICGRID_TREASURY_ADDRESS ||
             config.treasury_address !== process.env.SOLANA_TREASURY_ADDRESS ||
             (network === "mainnet-beta" && config.token_decimals !== 8)) {
             return sendJson(response, 503, {

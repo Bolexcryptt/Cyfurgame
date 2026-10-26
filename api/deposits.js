@@ -10,6 +10,7 @@ const {
     deriveAssociatedTokenAccount,
     normalizeTransactionSignature,
     isBase58,
+    RELICGRID_TREASURY_ADDRESS,
     TOKEN_PROGRAM_IDS,
     verifyFinalizedDeposit
 } = require("../server/lib/solana-deposit");
@@ -96,6 +97,7 @@ module.exports = async function deposits(request, response) {
             !TOKEN_PROGRAM_IDS.has(config.token_program_id) ||
             !Number.isInteger(config.token_decimals) ||
             String(config.credits_per_token) !== "10000" || config.rounding_policy !== "floor" ||
+            config.treasury_address !== RELICGRID_TREASURY_ADDRESS ||
             !config.treasury_address || config.treasury_address !== process.env.SOLANA_TREASURY_ADDRESS) {
             return respondNotReady(
                 response,

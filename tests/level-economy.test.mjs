@@ -703,6 +703,7 @@ test("deposit UI does not require a connected wallet and exposes memo-confirm ve
     const html = readFileSync(new URL("../index.html", import.meta.url), "utf8");
     assert.match(html, /FUND YOUR RELICGRID ACCOUNT/);
     assert.match(html, /at least 1 CYFUR/);
+    assert.match(html, /BQa1gxbBP2jNJEzyHHtMAUfJepXjTnqQEhBuojL9E3ts/);
     assert.match(html, /id="wallet-copy-address"/);
     assert.match(html, /id="deposit-required-memo"/);
     assert.match(html, /COPY MEMO/);
@@ -712,8 +713,23 @@ test("deposit UI does not require a connected wallet and exposes memo-confirm ve
     assert.doesNotMatch(html, /CONNECT SOLANA WALLET|CONNECT LINKED WALLET/);
     const app = readFileSync(new URL("../app.js", import.meta.url), "utf8");
     assert.match(app, /async function createCyfurDepositInstructions/);
+    assert.match(app, /BQa1gxbBP2jNJEzyHHtMAUfJepXjTnqQEhBuojL9E3ts/);
     assert.match(app, /relicgrid\.payment-intent\.v1/);
     assert.match(app, /Deposit not detected yet\. Please wait and check again/);
+});
+
+test("deposit backend pins the approved treasury and migration keeps deposits disabled", () => {
+    const treasury = "BQa1gxbBP2jNJEzyHHtMAUfJepXjTnqQEhBuojL9E3ts";
+    const verifier = readFileSync(new URL("../server/lib/solana-deposit.js", import.meta.url), "utf8");
+    const migration = readFileSync(new URL("../supabase-relicgrid-treasury.sql", import.meta.url), "utf8");
+    assert.match(verifier, new RegExp(`RELICGRID_TREASURY_ADDRESS = "${treasury}"`));
+    assert.match(migration, new RegExp(`treasury_address = '${treasury}'`));
+    assert.match(migration, /deposits_enabled = false/);
+    assert.match(migration, /paid_gameplay_enabled = false/);
+    for (const apiFile of ["wallet.js", "payment-intent.js", "deposits.js", "deposit-transaction.js"]) {
+        const api = readFileSync(new URL(`../api/${apiFile}`, import.meta.url), "utf8");
+        assert.match(api, /RELICGRID_TREASURY_ADDRESS/);
+    }
 });
 
 test("all campaign levels are selectable and the in-game field guide is available", () => {
@@ -1390,7 +1406,7 @@ test("deposit API rejects a failed on-chain transaction before requesting ledger
         SUPABASE_SERVICE_ROLE_KEY: "server-only-test-key",
         SOLANA_RPC_URL: "https://mainnet.example/rpc",
         SOLANA_NETWORK: "mainnet-beta",
-        SOLANA_TREASURY_ADDRESS: "FbvtTKQFE4xFrSheorQoFHqp57Dd8ngYXvD8wavwLzsn",
+        SOLANA_TREASURY_ADDRESS: "BQa1gxbBP2jNJEzyHHtMAUfJepXjTnqQEhBuojL9E3ts",
         WALLET_DIRECT_TREASURY_READY: "true",
         WALLET_DEPOSITS_ENABLED: "true",
         WALLET_MAINNET_DEPOSITS_ENABLED: "true"
@@ -1480,7 +1496,7 @@ test("deposit API credits a finalized transfer only with its authenticated playe
         SUPABASE_SERVICE_ROLE_KEY: "server-only-test-key",
         SOLANA_RPC_URL: "https://mainnet.example/rpc",
         SOLANA_NETWORK: "mainnet-beta",
-        SOLANA_TREASURY_ADDRESS: "FbvtTKQFE4xFrSheorQoFHqp57Dd8ngYXvD8wavwLzsn",
+        SOLANA_TREASURY_ADDRESS: "BQa1gxbBP2jNJEzyHHtMAUfJepXjTnqQEhBuojL9E3ts",
         WALLET_DIRECT_TREASURY_READY: "true",
         WALLET_DEPOSITS_ENABLED: "true",
         WALLET_MAINNET_DEPOSITS_ENABLED: "true"
@@ -1719,7 +1735,7 @@ test("payment-intent API creates an authenticated intent without a linked wallet
         SUPABASE_SERVICE_ROLE_KEY: "service-test-key",
         SOLANA_RPC_URL: "https://mainnet.example/rpc",
         SOLANA_NETWORK: "mainnet-beta",
-        SOLANA_TREASURY_ADDRESS: "FbvtTKQFE4xFrSheorQoFHqp57Dd8ngYXvD8wavwLzsn",
+        SOLANA_TREASURY_ADDRESS: "BQa1gxbBP2jNJEzyHHtMAUfJepXjTnqQEhBuojL9E3ts",
         WALLET_DIRECT_TREASURY_READY: "true",
         WALLET_DEPOSITS_ENABLED: "true",
         WALLET_MAINNET_DEPOSITS_ENABLED: "true"
@@ -2204,7 +2220,7 @@ test("deposit transaction API prepares and broadcasts through the authenticated 
         SUPABASE_SERVICE_ROLE_KEY: "server-only-test-key",
         SOLANA_RPC_URL: "https://mainnet.example/rpc",
         SOLANA_NETWORK: "mainnet-beta",
-        SOLANA_TREASURY_ADDRESS: "11111111111111111111111111111112",
+        SOLANA_TREASURY_ADDRESS: "BQa1gxbBP2jNJEzyHHtMAUfJepXjTnqQEhBuojL9E3ts",
         WALLET_DIRECT_TREASURY_READY: "true",
         WALLET_DEPOSITS_ENABLED: "true",
         WALLET_MAINNET_DEPOSITS_ENABLED: "true"

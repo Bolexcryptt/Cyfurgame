@@ -11,6 +11,7 @@ const {
     deriveAssociatedTokenAccount,
     GENESIS_HASHES,
     isBase58,
+    RELICGRID_TREASURY_ADDRESS,
     solanaRpc
 } = require("../server/lib/solana-deposit");
 
@@ -51,6 +52,9 @@ module.exports = async function wallet(request, response) {
         const treasuryAddress = config?.treasury_address ?? null;
         let treasuryTokenAccountAddress = null;
         const readinessChecks = [];
+        if (treasuryAddress !== RELICGRID_TREASURY_ADDRESS) {
+            readinessChecks.push("The configured treasury does not match the approved RelicGrid treasury address.");
+        }
         if (!config ||
             !config.official_mint_address ||
             !config.token_program_id ||

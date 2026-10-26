@@ -4,6 +4,7 @@ const TOKEN_PROGRAM_IDS = new Set([
     "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
     "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"
 ]);
+const RELICGRID_TREASURY_ADDRESS = "BQa1gxbBP2jNJEzyHHtMAUfJepXjTnqQEhBuojL9E3ts";
 const GENESIS_HASHES = {
     "mainnet-beta": "5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d",
     devnet: "EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG"
@@ -419,6 +420,7 @@ async function verifyFinalizedDeposit({
 
 module.exports = {
     GENESIS_HASHES,
+    RELICGRID_TREASURY_ADDRESS,
     TOKEN_PROGRAM_IDS,
     deriveAssociatedTokenAccount,
     isBase58,

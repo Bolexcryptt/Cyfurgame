@@ -7,6 +7,7 @@ const {
 } = require("../server/lib/wallet");
 const {
     GENESIS_HASHES,
+    RELICGRID_TREASURY_ADDRESS,
     TOKEN_PROGRAM_IDS,
     isBase58,
     sanitizeRpcErrorData,
@@ -575,6 +576,7 @@ module.exports = async function depositTransaction(request, response) {
             String(config.credits_per_token) !== "10000" ||
             config.rounding_policy !== "floor" ||
             !isBase58(config.treasury_address, 32) ||
+            config.treasury_address !== RELICGRID_TREASURY_ADDRESS ||
             config.treasury_address !== process.env.SOLANA_TREASURY_ADDRESS) {
             return notReady(response, "wallet_configuration_incomplete", "Deposit configuration is not ready.");
         }

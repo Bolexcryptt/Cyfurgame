@@ -24,6 +24,7 @@ import {
 } from "./wallet-provider.mjs";
 
 const storageKey = "fluxgrid.player.v1";
+const RELICGRID_TREASURY_ADDRESS = "BQa1gxbBP2jNJEzyHHtMAUfJepXjTnqQEhBuojL9E3ts";
 const screens = [
     "video-screen",
     "name-screen",
@@ -642,8 +643,8 @@ async function refreshWallet() {
     refreshButton.textContent = "LOADING";
     balanceRefreshButton.disabled = true;
     balanceRefreshButton.textContent = "CHECKING BALANCE…";
-    copyButton.disabled = true;
-    address.textContent = "Not configured";
+    copyButton.disabled = false;
+    address.textContent = RELICGRID_TREASURY_ADDRESS;
     status.textContent = "DISABLED";
     status.dataset.state = "disabled";
     balance.textContent = "Unavailable";
@@ -691,12 +692,10 @@ async function refreshWallet() {
             throw new Error(result.error || `Wallet request failed (${response.status}).`);
         }
 
-        if (result.treasuryAddress) {
-            address.textContent = result.treasuryAddress;
-            copyButton.disabled = false;
-        }
+        address.textContent = RELICGRID_TREASURY_ADDRESS;
         walletStatusSnapshot = result;
         const depositReady = result.depositsEnabled === true &&
+            result.treasuryAddress === RELICGRID_TREASURY_ADDRESS &&
             Boolean(result.officialMintAddress) &&
             Boolean(result.tokenProgramId) &&
             Number.isInteger(result.tokenDecimals) &&
@@ -715,8 +714,11 @@ async function refreshWallet() {
         if (depositReady) {
             await createCyfurDepositInstructions();
         } else {
+            const treasuryMismatch = result.treasuryAddress !== RELICGRID_TREASURY_ADDRESS;
             setWalletMessage(
-                result.disabledMessage || "Funding is disabled by the server. No transfer will be accepted or credited; do not send CYFUR.",
+                treasuryMismatch
+                    ? "The server treasury does not match the displayed approved address. Deposits are disabled; do not send CYFUR."
+                    : result.disabledMessage || "Funding is disabled by the server. No transfer will be accepted or credited; do not send CYFUR.",
                 "disabled"
             );
         }
