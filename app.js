@@ -726,13 +726,17 @@ async function refreshWallet() {
             await createCyfurDepositInstructions();
         } else {
             const treasuryMismatch = result.treasuryAddress !== RELICGRID_TREASURY_ADDRESS;
+            const readinessMessage = typeof result.disabledMessage === "string" &&
+                result.disabledMessage.trim()
+                ? result.disabledMessage
+                : "Deposit verification is disabled by server configuration.";
             paymentMemo.textContent = treasuryMismatch
                 ? "Unavailable: the server treasury does not match this displayed address."
-                : "Unavailable: deposit verification is disabled by server configuration.";
+                : `Unavailable: ${readinessMessage}`;
             setWalletMessage(
                 treasuryMismatch
                     ? "The server treasury does not match the displayed approved address. Deposits are disabled; do not send CYFUR."
-                    : result.disabledMessage || "Funding is disabled by the server. No transfer will be accepted or credited; do not send CYFUR.",
+                    : readinessMessage,
                 "disabled"
             );
         }

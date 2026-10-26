@@ -711,7 +711,8 @@ test("deposit UI does not require a connected wallet and exposes memo-confirm ve
     assert.match(html, /Paste signature or Solana Explorer\/Solscan link/);
     const app = readFileSync(new URL("../app.js", import.meta.url), "utf8");
     assert.match(app, /fetchWithTimeout\(apiUrl\("payment-intent"\)/);
-    assert.match(app, /Unavailable: deposit verification is disabled by server configuration/);
+    assert.match(app, /Unavailable: \$\{readinessMessage\}/);
+    assert.match(app, /typeof result\.disabledMessage === "string"/);
     assert.match(app, /Check the Vercel function logs; deposits remain disabled/);
     assert.match(app, /Check the Vercel function logs; do not send CYFUR/);
     assert.doesNotMatch(html, /id="wallet-transfer-amount"|id="wallet-transfer-form"|id="wallet-preflight-button"/);
