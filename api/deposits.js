@@ -10,6 +10,7 @@ const {
     deriveAssociatedTokenAccount,
     normalizeTransactionSignature,
     isBase58,
+    RELICGRID_CYFUR_MINT_ADDRESS,
     RELICGRID_TREASURY_ADDRESS,
     TOKEN_PROGRAM_IDS,
     verifyFinalizedDeposit
@@ -93,6 +94,7 @@ module.exports = async function deposits(request, response) {
         if (!config || config.deposits_enabled !== true || config.network !== configuredNetwork ||
             !config.official_mint_address || !config.token_program_id ||
             !isBase58(config.official_mint_address, 32) ||
+            config.official_mint_address !== RELICGRID_CYFUR_MINT_ADDRESS ||
             !isBase58(config.treasury_address, 32) ||
             !TOKEN_PROGRAM_IDS.has(config.token_program_id) ||
             !Number.isInteger(config.token_decimals) ||

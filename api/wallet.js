@@ -10,7 +10,9 @@ const {
 const {
     deriveAssociatedTokenAccount,
     GENESIS_HASHES,
+    isOfficialCyfurMintAccount,
     isBase58,
+    RELICGRID_CYFUR_MINT_ADDRESS,
     RELICGRID_TREASURY_ADDRESS,
     solanaRpc
 } = require("../server/lib/solana-deposit");
@@ -60,6 +62,9 @@ module.exports = async function wallet(request, response) {
         if (treasuryAddress !== RELICGRID_TREASURY_ADDRESS) {
             readinessChecks.push("The configured treasury does not match the approved RelicGrid treasury address.");
         }
+        if (config?.official_mint_address !== RELICGRID_CYFUR_MINT_ADDRESS) {
+            readinessChecks.push("The configured CYFUR mint does not match the owner-verified production mint.");
+        }
         if (!config ||
             !config.official_mint_address ||
             !config.token_program_id ||
@@ -102,11 +107,15 @@ module.exports = async function wallet(request, response) {
             } else if (treasuryAccount?.value &&
                 treasuryAccount.value.owner !== "11111111111111111111111111111111") {
                 readinessChecks.push("The configured treasury address is not a System Program-owned wallet authority; token accounts are not valid treasury wallets.");
-            } else if (!mintAccount?.value ||
-                mintAccount.value.owner !== config.token_program_id ||
-                mintAccount.value.data?.parsed?.type !== "mint" ||
-                mintAccount.value.data?.parsed?.info?.decimals !== config.token_decimals) {
-                readinessChecks.push("The configured CYFUR mint metadata does not match finalized Solana mainnet account data.");
+            } else if (config.network === "mainnet-beta"
+                ? !isOfficialCyfurMintAccount(mintAccount) ||
+                    config.token_program_id !== "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA" ||
+                    config.token_decimals !== 8
+                : !mintAccount?.value ||
+                    mintAccount.value.owner !== config.token_program_id ||
+                    mintAccount.value.data?.parsed?.type !== "mint" ||
+                    mintAccount.value.data?.parsed?.info?.decimals !== config.token_decimals) {
+                readinessChecks.push("The configured CYFUR mint metadata, token program, decimals, or revoked authorities do not match finalized Solana mainnet account data.");
             } else {
                 try {
                     treasuryTokenAccountAddress = deriveAssociatedTokenAccount(

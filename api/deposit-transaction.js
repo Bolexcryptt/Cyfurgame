@@ -7,6 +7,7 @@ const {
 } = require("../server/lib/wallet");
 const {
     GENESIS_HASHES,
+    RELICGRID_CYFUR_MINT_ADDRESS,
     RELICGRID_TREASURY_ADDRESS,
     TOKEN_PROGRAM_IDS,
     isBase58,
@@ -571,6 +572,7 @@ module.exports = async function depositTransaction(request, response) {
         if (!config || (!readOnlyAction && config.deposits_enabled !== true) ||
             config.network !== network ||
             !isBase58(config.official_mint_address, 32) ||
+            config.official_mint_address !== RELICGRID_CYFUR_MINT_ADDRESS ||
             !TOKEN_PROGRAM_IDS.has(config.token_program_id) ||
             !Number.isInteger(config.token_decimals) ||
             String(config.credits_per_token) !== "10000" ||

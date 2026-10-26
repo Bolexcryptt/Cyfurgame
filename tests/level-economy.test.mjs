@@ -36,7 +36,9 @@ const {
 } = require("../server/lib/wallet.js");
 const {
     deriveAssociatedTokenAccount,
+    isOfficialCyfurMintAccount,
     normalizeTransactionSignature,
+    RELICGRID_CYFUR_MINT_ADDRESS,
     verifyFinalizedDeposit
 } = require("../server/lib/solana-deposit.js");
 const { getLevelEconomyAndStars, verifyLevelProof } = require("../server/lib/level-completion.js");
@@ -725,15 +727,36 @@ test("deposit UI does not require a connected wallet and exposes memo-confirm ve
 
 test("deposit backend pins the approved treasury and migration keeps deposits disabled", () => {
     const treasury = "BQa1gxbBP2jNJEzyHHtMAUfJepXjTnqQEhBuojL9E3ts";
+    const mint = "9F4hLLngEAhepsH2HLTH6kBYmmq6dzm4GXRrcpME3uam";
+    assert.equal(RELICGRID_CYFUR_MINT_ADDRESS, mint);
+    const mintAccount = {
+        value: {
+            owner: "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+            data: { parsed: { type: "mint", info: {
+                decimals: 8,
+                mintAuthority: null,
+                freezeAuthority: null
+            } } }
+        }
+    };
+    assert.equal(isOfficialCyfurMintAccount(mintAccount), true);
+    assert.equal(isOfficialCyfurMintAccount({
+        value: {
+            ...mintAccount.value,
+            data: { parsed: { type: "mint", info: { ...mintAccount.value.data.parsed.info, freezeAuthority: treasury } } }
+        }
+    }), false);
     const verifier = readFileSync(new URL("../server/lib/solana-deposit.js", import.meta.url), "utf8");
     const migration = readFileSync(new URL("../supabase-relicgrid-treasury.sql", import.meta.url), "utf8");
     assert.match(verifier, new RegExp(`RELICGRID_TREASURY_ADDRESS = "${treasury}"`));
+    assert.match(verifier, new RegExp(`RELICGRID_CYFUR_MINT_ADDRESS = "${mint}"`));
     assert.match(migration, new RegExp(`treasury_address = '${treasury}'`));
     assert.match(migration, /deposits_enabled = false/);
     assert.match(migration, /paid_gameplay_enabled = false/);
     for (const apiFile of ["wallet.js", "payment-intent.js", "deposits.js", "deposit-transaction.js"]) {
         const api = readFileSync(new URL(`../api/${apiFile}`, import.meta.url), "utf8");
         assert.match(api, /RELICGRID_TREASURY_ADDRESS/);
+        assert.match(api, /RELICGRID_CYFUR_MINT_ADDRESS/);
     }
 });
 
@@ -1333,7 +1356,11 @@ test("Solana verifier credits only successful finalized transfers to the mapped 
                         ? { value: { owner: "11111111111111111111111111111111", data: ["", "base64"] } }
                         : call.params[0] === tokenAccount
                             ? { value: { owner: tokenProgramId, data: { parsed: { type: "account", info: { mint: officialMint, owner: depositAddress } } } } }
-                            : { value: { owner: tokenProgramId, data: { parsed: { type: "mint", info: { decimals: 8 } } } } };
+                            : { value: { owner: tokenProgramId, data: { parsed: { type: "mint", info: {
+                                decimals: 8,
+                                mintAuthority: null,
+                                freezeAuthority: null
+                            } } } } };
         return new Response(JSON.stringify({ result }), { status: 200 });
     };
     const options = {
@@ -1688,7 +1715,11 @@ test("deposit API credits a finalized transfer only with its authenticated playe
                             ? { value: { owner: "11111111111111111111111111111111", data: ["", "base64"] } }
                             : call.params[0] === treasuryTokenAccount
                                 ? { value: { owner: tokenProgramId, data: { parsed: { type: "account", info: { mint: mintAddress, owner: environment.SOLANA_TREASURY_ADDRESS } } } } }
-                                : { value: { owner: tokenProgramId, data: { parsed: { type: "mint", info: { decimals: 8 }, type: "mint" } } } };
+                                : { value: { owner: tokenProgramId, data: { parsed: { type: "mint", info: {
+                                    decimals: 8,
+                                    mintAuthority: null,
+                                    freezeAuthority: null
+                                } } } } };
             return new Response(JSON.stringify({ result }), { status: 200 });
         }
         if (target.includes("/rpc/process_verified_payment_intent")) {
@@ -1800,6 +1831,7 @@ test("payment-intent API creates an authenticated intent without a linked wallet
     const requests = [];
     let persistedIntent = null;
     const mintAddress = "9F4hLLngEAhepsH2HLTH6kBYmmq6dzm4GXRrcpME3uam";
+    let configuredMintAddress = mintAddress;
     const tokenProgramId = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
     const treasuryTokenAccount = deriveAssociatedTokenAccount(
         environment.SOLANA_TREASURY_ADDRESS,
@@ -1816,7 +1848,7 @@ test("payment-intent API creates an authenticated intent without a linked wallet
             return new Response(JSON.stringify([{
                 deposits_enabled: true,
                 network: "mainnet-beta",
-                official_mint_address: mintAddress,
+                official_mint_address: configuredMintAddress,
                 token_program_id: tokenProgramId,
                 token_decimals: 8,
                 credits_per_token: "10000",
@@ -1831,7 +1863,11 @@ test("payment-intent API creates an authenticated intent without a linked wallet
                 : call.params[0] === environment.SOLANA_TREASURY_ADDRESS
                     ? { value: { owner: "11111111111111111111111111111111" } }
                     : call.params[0] === mintAddress
-                        ? { value: { owner: tokenProgramId, data: { parsed: { type: "mint", info: { decimals: 8 } } } } }
+                        ? { value: { owner: tokenProgramId, data: { parsed: { type: "mint", info: {
+                            decimals: 8,
+                            mintAuthority: null,
+                            freezeAuthority: null
+                        } } } } }
                         : { value: { owner: tokenProgramId, data: { parsed: { type: "account", info: { mint: mintAddress, owner: environment.SOLANA_TREASURY_ADDRESS } } } } };
             return new Response(JSON.stringify({ result }), { status: 200 });
         }
@@ -1854,6 +1890,23 @@ test("payment-intent API creates an authenticated intent without a linked wallet
 
     try {
         const endpoint = require("../api/payment-intent.js");
+        configuredMintAddress = "So11111111111111111111111111111111111111112";
+        const wrongMintResponse = {
+            statusCode: 200,
+            status(code) { this.statusCode = code; return this; },
+            setHeader() {},
+            json(payload) { this.payload = payload; }
+        };
+        await endpoint({
+            method: "POST",
+            headers: { authorization: "Bearer test-session" },
+            body: {}
+        }, wrongMintResponse);
+        assert.equal(wrongMintResponse.statusCode, 503);
+        assert.equal(wrongMintResponse.payload.error, "wallet_configuration_incomplete");
+        assert.equal(persistedIntent, null);
+        configuredMintAddress = mintAddress;
+
         const response = {
             statusCode: 200,
             headers: {},

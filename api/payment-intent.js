@@ -10,7 +10,9 @@ const {
 const {
     deriveAssociatedTokenAccount,
     GENESIS_HASHES,
+    isOfficialCyfurMintAccount,
     isBase58,
+    RELICGRID_CYFUR_MINT_ADDRESS,
     RELICGRID_TREASURY_ADDRESS,
     solanaRpc,
     TOKEN_PROGRAM_IDS
@@ -62,6 +64,7 @@ module.exports = async function paymentIntent(request, response) {
         const config = configs[0];
         if (!config || config.deposits_enabled !== true || config.network !== network ||
             !isBase58(config.official_mint_address, 32) ||
+            config.official_mint_address !== RELICGRID_CYFUR_MINT_ADDRESS ||
             !TOKEN_PROGRAM_IDS.has(config.token_program_id) ||
             !Number.isInteger(config.token_decimals) ||
             String(config.credits_per_token) !== "10000" ||
@@ -100,10 +103,9 @@ module.exports = async function paymentIntent(request, response) {
         if (genesisHash !== GENESIS_HASHES[network] ||
             (treasuryAccount?.value &&
                 treasuryAccount.value.owner !== "11111111111111111111111111111111") ||
-            !mintAccount?.value ||
-            mintAccount.value.owner !== config.token_program_id ||
-            mintAccount.value.data?.parsed?.type !== "mint" ||
-            mintAccount.value.data?.parsed?.info?.decimals !== config.token_decimals ||
+            !isOfficialCyfurMintAccount(mintAccount) ||
+            config.token_program_id !== "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA" ||
+            config.token_decimals !== 8 ||
             !treasuryTokenAccountInfo?.value ||
             treasuryTokenAccountInfo.value.owner !== config.token_program_id ||
             treasuryTokenAccountInfo.value.data?.parsed?.type !== "account" ||

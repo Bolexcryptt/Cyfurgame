@@ -4,6 +4,7 @@ const TOKEN_PROGRAM_IDS = new Set([
     "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
     "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"
 ]);
+const RELICGRID_CYFUR_MINT_ADDRESS = "9F4hLLngEAhepsH2HLTH6kBYmmq6dzm4GXRrcpME3uam";
 const RELICGRID_TREASURY_ADDRESS = "BQa1gxbBP2jNJEzyHHtMAUfJepXjTnqQEhBuojL9E3ts";
 const GENESIS_HASHES = {
     "mainnet-beta": "5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d",
@@ -40,6 +41,15 @@ function deriveAssociatedTokenAccount(ownerAddress, mintAddress, tokenProgramId)
         false,
         new PublicKey(tokenProgramId)
     ).toBase58();
+}
+
+function isOfficialCyfurMintAccount(account) {
+    const info = account?.value?.data?.parsed?.info;
+    return account?.value?.owner === "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA" &&
+        account.value.data?.parsed?.type === "mint" &&
+        info?.decimals === 8 &&
+        info.mintAuthority === null &&
+        info.freezeAuthority === null;
 }
 
 function normalizeTransactionSignature(value) {
@@ -262,6 +272,12 @@ async function verifyFinalizedDeposit({
     if (genesisHash !== GENESIS_HASHES[network]) {
         throw new Error("Configured Solana RPC endpoint is connected to a different network.");
     }
+    if (network === "mainnet-beta" &&
+        (officialMint !== RELICGRID_CYFUR_MINT_ADDRESS ||
+            tokenProgramId !== "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA" ||
+            tokenDecimals !== 8)) {
+        throw new Error("Mainnet deposit configuration does not match the owner-verified CYFUR mint.");
+    }
     const signatureStatus = await solanaRpc(rpcUrl, "getSignatureStatuses", [[signature], {
         searchTransactionHistory: true
     }], fetchImpl);
@@ -311,9 +327,11 @@ async function verifyFinalizedDeposit({
     }
 
     const mintInfo = mintAccount.value.data?.parsed?.info;
-    if (mintAccount.value.owner !== tokenProgramId ||
-        mintInfo?.decimals !== tokenDecimals ||
-        mintAccount.value.data?.parsed?.type !== "mint") {
+    if (network === "mainnet-beta"
+        ? !isOfficialCyfurMintAccount(mintAccount)
+        : mintAccount.value.owner !== tokenProgramId ||
+            mintInfo?.decimals !== tokenDecimals ||
+            mintAccount.value.data?.parsed?.type !== "mint") {
         throw new Error("Configured mint, token program, or decimals do not match finalized on-chain mint data.");
     }
 
@@ -420,9 +438,11 @@ async function verifyFinalizedDeposit({
 
 module.exports = {
     GENESIS_HASHES,
+    RELICGRID_CYFUR_MINT_ADDRESS,
     RELICGRID_TREASURY_ADDRESS,
     TOKEN_PROGRAM_IDS,
     deriveAssociatedTokenAccount,
+    isOfficialCyfurMintAccount,
     isBase58,
     normalizeTransactionSignature,
     sanitizeRpcErrorMessage,
