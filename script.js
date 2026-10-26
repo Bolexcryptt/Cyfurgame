@@ -978,32 +978,44 @@ function startScene() {
 
     function addActiveSegment(segment, index, visibleCount, preview = false) {
         const curve = new THREE.LineCurve3(segment.from, segment.to);
-        const glow = new THREE.Mesh(
-            new THREE.TubeGeometry(curve, 1, 0.055, 8, false),
+        const halo = new THREE.Mesh(
+            new THREE.TubeGeometry(curve, 1, 0.14, 8, false),
             new THREE.MeshBasicMaterial({
                 color: segment.color,
                 transparent: true,
-                opacity: preview ? 0.11 : 0.2,
+                opacity: preview ? 0.1 : 0.2,
+                depthWrite: false,
+                toneMapped: false,
+                blending: THREE.AdditiveBlending
+            })
+        );
+        const glow = new THREE.Mesh(
+            new THREE.TubeGeometry(curve, 1, 0.052, 8, false),
+            new THREE.MeshBasicMaterial({
+                color: segment.color,
+                transparent: true,
+                opacity: preview ? 0.34 : 0.62,
                 depthWrite: false,
                 toneMapped: false,
                 blending: THREE.AdditiveBlending
             })
         );
         const core = new THREE.Mesh(
-            new THREE.TubeGeometry(curve, 1, 0.018, 6, false),
+            new THREE.TubeGeometry(curve, 1, 0.014, 6, false),
             new THREE.MeshBasicMaterial({
-                color: segment.color,
+                color: 0xe5fbff,
                 transparent: preview,
-                opacity: preview ? 0.72 : 1,
+                opacity: preview ? 0.84 : 1,
                 depthWrite: !preview,
                 toneMapped: false,
                 blending: THREE.AdditiveBlending
             })
         );
+        halo.visible = index < visibleCount;
         glow.visible = index < visibleCount;
         core.visible = index < visibleCount;
-        activeBeamGroup.add(glow, core);
-        beamSegments.push({ glow, core });
+        activeBeamGroup.add(halo, glow, core);
+        beamSegments.push({ halo, glow, core });
     }
 
     function drawActiveRoute(route, visibleCount = route.segments.length, preview = false) {
@@ -1050,14 +1062,13 @@ function startScene() {
             const crystalGroup = new THREE.Group();
             crystalGroup.position.set(gridX(definition.col), 0.2, gridZ(definition.row));
             levelObjectGroup.add(crystalGroup);
-            addCylinder(crystalGroup, 0.3, 0.38, 0.12, [0, 0.06, 0], materials.metalEdge, 6);
 
             const ring = new THREE.Mesh(
-                new THREE.TorusGeometry(0.34, 0.025, 6, 24),
+                new THREE.TorusGeometry(0.29, 0.012, 5, 24),
                 new THREE.MeshBasicMaterial({
                     color: crystalColors[definition.inputColor],
                     transparent: true,
-                    opacity: 0.8,
+                    opacity: 0.36,
                     toneMapped: false
                 })
             );
@@ -1068,17 +1079,29 @@ function startScene() {
             const material = new THREE.MeshStandardMaterial({
                 color: crystalColors[definition.inputColor],
                 emissive: crystalColors[definition.inputColor],
-                emissiveIntensity: 0.46,
-                metalness: 0.24,
-                roughness: 0.16,
-                transparent: true,
-                opacity: 0.94,
+                emissiveIntensity: 0.34,
+                metalness: 0.08,
+                roughness: 0.24,
                 flatShading: true
             });
-            const prism = new THREE.Mesh(new THREE.IcosahedronGeometry(0.29, 1), material);
-            prism.position.y = 0.53;
-            prism.rotation.set(0.2, 0.3 + index * 0.2, 0.12);
-            prism.castShadow = true;
+            const prism = new THREE.Group();
+            const shards = [
+                { x: 0, z: 0, height: 0.82, radius: 0.19 },
+                { x: -0.17, z: 0.04, height: 0.58, radius: 0.14 },
+                { x: 0.16, z: 0.05, height: 0.63, radius: 0.15 },
+                { x: -0.06, z: -0.16, height: 0.51, radius: 0.13 },
+                { x: 0.08, z: 0.17, height: 0.55, radius: 0.135 }
+            ];
+            shards.forEach((shard, shardIndex) => {
+                const crystal = new THREE.Mesh(
+                    new THREE.CylinderGeometry(0, shard.radius, shard.height, 5, 1),
+                    material
+                );
+                crystal.position.set(shard.x, 0.11 + shard.height / 2, shard.z);
+                crystal.rotation.y = (shardIndex * Math.PI) / 5 + index * 0.23;
+                crystal.castShadow = true;
+                prism.add(crystal);
+            });
             crystalGroup.add(prism);
             const labelCanvas = document.createElement("canvas");
             labelCanvas.width = 128;
@@ -2113,8 +2136,9 @@ function startScene() {
             const visibleCount = progress >= 1
                 ? traceResult.segments.length
                 : Math.min(traceResult.segments.length, Math.floor(progress * traceResult.segments.length) + 1);
-            beamSegments.forEach(({ glow, core }, index) => {
+            beamSegments.forEach(({ halo, glow, core }, index) => {
                 const visible = index < visibleCount;
+                halo.visible = visible;
                 glow.visible = visible;
                 core.visible = visible;
             });

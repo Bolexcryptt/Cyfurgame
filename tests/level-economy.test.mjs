@@ -2942,7 +2942,11 @@ test("all 99 generated layouts are unique, valid, and solvable through every ord
     assert.equal(levels.length, 99);
     assert.match(scene, /const coreScale = 0\.36/);
     assert.match(scene, /decorativeTerminalGroup\.visible = false/);
-    assert.match(scene, /new THREE\.IcosahedronGeometry\(0\.29, 1\)/);
+    assert.match(scene, /new THREE\.CylinderGeometry\(0, shard\.radius, shard\.height, 5, 1\)/);
+    assert.match(scene, /const shards = \[/);
+    assert.doesNotMatch(scene, /addCylinder\(crystalGroup, 0\.3, 0\.38/);
+    assert.match(scene, /new THREE\.TubeGeometry\(curve, 1, 0\.14, 8, false\)/);
+    assert.match(scene, /color: 0xe5fbff/);
     for (const [index, level] of levels.entries()) {
         assert.equal(level.number, index + 1);
         assert.ok(level.start.row >= 0 && level.start.row < 6);
