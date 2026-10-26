@@ -1,3 +1,5 @@
+const { getAssociatedTokenAddressSync } = require("@solana/spl-token");
+
 const TOKEN_PROGRAM_IDS = new Set([
     "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
     "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"
@@ -23,6 +25,20 @@ function isBase58(value, expectedBytes) {
         byteLength += 1;
     }
     return byteLength === expectedBytes;
+}
+
+function deriveAssociatedTokenAccount(ownerAddress, mintAddress, tokenProgramId) {
+    if (!isBase58(ownerAddress, 32) || !isBase58(mintAddress, 32) ||
+        !TOKEN_PROGRAM_IDS.has(tokenProgramId)) {
+        throw new TypeError("Invalid treasury owner, mint, or token program for associated token account derivation.");
+    }
+    const { PublicKey } = require("@solana/web3.js");
+    return getAssociatedTokenAddressSync(
+        new PublicKey(mintAddress),
+        new PublicKey(ownerAddress),
+        false,
+        new PublicKey(tokenProgramId)
+    ).toBase58();
 }
 
 function normalizeTransactionSignature(value) {
@@ -197,6 +213,7 @@ async function solanaRpc(rpcUrl, method, params, fetchImpl = fetch) {
 async function verifyFinalizedDeposit({
     signature,
     depositAddress,
+    depositTokenAccount,
     expectedSourceWallet,
     officialMint,
     tokenProgramId,
@@ -209,7 +226,9 @@ async function verifyFinalizedDeposit({
     fetchImpl = fetch
 }) {
     if (!isBase58(signature, 64)) throw new TypeError("Invalid Solana transaction signature.");
-    if (!isBase58(depositAddress, 32) || !isBase58(officialMint, 32)) {
+    if (!isBase58(depositAddress, 32) ||
+        !isBase58(depositTokenAccount, 32) ||
+        !isBase58(officialMint, 32)) {
         throw new TypeError("Invalid configured Solana address.");
     }
     if (expectedSourceWallet !== undefined && !isBase58(expectedSourceWallet, 32)) {
@@ -250,7 +269,7 @@ async function verifyFinalizedDeposit({
     if (status.err) return { state: "failed" };
     if (status.confirmationStatus !== "finalized") return { state: "pending" };
 
-    const [transaction, mintAccount, treasuryAccount] = await Promise.all([
+    const [transaction, mintAccount, treasuryAccount, treasuryTokenAccount] = await Promise.all([
         solanaRpc(rpcUrl, "getTransaction", [signature, {
             commitment: "finalized",
             encoding: "jsonParsed",
@@ -263,11 +282,27 @@ async function verifyFinalizedDeposit({
         solanaRpc(rpcUrl, "getAccountInfo", [depositAddress, {
             commitment: "finalized",
             encoding: "base64"
+        }], fetchImpl),
+        solanaRpc(rpcUrl, "getAccountInfo", [depositTokenAccount, {
+            commitment: "finalized",
+            encoding: "jsonParsed"
         }], fetchImpl)
     ]);
-    if (!transaction || !mintAccount?.value || !treasuryAccount?.value) return { state: "unavailable" };
-    if (treasuryAccount.value.owner !== "11111111111111111111111111111111") {
+    if (!transaction || !mintAccount?.value || !treasuryAccount ||
+        !Object.prototype.hasOwnProperty.call(treasuryAccount, "value")) {
+        return { state: "unavailable" };
+    }
+    if (treasuryAccount.value &&
+        treasuryAccount.value.owner !== "11111111111111111111111111111111") {
         return { state: "invalid_treasury" };
+    }
+    const tokenAccountInfo = treasuryTokenAccount?.value?.data?.parsed?.info;
+    if (!treasuryTokenAccount?.value ||
+        treasuryTokenAccount.value.owner !== tokenProgramId ||
+        treasuryTokenAccount.value.data?.parsed?.type !== "account" ||
+        tokenAccountInfo?.mint !== officialMint ||
+        tokenAccountInfo?.owner !== depositAddress) {
+        return { state: "invalid_treasury_token_account" };
     }
     if (transaction.meta?.err || !Number.isSafeInteger(transaction.slot) ||
         !transaction.transaction?.signatures?.includes(signature)) {
@@ -308,15 +343,17 @@ async function verifyFinalizedDeposit({
     }
     for (const entry of transaction.meta.postTokenBalances ?? []) {
         if (entry.mint !== officialMint || entry.owner !== depositAddress) continue;
+        const accountKey = getPublicKey(
+            transaction.transaction.message.accountKeys[entry.accountIndex]
+        );
+        if (accountKey !== depositTokenAccount) continue;
         const key = `${entry.accountIndex}:${entry.mint}`;
         const previous = pre.get(key);
         const previousAmount = previous?.owner === depositAddress ? previous.amount : 0n;
         const delta = BigInt(entry.uiTokenAmount.amount) - previousAmount;
         if (delta > 0n) {
             receivedAmount += delta;
-            const accountKey = transaction.transaction.message.accountKeys[entry.accountIndex];
-            const tokenAccount = getPublicKey(accountKey);
-            if (tokenAccount) recipientAccounts.add(tokenAccount);
+            recipientAccounts.add(accountKey);
         }
     }
     if (receivedAmount <= 0n) return { state: "wrong_destination_or_token" };
@@ -383,6 +420,7 @@ async function verifyFinalizedDeposit({
 module.exports = {
     GENESIS_HASHES,
     TOKEN_PROGRAM_IDS,
+    deriveAssociatedTokenAccount,
     isBase58,
     normalizeTransactionSignature,
     sanitizeRpcErrorMessage,

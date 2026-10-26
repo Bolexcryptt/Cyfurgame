@@ -7,7 +7,12 @@ const {
     serviceRequest,
     sendJson
 } = require("../server/lib/wallet");
-const { GENESIS_HASHES, isBase58, solanaRpc } = require("../server/lib/solana-deposit");
+const {
+    deriveAssociatedTokenAccount,
+    GENESIS_HASHES,
+    isBase58,
+    solanaRpc
+} = require("../server/lib/solana-deposit");
 
 module.exports = async function wallet(request, response) {
     if (handleApiCors(request, response)) return;
@@ -44,6 +49,7 @@ module.exports = async function wallet(request, response) {
         const network = process.env.SOLANA_NETWORK;
         const linkedWalletAddress = null;
         const treasuryAddress = config?.treasury_address ?? null;
+        let treasuryTokenAccountAddress = null;
         const readinessChecks = [];
         if (!config ||
             !config.official_mint_address ||
@@ -71,19 +77,57 @@ module.exports = async function wallet(request, response) {
             treasuryAddress &&
             isBase58(treasuryAddress, 32) &&
             process.env.SOLANA_TREASURY_ADDRESS === treasuryAddress) {
-            const [genesisHash, treasuryAccount] = await Promise.all([
+            const [genesisHash, treasuryAccount, mintAccount] = await Promise.all([
                 solanaRpc(process.env.SOLANA_RPC_URL, "getGenesisHash", []),
                 solanaRpc(process.env.SOLANA_RPC_URL, "getAccountInfo", [treasuryAddress, {
                     commitment: "finalized",
                     encoding: "base64"
+                }]),
+                solanaRpc(process.env.SOLANA_RPC_URL, "getAccountInfo", [config.official_mint_address, {
+                    commitment: "finalized",
+                    encoding: "jsonParsed"
                 }])
             ]);
             if (genesisHash !== GENESIS_HASHES[network]) {
                 readinessChecks.push("SOLANA_RPC_URL is connected to a different Solana network.");
-            } else if (!treasuryAccount?.value) {
-                readinessChecks.push("The configured treasury wallet does not exist on the selected Solana network.");
-            } else if (treasuryAccount.value.owner !== "11111111111111111111111111111111") {
+            } else if (treasuryAccount?.value &&
+                treasuryAccount.value.owner !== "11111111111111111111111111111111") {
                 readinessChecks.push("The configured treasury address is not a System Program-owned wallet authority; token accounts are not valid treasury wallets.");
+            } else if (!mintAccount?.value ||
+                mintAccount.value.owner !== config.token_program_id ||
+                mintAccount.value.data?.parsed?.type !== "mint" ||
+                mintAccount.value.data?.parsed?.info?.decimals !== config.token_decimals) {
+                readinessChecks.push("The configured CYFUR mint metadata does not match finalized Solana mainnet account data.");
+            } else {
+                try {
+                    treasuryTokenAccountAddress = deriveAssociatedTokenAccount(
+                        treasuryAddress,
+                        config.official_mint_address,
+                        config.token_program_id
+                    );
+                    const treasuryTokenAccount = await solanaRpc(
+                        process.env.SOLANA_RPC_URL,
+                        "getAccountInfo",
+                        [treasuryTokenAccountAddress, {
+                            commitment: "finalized",
+                            encoding: "jsonParsed"
+                        }]
+                    );
+                    const tokenInfo = treasuryTokenAccount?.value?.data?.parsed?.info;
+                    if (!treasuryTokenAccount?.value ||
+                        treasuryTokenAccount.value.owner !== config.token_program_id ||
+                        treasuryTokenAccount.value.data?.parsed?.type !== "account" ||
+                        tokenInfo?.mint !== config.official_mint_address ||
+                        tokenInfo?.owner !== treasuryAddress) {
+                        readinessChecks.push("The treasury CYFUR associated token account is missing or does not match the configured authority and mint.");
+                    }
+                } catch (error) {
+                    if (error instanceof TypeError) {
+                        readinessChecks.push("The configured treasury address cannot own a standard associated token account.");
+                    } else {
+                        throw error;
+                    }
+                }
             }
         }
         if (process.env.WALLET_DIRECT_TREASURY_READY !== "true") {
@@ -120,6 +164,7 @@ module.exports = async function wallet(request, response) {
                 : `${readinessChecks.join(" ")} Do not send CYFUR until status is READY.`,
             exchangeRateCreditsPerToken: CYFUR_CREDITS_PER_TOKEN,
             treasuryAddress,
+            treasuryTokenAccountAddress,
             officialMintAddress: config?.official_mint_address ?? null,
             tokenProgramId: config?.token_program_id ?? null,
             tokenDecimals: Number.isInteger(config?.token_decimals) ? config.token_decimals : null,

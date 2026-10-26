@@ -7,6 +7,7 @@ const {
     sendJson
 } = require("../server/lib/wallet");
 const {
+    deriveAssociatedTokenAccount,
     normalizeTransactionSignature,
     isBase58,
     TOKEN_PROGRAM_IDS,
@@ -76,6 +77,11 @@ module.exports = async function deposits(request, response) {
         if (!signature) {
             return sendJson(response, 400, { error: "invalid_transaction_signature" });
         }
+        const paymentIntentId = request.body?.paymentIntentId;
+        if (typeof paymentIntentId !== "string" ||
+            !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(paymentIntentId)) {
+            return sendJson(response, 400, { error: "payment_intent_required", credited: false });
+        }
 
         const transactionUrl =
             `https://explorer.solana.com/tx/${signature}?cluster=${encodeURIComponent(configuredNetwork)}`;
@@ -97,15 +103,43 @@ module.exports = async function deposits(request, response) {
                 "Deposit verification is disabled: the approved network, mint, token metadata, treasury address, floor-rounding policy, and enabled database configuration must match. Do not send CYFUR."
             );
         }
+        const [intent] = await serviceRequest(
+            `wallet_payment_intents?select=id,player_id,network,mint_address,token_program_id,treasury_address,amount_raw,token_decimals,created_at,expires_at,status,transaction_signature&id=eq.${encodeURIComponent(paymentIntentId)}&player_id=eq.${encodeURIComponent(user.id)}&limit=1`
+        );
+        const minimumAmountRaw = (10n ** BigInt(config.token_decimals)).toString();
+        if (!intent ||
+            intent.player_id !== user.id ||
+            intent.network !== config.network ||
+            intent.mint_address !== config.official_mint_address ||
+            intent.token_program_id !== config.token_program_id ||
+            intent.treasury_address !== config.treasury_address ||
+            intent.token_decimals !== config.token_decimals ||
+            String(intent.amount_raw) !== minimumAmountRaw ||
+            !["pending", "confirmed"].includes(intent.status) ||
+            (intent.status === "confirmed" && intent.transaction_signature !== signature)) {
+            return sendJson(response, 409, {
+                error: "payment_intent_invalid_or_claimed",
+                credited: false,
+                transactionUrl
+            });
+        }
+        const memo = `RelicGrid payment intent: ${intent.id}`;
+        const treasuryTokenAccount = deriveAssociatedTokenAccount(
+            config.treasury_address,
+            config.official_mint_address,
+            config.token_program_id
+        );
         const verified = await verifyFinalizedDeposit({
             signature,
             depositAddress: config.treasury_address,
+            depositTokenAccount: treasuryTokenAccount,
             officialMint: config.official_mint_address,
             tokenProgramId: config.token_program_id,
             tokenDecimals: config.token_decimals,
             network: config.network,
             rpcUrl: process.env.SOLANA_RPC_URL,
-            minimumAmountRaw: (10n ** BigInt(config.token_decimals)).toString()
+            minimumAmountRaw,
+            requiredMemo: memo
         });
         if (verified.state === "pending") {
             return sendJson(response, 202, { status: "pending", credited: false, transactionUrl });
@@ -122,6 +156,13 @@ module.exports = async function deposits(request, response) {
         if (verified.state === "wrong_amount") {
             return sendJson(response, 422, { error: "wrong_amount", credited: false, transactionUrl });
         }
+        if (verified.state === "payment_intent_mismatch") {
+            return sendJson(response, 422, {
+                error: "payment_intent_mismatch",
+                credited: false,
+                transactionUrl
+            });
+        }
         if (verified.state === "invalid_treasury") {
             return respondNotReady(
                 response,
@@ -129,8 +170,18 @@ module.exports = async function deposits(request, response) {
                 "The configured treasury address is not an ordinary System Program-owned wallet. Do not send CYFUR; correct the treasury configuration first."
             );
         }
+        if (verified.state === "invalid_treasury_token_account") {
+            return respondNotReady(
+                response,
+                "invalid_treasury_token_account",
+                "The expected CYFUR associated token account is missing or does not match the configured treasury and mint."
+            );
+        }
         if (verified.state !== "finalized") {
             return sendJson(response, 503, { error: "finalized_transaction_unavailable", credited: false });
+        }
+        if (!Number.isSafeInteger(verified.finalizedAt) || !intent.created_at || !intent.expires_at) {
+            return sendJson(response, 422, { error: "payment_intent_time_unverifiable", credited: false, transactionUrl });
         }
         let creditAmount;
         try {
@@ -145,10 +196,11 @@ module.exports = async function deposits(request, response) {
             }
             throw error;
         }
-        const [ledgerResult] = await serviceRequest("rpc/process_verified_treasury_deposit", {
+        const [ledgerResult] = await serviceRequest("rpc/process_verified_payment_intent", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
+                p_payment_intent_id: intent.id,
                 p_player_id: user.id,
                 p_source_wallet_address: verified.sourceWalletAddress,
                 p_network: config.network,
@@ -159,6 +211,7 @@ module.exports = async function deposits(request, response) {
                 p_amount_raw: verified.amountRaw,
                 p_token_decimals: config.token_decimals,
                 p_finalized_slot: verified.finalizedSlot,
+                p_finalized_at: new Date(verified.finalizedAt * 1000).toISOString(),
                 p_credit_amount_credits: creditAmount
             })
         });

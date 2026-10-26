@@ -35,6 +35,7 @@ const {
     parseTokenAmount
 } = require("../server/lib/wallet.js");
 const {
+    deriveAssociatedTokenAccount,
     normalizeTransactionSignature,
     verifyFinalizedDeposit
 } = require("../server/lib/solana-deposit.js");
@@ -700,14 +701,18 @@ test("RelicGrid branding is used in the game and hidden scenes stop rendering", 
 
 test("deposit UI does not require a connected wallet and exposes memo-confirm verification", () => {
     const html = readFileSync(new URL("../index.html", import.meta.url), "utf8");
-    assert.match(html, /Send CYFUR from any Solana wallet/);
+    assert.match(html, /FUND YOUR RELICGRID ACCOUNT/);
+    assert.match(html, /at least 1 CYFUR/);
     assert.match(html, /id="wallet-copy-address"/);
     assert.match(html, /id="deposit-required-memo"/);
     assert.match(html, /COPY MEMO/);
-    assert.match(html, /CONFIRM DEPOSIT/);
+    assert.match(html, /VERIFY PAYMENT/);
+    assert.match(html, /Paste signature or Solana Explorer\/Solscan link/);
+    assert.doesNotMatch(html, /id="wallet-transfer-amount"|id="wallet-transfer-form"|id="wallet-preflight-button"/);
     assert.doesNotMatch(html, /CONNECT SOLANA WALLET|CONNECT LINKED WALLET/);
     const app = readFileSync(new URL("../app.js", import.meta.url), "utf8");
     assert.match(app, /async function createCyfurDepositInstructions/);
+    assert.match(app, /relicgrid\.payment-intent\.v1/);
     assert.match(app, /Deposit not detected yet\. Please wait and check again/);
 });
 
@@ -1258,12 +1263,15 @@ test("Solana verifier credits only successful finalized transfers to the mapped 
                     ? transaction
                     : call.params[0] === depositAddress
                         ? { value: { owner: "11111111111111111111111111111111", data: ["", "base64"] } }
-                        : { value: { owner: tokenProgramId, data: { parsed: { type: "mint", info: { decimals: 8 } } } } };
+                        : call.params[0] === tokenAccount
+                            ? { value: { owner: tokenProgramId, data: { parsed: { type: "account", info: { mint: officialMint, owner: depositAddress } } } } }
+                            : { value: { owner: tokenProgramId, data: { parsed: { type: "mint", info: { decimals: 8 } } } } };
         return new Response(JSON.stringify({ result }), { status: 200 });
     };
     const options = {
         signature,
         depositAddress,
+        depositTokenAccount: tokenAccount,
         officialMint,
         tokenProgramId,
         tokenDecimals: 8,
@@ -1394,6 +1402,7 @@ test("deposit API rejects a failed on-chain transaction before requesting ledger
     const originalFetch = globalThis.fetch;
     const rpcMethods = [];
     const mintAddress = "9F4hLLngEAhepsH2HLTH6kBYmmq6dzm4GXRrcpME3uam";
+    const paymentIntentId = "8f9ef883-520e-45ef-96ae-62e621d3b31c";
     globalThis.fetch = async (url, options = {}) => {
         const target = String(url);
         if (target.endsWith("/auth/v1/user")) {
@@ -1409,6 +1418,22 @@ test("deposit API rejects a failed on-chain transaction before requesting ledger
                 credits_per_token: "10000",
                 rounding_policy: "floor",
                 treasury_address: environment.SOLANA_TREASURY_ADDRESS
+            }]), { status: 200 });
+        }
+        if (target.includes("/wallet_payment_intents?")) {
+            return new Response(JSON.stringify([{
+                id: paymentIntentId,
+                player_id: "test-player",
+                network: "mainnet-beta",
+                mint_address: mintAddress,
+                token_program_id: "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+                treasury_address: environment.SOLANA_TREASURY_ADDRESS,
+                amount_raw: "100000000",
+                token_decimals: 8,
+                created_at: new Date(Date.now() - 1000).toISOString(),
+                expires_at: new Date(Date.now() + 60000).toISOString(),
+                status: "pending",
+                transaction_signature: null
             }]), { status: 200 });
         }
         if (target === environment.SOLANA_RPC_URL) {
@@ -1433,7 +1458,7 @@ test("deposit API rejects a failed on-chain transaction before requesting ledger
         await endpoint({
             method: "POST",
             headers: { authorization: "Bearer test-token" },
-            body: { signature: "1".repeat(64) }
+            body: { signature: "1".repeat(64), paymentIntentId }
         }, response);
 
         assert.equal(response.statusCode, 422);
@@ -1448,7 +1473,7 @@ test("deposit API rejects a failed on-chain transaction before requesting ledger
     }
 });
 
-test("deposit API credits a finalized transfer of at least one CYFUR without a payment intent", async () => {
+test("deposit API credits a finalized transfer only with its authenticated player payment intent", async () => {
     const environment = {
         SUPABASE_URL: "https://example.supabase.co",
         SUPABASE_PUBLISHABLE_KEY: "public-test-key",
@@ -1466,13 +1491,23 @@ test("deposit API credits a finalized transfer of at least one CYFUR without a p
     Object.assign(process.env, environment);
     const originalFetch = globalThis.fetch;
     const signature = "1".repeat(64);
+    const paymentIntentId = "8f9ef883-520e-45ef-96ae-62e621d3b31c";
     const sourceWallet = "11111111111111111111111111111111";
     let rpcSourceWallet = null;
-    let linkedWalletLookup = false;
+    let creditedIntentId = null;
+    let authenticatedPlayer = "test-player";
+    let intentStatus = "pending";
+    let intentSignature = null;
+    let ledgerCallCount = 0;
+    const authorization = "Bearer deposit-test-token";
     const sourceTokenAccount = "So11111111111111111111111111111111111111112";
-    const treasuryTokenAccount = "Stake11111111111111111111111111111111111111";
     const mintAddress = "9F4hLLngEAhepsH2HLTH6kBYmmq6dzm4GXRrcpME3uam";
     const tokenProgramId = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
+    const treasuryTokenAccount = deriveAssociatedTokenAccount(
+        environment.SOLANA_TREASURY_ADDRESS,
+        mintAddress,
+        tokenProgramId
+    );
     const transaction = {
         slot: 500,
         blockTime: Math.floor(Date.now() / 1000),
@@ -1497,6 +1532,10 @@ test("deposit API credits a finalized transfer of at least one CYFUR without a p
                                 tokenAmount: { amount: "100000000" }
                             }
                         }
+                    },
+                    {
+                        programId: "MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr",
+                        parsed: { type: "memo", info: `RelicGrid payment intent: ${paymentIntentId}` }
                     }
                 ]
             }
@@ -1537,7 +1576,7 @@ test("deposit API credits a finalized transfer of at least one CYFUR without a p
     globalThis.fetch = async (url, options = {}) => {
         const target = String(url);
         if (target.endsWith("/auth/v1/user")) {
-            return new Response(JSON.stringify({ id: "test-player" }), { status: 200 });
+            return new Response(JSON.stringify({ id: authenticatedPlayer }), { status: 200 });
         }
         if (target.includes("/wallet_system_config?")) {
             return new Response(JSON.stringify([{
@@ -1551,6 +1590,24 @@ test("deposit API credits a finalized transfer of at least one CYFUR without a p
                 treasury_address: environment.SOLANA_TREASURY_ADDRESS
             }]), { status: 200 });
         }
+        if (target.includes("/wallet_payment_intents?")) {
+            const intent = {
+                id: paymentIntentId,
+                player_id: "test-player",
+                network: "mainnet-beta",
+                mint_address: mintAddress,
+                token_program_id: tokenProgramId,
+                treasury_address: environment.SOLANA_TREASURY_ADDRESS,
+                amount_raw: "100000000",
+                token_decimals: 8,
+                created_at: new Date(Date.now() - 60000).toISOString(),
+                expires_at: new Date(Date.now() + 60000).toISOString(),
+                status: intentStatus,
+                transaction_signature: intentSignature
+            };
+            const ownsIntent = target.includes("&player_id=eq.test-player");
+            return new Response(JSON.stringify(ownsIntent ? [intent] : []), { status: 200 });
+        }
         if (target === environment.SOLANA_RPC_URL) {
             const call = JSON.parse(options.body);
             const result = call.method === "getGenesisHash"
@@ -1561,16 +1618,22 @@ test("deposit API credits a finalized transfer of at least one CYFUR without a p
                         ? transaction
                         : call.params[0] === environment.SOLANA_TREASURY_ADDRESS
                             ? { value: { owner: "11111111111111111111111111111111", data: ["", "base64"] } }
-                            : { value: { owner: tokenProgramId, data: { parsed: { type: "mint", info: { decimals: 8 } } } } };
+                            : call.params[0] === treasuryTokenAccount
+                                ? { value: { owner: tokenProgramId, data: { parsed: { type: "account", info: { mint: mintAddress, owner: environment.SOLANA_TREASURY_ADDRESS } } } } }
+                                : { value: { owner: tokenProgramId, data: { parsed: { type: "mint", info: { decimals: 8 }, type: "mint" } } } };
             return new Response(JSON.stringify({ result }), { status: 200 });
         }
-        if (target.includes("/rpc/process_verified_treasury_deposit")) {
+        if (target.includes("/rpc/process_verified_payment_intent")) {
+            const alreadyApplied = ledgerCallCount > 0;
+            ledgerCallCount += 1;
             rpcPayload = JSON.parse(options.body);
             rpcSourceWallet = rpcPayload.p_source_wallet_address;
-            linkedWalletLookup = false;
+            creditedIntentId = rpcPayload.p_payment_intent_id;
+            intentStatus = "confirmed";
+            intentSignature = signature;
             return new Response(JSON.stringify([{
                 balance_credits: "250000",
-                already_applied: false
+                already_applied: alreadyApplied
             }]), { status: 200 });
         }
         throw new Error(`Unexpected wallet-less deposit request: ${target}`);
@@ -1578,6 +1641,23 @@ test("deposit API credits a finalized transfer of at least one CYFUR without a p
 
     try {
         const endpoint = require("../api/deposits.js");
+        const otherPlayerResponse = {
+            statusCode: 200,
+            status(code) { this.statusCode = code; return this; },
+            setHeader() {},
+            json(payload) { this.payload = payload; }
+        };
+        authenticatedPlayer = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+        await endpoint({
+            method: "POST",
+            headers: { authorization },
+            body: { signature, paymentIntentId }
+        }, otherPlayerResponse);
+        assert.equal(otherPlayerResponse.statusCode, 409);
+        assert.equal(otherPlayerResponse.payload.error, "payment_intent_invalid_or_claimed");
+        assert.equal(ledgerCallCount, 0);
+
+        authenticatedPlayer = "test-player";
         const response = {
             statusCode: 200,
             status(code) { this.statusCode = code; return this; },
@@ -1587,7 +1667,7 @@ test("deposit API credits a finalized transfer of at least one CYFUR without a p
         await endpoint({
             method: "POST",
             headers: { authorization: "Bearer walletless-deposit-test-token" },
-            body: { signature }
+            body: { signature, paymentIntentId }
         }, response);
 
         assert.equal(response.statusCode, 200, JSON.stringify(response.payload));
@@ -1595,7 +1675,25 @@ test("deposit API credits a finalized transfer of at least one CYFUR without a p
         assert.equal(response.payload.credited, true);
         assert.equal(response.payload.creditAmountCredits, "10000");
         assert.equal(rpcSourceWallet, sourceWallet);
-        assert.equal(linkedWalletLookup, false);
+        assert.equal(creditedIntentId, paymentIntentId);
+        assert.equal(rpcPayload.p_deposit_address, environment.SOLANA_TREASURY_ADDRESS);
+        assert.equal(rpcPayload.p_amount_raw, "100000000");
+
+        const duplicateResponse = {
+            statusCode: 200,
+            status(code) { this.statusCode = code; return this; },
+            setHeader() {},
+            json(payload) { this.payload = payload; }
+        };
+        await endpoint({
+            method: "POST",
+            headers: { authorization },
+            body: { signature, paymentIntentId }
+        }, duplicateResponse);
+        assert.equal(duplicateResponse.statusCode, 200);
+        assert.equal(duplicateResponse.payload.alreadyProcessed, true);
+        assert.equal(duplicateResponse.payload.credited, false);
+        assert.equal(ledgerCallCount, 2);
     } finally {
         globalThis.fetch = originalFetch;
         for (const [name, value] of Object.entries(previousEnvironment)) {
@@ -1619,6 +1717,7 @@ test("payment-intent API creates an authenticated intent without a linked wallet
         SUPABASE_URL: "https://example.supabase.co",
         SUPABASE_PUBLISHABLE_KEY: "public-test-key",
         SUPABASE_SERVICE_ROLE_KEY: "service-test-key",
+        SOLANA_RPC_URL: "https://mainnet.example/rpc",
         SOLANA_NETWORK: "mainnet-beta",
         SOLANA_TREASURY_ADDRESS: "FbvtTKQFE4xFrSheorQoFHqp57Dd8ngYXvD8wavwLzsn",
         WALLET_DIRECT_TREASURY_READY: "true",
@@ -1632,6 +1731,13 @@ test("payment-intent API creates an authenticated intent without a linked wallet
     const originalFetch = globalThis.fetch;
     const requests = [];
     let persistedIntent = null;
+    const mintAddress = "9F4hLLngEAhepsH2HLTH6kBYmmq6dzm4GXRrcpME3uam";
+    const tokenProgramId = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
+    const treasuryTokenAccount = deriveAssociatedTokenAccount(
+        environment.SOLANA_TREASURY_ADDRESS,
+        mintAddress,
+        tokenProgramId
+    );
     globalThis.fetch = async (url, options = {}) => {
         const target = String(url);
         requests.push({ target, options });
@@ -1642,13 +1748,24 @@ test("payment-intent API creates an authenticated intent without a linked wallet
             return new Response(JSON.stringify([{
                 deposits_enabled: true,
                 network: "mainnet-beta",
-                official_mint_address: "9F4hLLngEAhepsH2HLTH6kBYmmq6dzm4GXRrcpME3uam",
-                token_program_id: "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+                official_mint_address: mintAddress,
+                token_program_id: tokenProgramId,
                 token_decimals: 8,
                 credits_per_token: "10000",
                 rounding_policy: "floor",
                 treasury_address: environment.SOLANA_TREASURY_ADDRESS
             }]), { status: 200 });
+        }
+        if (target === environment.SOLANA_RPC_URL) {
+            const call = JSON.parse(options.body);
+            const result = call.method === "getGenesisHash"
+                ? "5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d"
+                : call.params[0] === environment.SOLANA_TREASURY_ADDRESS
+                    ? { value: { owner: "11111111111111111111111111111111" } }
+                    : call.params[0] === mintAddress
+                        ? { value: { owner: tokenProgramId, data: { parsed: { type: "mint", info: { decimals: 8 } } } } }
+                        : { value: { owner: tokenProgramId, data: { parsed: { type: "account", info: { mint: mintAddress, owner: environment.SOLANA_TREASURY_ADDRESS } } } } };
+            return new Response(JSON.stringify({ result }), { status: 200 });
         }
         if (target.includes("/wallet_payment_intents?") && options.method === "DELETE") {
             return new Response(null, { status: 204 });
@@ -1679,21 +1796,31 @@ test("payment-intent API creates an authenticated intent without a linked wallet
         await endpoint({
             method: "POST",
             headers: { authorization: "Bearer test-token" },
-            body: { amount: "0.25" }
+            body: {}
         }, response);
 
         assert.equal(response.statusCode, 201);
-        assert.equal(response.payload.amountRaw, "25000000");
+        assert.equal(response.payload.amountRaw, "100000000");
         assert.equal(Object.hasOwn(response.payload, "sourceWalletAddress"), false);
         assert.equal(response.payload.treasuryAddress, environment.SOLANA_TREASURY_ADDRESS);
+        assert.equal(response.payload.treasuryTokenAccount, deriveAssociatedTokenAccount(
+            environment.SOLANA_TREASURY_ADDRESS,
+            mintAddress,
+            tokenProgramId
+        ));
         assert.equal(response.payload.memo, `RelicGrid payment intent: ${response.payload.intentId}`);
         assert.equal(requests.some(({ options }) => options.method === "DELETE"), true);
         const createdIntent = JSON.parse(
-            requests.find(({ options }) => options.method === "POST").options.body
+            requests.find(({ target, options }) =>
+                target.includes("/wallet_payment_intents?") && options.method === "POST"
+            ).options.body
         );
         assert.equal(createdIntent.player_id, "test-player");
         assert.equal(createdIntent.source_wallet_address, null);
-        assert.equal(createdIntent.amount_raw, "25000000");
+        assert.equal(createdIntent.amount_raw, "100000000");
+        assert.equal(requests.some(({ options }) =>
+            options.body && JSON.parse(options.body).amount !== undefined
+        ), false);
         assert.equal(createdIntent.status, "pending");
         assert.equal(
             Date.parse(createdIntent.expires_at) - Date.parse(createdIntent.created_at),
@@ -1718,7 +1845,7 @@ test("payment-intent API creates an authenticated intent without a linked wallet
         assert.equal(validIntent.statusCode, 200);
         assert.equal(validIntent.payload.intentId, response.payload.intentId);
         assert.equal(Object.hasOwn(validIntent.payload, "sourceWalletAddress"), false);
-        assert.equal(validIntent.payload.amountRaw, "25000000");
+        assert.equal(validIntent.payload.amountRaw, "100000000");
         assert.equal(validIntent.payload.memo, response.payload.memo);
         persistedIntent.expires_at = new Date(Date.now() - 1000).toISOString();
         const expiredIntent = await validateIntent();

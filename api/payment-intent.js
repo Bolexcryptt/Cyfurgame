@@ -4,14 +4,17 @@ const {
     getDepositCreditAmount,
     handleApiCors,
     hasWalletEnvironment,
-    parseTokenAmount,
     serviceRequest,
     sendJson
 } = require("../server/lib/wallet");
-const { isBase58, TOKEN_PROGRAM_IDS } = require("../server/lib/solana-deposit");
+const {
+    deriveAssociatedTokenAccount,
+    GENESIS_HASHES,
+    isBase58,
+    solanaRpc,
+    TOKEN_PROGRAM_IDS
+} = require("../server/lib/solana-deposit");
 
-const CYFUR_MAINNET_MINT = "9F4hLLngEAhepsH2HLTH6kBYmmq6dzm4GXRrcpME3uam";
-const LEGACY_TOKEN_PROGRAM = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
 const INTENT_LIFETIME_MS = 15 * 60 * 1000;
 
 module.exports = async function paymentIntent(request, response) {
@@ -30,6 +33,7 @@ module.exports = async function paymentIntent(request, response) {
 
         const requiredEnvironment = [
             "SUPABASE_SERVICE_ROLE_KEY",
+            "SOLANA_RPC_URL",
             "SOLANA_TREASURY_ADDRESS",
             "SOLANA_NETWORK"
         ];
@@ -63,13 +67,49 @@ module.exports = async function paymentIntent(request, response) {
             config.rounding_policy !== "floor" ||
             !isBase58(config.treasury_address, 32) ||
             config.treasury_address !== process.env.SOLANA_TREASURY_ADDRESS ||
-            (network === "mainnet-beta" &&
-                (config.official_mint_address !== CYFUR_MAINNET_MINT ||
-                 config.token_program_id !== LEGACY_TOKEN_PROGRAM ||
-                 config.token_decimals !== 8))) {
+            (network === "mainnet-beta" && config.token_decimals !== 8)) {
             return sendJson(response, 503, {
                 error: "wallet_configuration_incomplete",
                 message: "The enabled network, approved CYFUR mint metadata, treasury, and database configuration must match."
+            });
+        }
+        const treasuryTokenAccount = deriveAssociatedTokenAccount(
+            config.treasury_address,
+            config.official_mint_address,
+            config.token_program_id
+        );
+        const [genesisHash, treasuryAccount, mintAccount, treasuryTokenAccountInfo] =
+            await Promise.all([
+                solanaRpc(process.env.SOLANA_RPC_URL, "getGenesisHash", []),
+                solanaRpc(process.env.SOLANA_RPC_URL, "getAccountInfo", [
+                    config.treasury_address,
+                    { commitment: "finalized", encoding: "base64" }
+                ]),
+                solanaRpc(process.env.SOLANA_RPC_URL, "getAccountInfo", [
+                    config.official_mint_address,
+                    { commitment: "finalized", encoding: "jsonParsed" }
+                ]),
+                solanaRpc(process.env.SOLANA_RPC_URL, "getAccountInfo", [
+                    treasuryTokenAccount,
+                    { commitment: "finalized", encoding: "jsonParsed" }
+                ])
+            ]);
+        const treasuryTokenInfo = treasuryTokenAccountInfo?.value?.data?.parsed?.info;
+        if (genesisHash !== GENESIS_HASHES[network] ||
+            (treasuryAccount?.value &&
+                treasuryAccount.value.owner !== "11111111111111111111111111111111") ||
+            !mintAccount?.value ||
+            mintAccount.value.owner !== config.token_program_id ||
+            mintAccount.value.data?.parsed?.type !== "mint" ||
+            mintAccount.value.data?.parsed?.info?.decimals !== config.token_decimals ||
+            !treasuryTokenAccountInfo?.value ||
+            treasuryTokenAccountInfo.value.owner !== config.token_program_id ||
+            treasuryTokenAccountInfo.value.data?.parsed?.type !== "account" ||
+            treasuryTokenInfo?.mint !== config.official_mint_address ||
+            treasuryTokenInfo?.owner !== config.treasury_address) {
+            return sendJson(response, 503, {
+                error: "wallet_configuration_incomplete",
+                message: "Finalized Solana mainnet account checks for the CYFUR mint and treasury associated token account did not pass."
             });
         }
         if (request.body?.action === "validate") {
@@ -95,10 +135,10 @@ module.exports = async function paymentIntent(request, response) {
                 BigInt(amountRaw) > 18446744073709551615n ||
                 !Number.isFinite(expiresAt) ||
                 expiresAt <= Date.now() ||
-                storedIntent.status !== "pending") {
+                !["pending", "confirmed"].includes(storedIntent.status)) {
                 return sendJson(response, 409, {
                     error: "payment_intent_invalid_or_expired",
-                    message: "The payment intent is no longer valid. Start a new deposit before approving a transfer."
+                    message: "The payment intent is no longer valid. Start a new deposit before sending CYFUR."
                 });
             }
             return sendJson(response, 200, {
@@ -109,6 +149,7 @@ module.exports = async function paymentIntent(request, response) {
                 treasuryAddress: storedIntent.treasury_address,
                 amountRaw,
                 tokenDecimals: storedIntent.token_decimals,
+                treasuryTokenAccount,
                 expiresAt: storedIntent.expires_at,
                 memo: `RelicGrid payment intent: ${storedIntent.id}`
             });
@@ -118,9 +159,8 @@ module.exports = async function paymentIntent(request, response) {
             return sendJson(response, 400, { error: "invalid_action" });
         }
 
-        let amountRaw;
+        const amountRaw = (10n ** BigInt(config.token_decimals)).toString();
         try {
-            amountRaw = parseTokenAmount(request.body?.amount, config.token_decimals);
             getDepositCreditAmount(amountRaw, config.token_decimals, config.rounding_policy);
         } catch (error) {
             if (error instanceof TypeError || error instanceof RangeError) {
@@ -167,6 +207,7 @@ module.exports = async function paymentIntent(request, response) {
             mintAddress: config.official_mint_address,
             tokenProgramId: config.token_program_id,
             treasuryAddress: config.treasury_address,
+            treasuryTokenAccount,
             amountRaw,
             tokenDecimals: config.token_decimals,
             expiresAt: stored.expires_at,

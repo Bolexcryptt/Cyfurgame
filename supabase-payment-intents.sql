@@ -89,7 +89,7 @@ begin
        or v_intent.mint_address <> p_mint_address
        or v_intent.token_program_id <> p_token_program_id
        or v_intent.treasury_address <> p_deposit_address
-       or v_intent.amount_raw <> p_amount_raw
+       or v_intent.amount_raw > p_amount_raw
        or v_intent.token_decimals <> p_token_decimals
        or p_finalized_at < v_intent.created_at - interval '30 seconds'
        or p_finalized_at > v_intent.expires_at then
