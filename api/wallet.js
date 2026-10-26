@@ -29,7 +29,7 @@ module.exports = async function wallet(request, response) {
         const user = await authenticate(request);
         if (!user) return sendJson(response, 401, { error: "authentication_required" });
 
-        const [accounts, deposits] = await Promise.all([
+        const [accounts, deposits, ledgerEntries] = await Promise.all([
             selectOwn(request, "wallet_credit_accounts", new URLSearchParams({
                 select: "balance_credits,updated_at",
                 limit: "1"
@@ -38,6 +38,11 @@ module.exports = async function wallet(request, response) {
                 select: "id,network,transaction_signature,amount_raw,token_decimals,status,credit_amount_credits,created_at,confirmed_at,failure_reason",
                 order: "created_at.desc",
                 limit: "20"
+            })),
+            selectOwn(request, "wallet_credit_ledger", new URLSearchParams({
+                select: "balance_after_credits,created_at,id",
+                order: "created_at.desc,id.desc",
+                limit: "1"
             }))
         ]);
         let config = null;
@@ -148,9 +153,13 @@ module.exports = async function wallet(request, response) {
             readinessChecks.push("Set WALLET_MAINNET_DEPOSITS_ENABLED=true in Vercel after mainnet approval.");
         }
         const depositsEnabled = readinessChecks.length === 0;
-        const balance = accounts[0]?.balance_credits;
-        const balanceVerified = (typeof balance === "string" && /^\d+$/.test(balance)) ||
-            (typeof balance === "number" && Number.isSafeInteger(balance) && balance >= 0);
+        const accountBalance = accounts[0]?.balance_credits;
+        const lastLedgerBalance = ledgerEntries[0]?.balance_after_credits;
+        const storedBalance = accountBalance ??
+            lastLedgerBalance ??
+            (accounts.length === 0 && ledgerEntries.length === 0 ? "0" : null);
+        const balanceVerified = (typeof storedBalance === "string" && /^\d+$/.test(storedBalance)) ||
+            (typeof storedBalance === "number" && Number.isSafeInteger(storedBalance) && storedBalance >= 0);
         const paidGameplayEnabled =
             config?.paid_gameplay_enabled === true &&
             process.env.WALLET_PAID_GAMEPLAY_ENABLED === "true" &&
@@ -173,7 +182,7 @@ module.exports = async function wallet(request, response) {
             tokenProgramId: config?.token_program_id ?? null,
             tokenDecimals: Number.isInteger(config?.token_decimals) ? config.token_decimals : null,
             linkedWalletAddress,
-            balanceCredits: balanceVerified ? String(balance) : null,
+            balanceCredits: balanceVerified ? String(storedBalance) : null,
             balanceVerified,
             deposits
         });

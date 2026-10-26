@@ -638,6 +638,7 @@ async function refreshWallet() {
     const refreshButton = document.getElementById("wallet-refresh");
     const balanceRefreshButton = document.getElementById("wallet-balance-refresh");
     const memoCopyButton = document.getElementById("wallet-copy-memo");
+    const paymentMemo = document.getElementById("deposit-required-memo");
     walletStatusSnapshot = null;
     refreshButton.disabled = true;
     refreshButton.textContent = "LOADING";
@@ -649,6 +650,7 @@ async function refreshWallet() {
     status.dataset.state = "disabled";
     balance.textContent = "Unavailable";
     document.getElementById("wallet-balance-state").textContent = "CREDITS · NOT VERIFIED";
+    paymentMemo.textContent = "Checking deposit readiness…";
     signatureInput.disabled = true;
     memoCopyButton.disabled = true;
     signatureSubmit.disabled = true;
@@ -656,6 +658,7 @@ async function refreshWallet() {
 
     try {
         if (!supabaseConfigured || !supabase) {
+            paymentMemo.textContent = "Unavailable: Supabase is not configured.";
             setWalletMessage("Supabase is not configured; wallet data is unavailable and deposits remain disabled.", "error");
             return;
         }
@@ -663,6 +666,7 @@ async function refreshWallet() {
         if (error) throw error;
         const accessToken = data.session?.access_token;
         if (!accessToken) {
+            paymentMemo.textContent = "Unavailable: sign in to your RelicGrid account first.";
             setWalletMessage("Sign in to view wallet data. Deposits remain disabled.", "error");
             return;
         }
@@ -674,20 +678,27 @@ async function refreshWallet() {
         const result = await response.json().catch(() => ({}));
         if (!response.ok) {
             if (result.error === "wallet_schema_not_installed") {
+                paymentMemo.textContent = "Unavailable: the wallet database migration is missing.";
                 setWalletMessage("Apply the wallet and direct-treasury Supabase migrations, then deploy the Vercel API.", "error");
                 return;
             }
             if (result.error === "wallet_api_not_configured") {
+                paymentMemo.textContent = "Unavailable: the wallet API is missing required server configuration.";
                 setWalletMessage("Vercel wallet API is missing SUPABASE_URL and/or SUPABASE_PUBLISHABLE_KEY. Configure both as server-side Vercel environment variables; deposits remain disabled.", "error");
                 return;
             }
             if (result.error === "authentication_required") {
+                paymentMemo.textContent = "Unavailable: your session could not be authenticated.";
                 setWalletMessage("Your RelicGrid identity could not be authenticated by the wallet API.", "error");
                 return;
             }
             if (response.status === 404 || response.status === 501) {
+                paymentMemo.textContent = "Unavailable: the wallet API is not deployed at this address.";
                 setWalletMessage("The wallet API is not available on this host. Deploy the Vercel project with its /api routes before wallet status can be checked. Deposits remain disabled; do not send CYFUR.", "error");
                 return;
+            }
+            if (response.status >= 500) {
+                throw new Error(`The wallet API returned HTTP ${response.status}. Check the Vercel function logs; deposits remain disabled.`);
             }
             throw new Error(result.error || `Wallet request failed (${response.status}).`);
         }
@@ -715,6 +726,9 @@ async function refreshWallet() {
             await createCyfurDepositInstructions();
         } else {
             const treasuryMismatch = result.treasuryAddress !== RELICGRID_TREASURY_ADDRESS;
+            paymentMemo.textContent = treasuryMismatch
+                ? "Unavailable: the server treasury does not match this displayed address."
+                : "Unavailable: deposit verification is disabled by server configuration.";
             setWalletMessage(
                 treasuryMismatch
                     ? "The server treasury does not match the displayed approved address. Deposits are disabled; do not send CYFUR."
@@ -724,6 +738,7 @@ async function refreshWallet() {
         }
     } catch (error) {
         console.error("Wallet data could not be refreshed.", error);
+        paymentMemo.textContent = `Unavailable: ${error.message}`;
         setWalletMessage(`Wallet data is unavailable. Deposits remain disabled. ${error.message}`, "error");
     } finally {
         refreshButton.disabled = false;
@@ -1028,6 +1043,8 @@ async function createCyfurDepositInstructions() {
         !config.treasuryTokenAccountAddress ||
         !config.tokenProgramId || !Number.isInteger(config.tokenDecimals) ||
         config.depositsEnabled !== true) {
+        document.getElementById("deposit-required-memo").textContent =
+            "Unavailable while deposit verification is disabled.";
         setWalletMessage("A verified treasury and CYFUR mint are not configured. Do not send CYFUR.", "disabled");
         return;
     }
@@ -1036,6 +1053,7 @@ async function createCyfurDepositInstructions() {
     const memoElement = document.getElementById("deposit-required-memo");
     signatureInput.disabled = true;
     verifyButton.disabled = true;
+    memoElement.textContent = "Generating your secure payment reference…";
     setWalletMessage("Preparing your secure, player-specific payment reference…", "verifying");
     let intent = null;
     const storedIntentId = sessionStorage.getItem("relicgrid.payment-intent.v1");
@@ -1065,16 +1083,19 @@ async function createCyfurDepositInstructions() {
 }
 
 async function requestPaymentIntent() {
-    const response = await fetch(apiUrl("payment-intent"), {
+    const response = await fetchWithTimeout(apiUrl("payment-intent"), {
         method: "POST",
         headers: await getWalletAuthorizationHeaders(),
         body: JSON.stringify({}),
         cache: "no-store"
-    });
+    }, "Payment reference generation");
     const result = await response.json().catch(() => ({}));
     if (!response.ok) {
         if (result.error === "payment_intent_migration_required") {
             throw new Error("Wallet-less deposits are not installed yet. The administrator must apply supabase-walletless-deposits.sql in Supabase.");
+        }
+        if (response.status >= 500) {
+            throw new Error(`The payment-reference API returned HTTP ${response.status}. Check the Vercel function logs; do not send CYFUR.`);
         }
         throw new Error(result.message || result.error || `Payment intent request failed (${response.status}).`);
     }
@@ -1091,12 +1112,12 @@ async function requestPaymentIntent() {
 }
 
 async function requestExistingPaymentIntent(paymentIntentId) {
-    const response = await fetch(apiUrl("payment-intent"), {
+    const response = await fetchWithTimeout(apiUrl("payment-intent"), {
         method: "POST",
         headers: await getWalletAuthorizationHeaders(),
         body: JSON.stringify({ action: "validate", paymentIntentId }),
         cache: "no-store"
-    });
+    }, "Payment reference check");
     const result = await response.json().catch(() => ({}));
     if (!response.ok) {
         throw new Error(result.message || result.error || `Payment intent validation failed (${response.status}).`);
@@ -1109,6 +1130,21 @@ async function requestExistingPaymentIntent(paymentIntentId) {
         throw new Error("The server returned an invalid or expired payment intent.");
     }
     return result;
+}
+
+async function fetchWithTimeout(url, options, operation, timeoutMs = 20000) {
+    const controller = new AbortController();
+    const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs);
+    try {
+        return await fetch(url, { ...options, signal: controller.signal });
+    } catch (error) {
+        if (error.name === "AbortError") {
+            throw new Error(`${operation} timed out. Check your connection and retry.`);
+        }
+        throw error;
+    } finally {
+        window.clearTimeout(timeoutId);
+    }
 }
 
 async function connectSolanaWallet() {

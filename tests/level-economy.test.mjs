@@ -709,9 +709,13 @@ test("deposit UI does not require a connected wallet and exposes memo-confirm ve
     assert.match(html, /COPY MEMO/);
     assert.match(html, /VERIFY PAYMENT/);
     assert.match(html, /Paste signature or Solana Explorer\/Solscan link/);
+    const app = readFileSync(new URL("../app.js", import.meta.url), "utf8");
+    assert.match(app, /fetchWithTimeout\(apiUrl\("payment-intent"\)/);
+    assert.match(app, /Unavailable: deposit verification is disabled by server configuration/);
+    assert.match(app, /Check the Vercel function logs; deposits remain disabled/);
+    assert.match(app, /Check the Vercel function logs; do not send CYFUR/);
     assert.doesNotMatch(html, /id="wallet-transfer-amount"|id="wallet-transfer-form"|id="wallet-preflight-button"/);
     assert.doesNotMatch(html, /CONNECT SOLANA WALLET|CONNECT LINKED WALLET/);
-    const app = readFileSync(new URL("../app.js", import.meta.url), "utf8");
     assert.match(app, /async function createCyfurDepositInstructions/);
     assert.match(app, /BQa1gxbBP2jNJEzyHHtMAUfJepXjTnqQEhBuojL9E3ts/);
     assert.match(app, /relicgrid\.payment-intent\.v1/);
@@ -729,6 +733,53 @@ test("deposit backend pins the approved treasury and migration keeps deposits di
     for (const apiFile of ["wallet.js", "payment-intent.js", "deposits.js", "deposit-transaction.js"]) {
         const api = readFileSync(new URL(`../api/${apiFile}`, import.meta.url), "utf8");
         assert.match(api, /RELICGRID_TREASURY_ADDRESS/);
+    }
+});
+
+test("wallet API returns verified zero for a player with no credit account or ledger entries", async () => {
+    const previousEnvironment = {
+        SUPABASE_URL: process.env.SUPABASE_URL,
+        SUPABASE_PUBLISHABLE_KEY: process.env.SUPABASE_PUBLISHABLE_KEY,
+        SUPABASE_SERVICE_ROLE_KEY: process.env.SUPABASE_SERVICE_ROLE_KEY
+    };
+    process.env.SUPABASE_URL = "https://example.supabase.co";
+    process.env.SUPABASE_PUBLISHABLE_KEY = "public-test-key";
+    delete process.env.SUPABASE_SERVICE_ROLE_KEY;
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = async (url) => {
+        const target = String(url);
+        if (target.includes("/auth/v1/user")) {
+            return new Response(JSON.stringify({ id: "empty-player" }), { status: 200 });
+        }
+        if (target.includes("/wallet_credit_accounts?") ||
+            target.includes("/wallet_deposits?") ||
+            target.includes("/wallet_credit_ledger?")) {
+            return new Response("[]", { status: 200 });
+        }
+        throw new Error(`Unexpected wallet balance request: ${target}`);
+    };
+    try {
+        const endpoint = require("../api/wallet.js");
+        const response = {
+            statusCode: 200,
+            status(code) { this.statusCode = code; return this; },
+            setHeader() {},
+            json(payload) { this.payload = payload; }
+        };
+        await endpoint({
+            method: "GET",
+            headers: { authorization: "Bearer player-session" }
+        }, response);
+        assert.equal(response.statusCode, 200);
+        assert.equal(response.payload.balanceCredits, "0");
+        assert.equal(response.payload.balanceVerified, true);
+        assert.equal(response.payload.depositsEnabled, false);
+    } finally {
+        globalThis.fetch = originalFetch;
+        for (const [name, value] of Object.entries(previousEnvironment)) {
+            if (value === undefined) delete process.env[name];
+            else process.env[name] = value;
+        }
     }
 });
 
