@@ -37,7 +37,6 @@ module.exports = async function paymentIntent(request, response) {
         const requiredEnvironment = [
             "SUPABASE_SERVICE_ROLE_KEY",
             "SOLANA_RPC_URL",
-            "SOLANA_TREASURY_ADDRESS",
             "SOLANA_NETWORK"
         ];
         const missing = requiredEnvironment.filter((name) => !process.env[name]?.trim());
@@ -48,13 +47,24 @@ module.exports = async function paymentIntent(request, response) {
             });
         }
         const network = process.env.SOLANA_NETWORK;
-        if (process.env.WALLET_DIRECT_TREASURY_READY !== "true" ||
-            process.env.WALLET_DEPOSITS_ENABLED !== "true" ||
-            !["devnet", "mainnet-beta"].includes(network) ||
-            (network === "mainnet-beta" && process.env.WALLET_MAINNET_DEPOSITS_ENABLED !== "true")) {
+        const readinessChecks = [];
+        if (process.env.WALLET_DIRECT_TREASURY_READY !== "true") {
+            readinessChecks.push("WALLET_DIRECT_TREASURY_READY must be true.");
+        }
+        if (process.env.WALLET_DEPOSITS_ENABLED !== "true") {
+            readinessChecks.push("WALLET_DEPOSITS_ENABLED must be true.");
+        }
+        if (!["devnet", "mainnet-beta"].includes(network)) {
+            readinessChecks.push("SOLANA_NETWORK must be devnet or mainnet-beta.");
+        }
+        if (network === "mainnet-beta" &&
+            process.env.WALLET_MAINNET_DEPOSITS_ENABLED !== "true") {
+            readinessChecks.push("WALLET_MAINNET_DEPOSITS_ENABLED must be true for mainnet.");
+        }
+        if (readinessChecks.length > 0) {
             return sendJson(response, 503, {
                 error: "deposits_disabled",
-                message: "Deposit intents are disabled by server configuration. Do not send CYFUR."
+                message: "Deposits are temporarily unavailable. Please check back later. Do not send CYFUR."
             });
         }
 
@@ -71,7 +81,6 @@ module.exports = async function paymentIntent(request, response) {
             config.rounding_policy !== "floor" ||
             !isBase58(config.treasury_address, 32) ||
             config.treasury_address !== RELICGRID_TREASURY_ADDRESS ||
-            config.treasury_address !== process.env.SOLANA_TREASURY_ADDRESS ||
             (network === "mainnet-beta" && config.token_decimals !== 8)) {
             return sendJson(response, 503, {
                 error: "wallet_configuration_incomplete",

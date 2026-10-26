@@ -90,6 +90,28 @@ function startScene() {
     scene.add(world);
     const platform = new THREE.Group();
     world.add(platform);
+    const coreActivationGroup = new THREE.Group();
+    coreActivationGroup.visible = false;
+    platform.add(coreActivationGroup);
+    const activationRingMaterials = [];
+    [0.5, 0.68, 0.84].forEach((radius, index) => {
+        const material = new THREE.MeshBasicMaterial({
+            color: index === 1 ? 0xb6fbff : colors.cold,
+            transparent: true,
+            opacity: 0,
+            depthWrite: false,
+            toneMapped: false,
+            blending: THREE.AdditiveBlending
+        });
+        const ring = new THREE.Mesh(
+            new THREE.TorusGeometry(radius, index === 1 ? 0.026 : 0.018, 6, 36),
+            material
+        );
+        ring.rotation.x = Math.PI / 2;
+        ring.position.y = 0.25 + index * 0.045;
+        coreActivationGroup.add(ring);
+        activationRingMaterials.push(material);
+    });
     const environmentNetwork = new THREE.Group();
     platform.add(environmentNetwork);
     const interactionGroup = new THREE.Group();
@@ -143,6 +165,7 @@ function startScene() {
     let coreSystem = null;
     let corePulse = null;
     let corePowered = false;
+    let coreActivatedAt = null;
     let tracing = false;
     let launchDirection = 1;
     let firstLevelTutorial = false;
@@ -153,6 +176,56 @@ function startScene() {
     let levelStartedAt = null;
     let traceResult = null;
     let renderRequest = 0;
+    let audioContext = null;
+    let audioQueueUntil = 0;
+    let lastMirrorSoundAt = -Infinity;
+    let audioUnavailableReported = false;
+
+    function playSoundEffect(effect) {
+        if (effect === "mirror") {
+            const now = performance.now();
+            if (now - lastMirrorSoundAt < 90) return;
+            lastMirrorSoundAt = now;
+        }
+        try {
+            const AudioContextConstructor = window.AudioContext || window.webkitAudioContext;
+            if (!AudioContextConstructor) {
+                if (!audioUnavailableReported) {
+                    console.warn("Sound effects are unavailable in this browser.");
+                    audioUnavailableReported = true;
+                }
+                return;
+            }
+            audioContext ??= new AudioContextConstructor();
+            if (audioContext.state === "suspended") {
+                void audioContext.resume().catch((error) => {
+                    console.warn("Game sound effects could not be enabled.", error);
+                });
+            }
+            const sound = effect === "mirror"
+                ? { startFrequency: 620, endFrequency: 920, duration: 0.075, type: "triangle" }
+                : effect === "core"
+                    ? { startFrequency: 440, endFrequency: 1040, duration: 0.2, type: "sine" }
+                    : { startFrequency: 880, endFrequency: 1320, duration: 0.22, type: "sine" };
+            const startAt = Math.max(audioContext.currentTime, audioQueueUntil);
+            const endAt = startAt + sound.duration;
+            const oscillator = audioContext.createOscillator();
+            const gain = audioContext.createGain();
+            oscillator.type = sound.type;
+            oscillator.frequency.setValueAtTime(sound.startFrequency, startAt);
+            oscillator.frequency.exponentialRampToValueAtTime(sound.endFrequency, endAt);
+            gain.gain.setValueAtTime(0.0001, startAt);
+            gain.gain.exponentialRampToValueAtTime(effect === "mirror" ? 0.045 : 0.075, startAt + 0.012);
+            gain.gain.exponentialRampToValueAtTime(0.0001, endAt);
+            oscillator.connect(gain);
+            gain.connect(audioContext.destination);
+            oscillator.start(startAt);
+            oscillator.stop(endAt);
+            audioQueueUntil = endAt + 0.025;
+        } catch (error) {
+            console.warn("Game sound effect could not be played.", error);
+        }
+    }
 
     const cameraState = {
         azimuth: 0.53,
@@ -940,12 +1013,14 @@ function startScene() {
     }
 
     function placeLevelTarget() {
-        coreSystem.scale.setScalar(0.42);
+        const coreScale = 0.36;
+        coreSystem.scale.setScalar(coreScale);
         coreSystem.position.set(
-            gridX(GRID.target.col) - 1.35,
+            gridX(GRID.target.col) - 1.35 * coreScale,
             0,
-            gridZ(GRID.target.row) - 0.1
+            gridZ(GRID.target.row) - 0.1 * coreScale
         );
+        coreActivationGroup.position.set(gridX(GRID.target.col), 0, gridZ(GRID.target.row));
         coreLight.position.set(gridX(GRID.target.col), 1.5, gridZ(GRID.target.row));
     }
 
@@ -1094,7 +1169,11 @@ function startScene() {
     }
 
     function setCorePowered(powered) {
+        const activated = powered && !corePowered;
         corePowered = powered;
+        coreActivatedAt = powered ? performance.now() : null;
+        coreActivationGroup.visible = powered;
+        if (powered && activated) playSoundEffect("core");
         if (corePulse) {
             corePulse.material.emissive.setHex(powered ? 0x7deeff : 0x1287aa);
             corePulse.material.emissiveIntensity = powered ? 1.2 : 0.32;
@@ -1175,6 +1254,7 @@ function startScene() {
             createPlayerMirror(row, col, true);
             setFeedback(`Mirror placed at row ${row + 1}, column ${col + 1}. Tap it again to rotate.`);
         }
+        playSoundEffect("mirror");
 
         clearObjectGroup(activeBeamGroup);
         beamSegments.length = 0;
@@ -2069,6 +2149,7 @@ function startScene() {
                         );
                     }
                     setCorePowered(true);
+                    playSoundEffect("completion");
                     traceButton.disabled = true;
                     traceButton.innerHTML = "<span>✓</span> CORE ONLINE";
                     coreLight.intensity = 28;
@@ -2127,8 +2208,18 @@ function startScene() {
         if (corePowered) {
             coreLight.intensity = 16 + Math.sin(time * 4) * 2;
             corePulse.scale.setScalar(1 + Math.sin(time * 3.2) * 0.08);
+            const activationProgress = Math.min(
+                (performance.now() - coreActivatedAt) / 950,
+                1
+            );
+            coreActivationGroup.visible = activationProgress < 1;
+            coreActivationGroup.scale.setScalar(0.82 + activationProgress * 0.45);
+            activationRingMaterials.forEach((material, index) => {
+                material.opacity = Math.max(0, 0.46 * (1 - activationProgress) - index * 0.035);
+            });
         } else {
             coreLight.intensity = 14;
+            coreActivationGroup.visible = false;
             if (corePulse) corePulse.scale.setScalar(1 + Math.sin(time * 1.8) * 0.025);
         }
         if (renderer.shadowMap.enabled) composer.render();

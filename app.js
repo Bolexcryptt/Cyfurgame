@@ -24,7 +24,6 @@ import {
 } from "./wallet-provider.mjs";
 
 const storageKey = "fluxgrid.player.v1";
-const RELICGRID_TREASURY_ADDRESS = "BQa1gxbBP2jNJEzyHHtMAUfJepXjTnqQEhBuojL9E3ts";
 const screens = [
     "video-screen",
     "name-screen",
@@ -644,8 +643,8 @@ async function refreshWallet() {
     refreshButton.textContent = "LOADING";
     balanceRefreshButton.disabled = true;
     balanceRefreshButton.textContent = "CHECKING BALANCE…";
-    copyButton.disabled = false;
-    address.textContent = RELICGRID_TREASURY_ADDRESS;
+    copyButton.disabled = true;
+    address.textContent = "Loading verified treasury…";
     status.textContent = "DISABLED";
     status.dataset.state = "disabled";
     balance.textContent = "Unavailable";
@@ -678,13 +677,13 @@ async function refreshWallet() {
         const result = await response.json().catch(() => ({}));
         if (!response.ok) {
             if (result.error === "wallet_schema_not_installed") {
-                paymentMemo.textContent = "Unavailable: the wallet database migration is missing.";
-                setWalletMessage("Apply the wallet and direct-treasury Supabase migrations, then deploy the Vercel API.", "error");
+                paymentMemo.textContent = "Deposits are temporarily unavailable.";
+                setWalletMessage("Deposits are temporarily unavailable. Please check back later.", "disabled");
                 return;
             }
             if (result.error === "wallet_api_not_configured") {
-                paymentMemo.textContent = "Unavailable: the wallet API is missing required server configuration.";
-                setWalletMessage("Vercel wallet API is missing SUPABASE_URL and/or SUPABASE_PUBLISHABLE_KEY. Configure both as server-side Vercel environment variables; deposits remain disabled.", "error");
+                paymentMemo.textContent = "Deposits are temporarily unavailable.";
+                setWalletMessage("Deposits are temporarily unavailable. Please check back later.", "disabled");
                 return;
             }
             if (result.error === "authentication_required") {
@@ -693,20 +692,21 @@ async function refreshWallet() {
                 return;
             }
             if (response.status === 404 || response.status === 501) {
-                paymentMemo.textContent = "Unavailable: the wallet API is not deployed at this address.";
-                setWalletMessage("The wallet API is not available on this host. Deploy the Vercel project with its /api routes before wallet status can be checked. Deposits remain disabled; do not send CYFUR.", "error");
+                paymentMemo.textContent = "Deposits are temporarily unavailable.";
+                setWalletMessage("Deposits are temporarily unavailable. Please check back later.", "disabled");
                 return;
             }
             if (response.status >= 500) {
-                throw new Error(`The wallet API returned HTTP ${response.status}. Check the Vercel function logs; deposits remain disabled.`);
+                throw new Error("Deposits are temporarily unavailable. Please try again later.");
             }
             throw new Error(result.error || `Wallet request failed (${response.status}).`);
         }
 
-        address.textContent = RELICGRID_TREASURY_ADDRESS;
+        address.textContent = result.treasuryAddress || "Treasury unavailable";
+        copyButton.disabled = !result.treasuryAddress;
         walletStatusSnapshot = result;
         const depositReady = result.depositsEnabled === true &&
-            result.treasuryAddress === RELICGRID_TREASURY_ADDRESS &&
+            Boolean(result.treasuryAddress) &&
             Boolean(result.officialMintAddress) &&
             Boolean(result.tokenProgramId) &&
             Number.isInteger(result.tokenDecimals) &&
@@ -725,25 +725,17 @@ async function refreshWallet() {
         if (depositReady) {
             await createCyfurDepositInstructions();
         } else {
-            const treasuryMismatch = result.treasuryAddress !== RELICGRID_TREASURY_ADDRESS;
             const readinessMessage = typeof result.disabledMessage === "string" &&
                 result.disabledMessage.trim()
                 ? result.disabledMessage
-                : "Deposit verification is disabled by server configuration.";
-            paymentMemo.textContent = treasuryMismatch
-                ? "Unavailable: the server treasury does not match this displayed address."
-                : `Unavailable: ${readinessMessage}`;
-            setWalletMessage(
-                treasuryMismatch
-                    ? "The server treasury does not match the displayed approved address. Deposits are disabled; do not send CYFUR."
-                    : readinessMessage,
-                "disabled"
-            );
+                : "Deposits are temporarily unavailable. Please check back later.";
+            paymentMemo.textContent = `Unavailable: ${readinessMessage}`;
+            setWalletMessage(readinessMessage, "disabled");
         }
     } catch (error) {
         console.error("Wallet data could not be refreshed.", error);
-        paymentMemo.textContent = `Unavailable: ${error.message}`;
-        setWalletMessage(`Wallet data is unavailable. Deposits remain disabled. ${error.message}`, "error");
+        paymentMemo.textContent = "Deposits are temporarily unavailable.";
+        setWalletMessage("Deposits are temporarily unavailable. Please try again later.", "disabled");
     } finally {
         refreshButton.disabled = false;
         refreshButton.textContent = "REFRESH";
@@ -1048,8 +1040,8 @@ async function createCyfurDepositInstructions() {
         !config.tokenProgramId || !Number.isInteger(config.tokenDecimals) ||
         config.depositsEnabled !== true) {
         document.getElementById("deposit-required-memo").textContent =
-            "Unavailable while deposit verification is disabled.";
-        setWalletMessage("A verified treasury and CYFUR mint are not configured. Do not send CYFUR.", "disabled");
+            "Deposits are temporarily unavailable.";
+        setWalletMessage("Deposits are temporarily unavailable. Please check back later.", "disabled");
         return;
     }
     const signatureInput = document.getElementById("deposit-signature");
@@ -1096,12 +1088,12 @@ async function requestPaymentIntent() {
     const result = await response.json().catch(() => ({}));
     if (!response.ok) {
         if (result.error === "payment_intent_migration_required") {
-            throw new Error("Wallet-less deposits are not installed yet. The administrator must apply supabase-walletless-deposits.sql in Supabase.");
+            throw new Error("Deposits are temporarily unavailable. Please check back later.");
         }
         if (response.status >= 500) {
-            throw new Error(`The payment-reference API returned HTTP ${response.status}. Check the Vercel function logs; do not send CYFUR.`);
+            throw new Error("Deposits are temporarily unavailable. Please check back later.");
         }
-        throw new Error(result.message || result.error || `Payment intent request failed (${response.status}).`);
+        throw new Error("A payment reference could not be created. Please try again later.");
     }
     if (typeof result.intentId !== "string" ||
         !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(result.intentId) ||
@@ -1644,7 +1636,7 @@ function showOpeningIntro() {
         videoCaption.textContent = player.watchedGameIntro
             ? "Welcome back, pilot."
             : "Your first signal is ready.";
-        videoAction.textContent = "PLAY NOW  →";
+        videoAction.textContent = "Play Now  →";
         videoAction.hidden = false;
         videoAction.onclick = continueAfterIntro;
         videoSkip.hidden = !player.watchedGameIntro;
@@ -1660,8 +1652,8 @@ function showOpeningIntro() {
     if (playback && typeof playback.catch === "function") {
         playback.catch((error) => {
             console.warn("Opening introduction video could not autoplay.", error);
-            videoCaption.textContent = "Tap to play the opening transmission with sound.";
-            videoAction.textContent = "PLAY INTRO WITH SOUND  →";
+            videoCaption.textContent = "A new signal is waiting.";
+            videoAction.textContent = "Play Now  →";
             videoAction.hidden = false;
             videoAction.onclick = () => {
                 const retry = introVideo.play();
@@ -1672,6 +1664,8 @@ function showOpeningIntro() {
                     }).catch((retryError) => {
                         console.error("Opening introduction video could not start after interaction.", retryError);
                         videoCaption.textContent = "The opening video could not be played.";
+                        videoAction.textContent = "CONTINUE WITHOUT VIDEO  →";
+                        videoAction.onclick = continueAfterIntro;
                     });
                 }
             };

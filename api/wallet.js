@@ -56,10 +56,11 @@ module.exports = async function wallet(request, response) {
         }
         const network = process.env.SOLANA_NETWORK;
         const linkedWalletAddress = null;
-        const treasuryAddress = config?.treasury_address ?? null;
+        const approvedTreasuryAddress = RELICGRID_TREASURY_ADDRESS;
+        let treasuryAddress = null;
         let treasuryTokenAccountAddress = null;
         const readinessChecks = [];
-        if (treasuryAddress !== RELICGRID_TREASURY_ADDRESS) {
+        if (config?.treasury_address !== RELICGRID_TREASURY_ADDRESS) {
             readinessChecks.push("The configured treasury does not match the approved RelicGrid treasury address.");
         }
         if (config?.official_mint_address !== RELICGRID_CYFUR_MINT_ADDRESS) {
@@ -72,7 +73,7 @@ module.exports = async function wallet(request, response) {
             String(config.credits_per_token) !== String(CYFUR_CREDITS_PER_TOKEN) ||
             config.rounding_policy !== "floor" ||
             config.network !== network ||
-            !treasuryAddress) {
+            !config?.treasury_address) {
             readinessChecks.push("Supabase wallet configuration must match the selected Solana network and CYFUR settings.");
         }
         if (!process.env.SUPABASE_SERVICE_ROLE_KEY?.trim()) {
@@ -81,19 +82,14 @@ module.exports = async function wallet(request, response) {
         if (!process.env.SOLANA_RPC_URL?.trim()) {
             readinessChecks.push("Set SOLANA_RPC_URL in Vercel.");
         }
-        if (!process.env.SOLANA_TREASURY_ADDRESS?.trim() ||
-            process.env.SOLANA_TREASURY_ADDRESS !== treasuryAddress) {
-            readinessChecks.push("SOLANA_TREASURY_ADDRESS must exactly match Supabase treasury_address.");
-        }
         if (process.env.SOLANA_RPC_URL?.trim() &&
             GENESIS_HASHES[network] &&
             config?.network === network &&
-            treasuryAddress &&
-            isBase58(treasuryAddress, 32) &&
-            process.env.SOLANA_TREASURY_ADDRESS === treasuryAddress) {
+            isBase58(approvedTreasuryAddress, 32) &&
+            config?.treasury_address === approvedTreasuryAddress) {
             const [genesisHash, treasuryAccount, mintAccount] = await Promise.all([
                 solanaRpc(process.env.SOLANA_RPC_URL, "getGenesisHash", []),
-                solanaRpc(process.env.SOLANA_RPC_URL, "getAccountInfo", [treasuryAddress, {
+                solanaRpc(process.env.SOLANA_RPC_URL, "getAccountInfo", [approvedTreasuryAddress, {
                     commitment: "finalized",
                     encoding: "base64"
                 }]),
@@ -119,7 +115,7 @@ module.exports = async function wallet(request, response) {
             } else {
                 try {
                     treasuryTokenAccountAddress = deriveAssociatedTokenAccount(
-                        treasuryAddress,
+                        approvedTreasuryAddress,
                         config.official_mint_address,
                         config.token_program_id
                     );
@@ -136,12 +132,16 @@ module.exports = async function wallet(request, response) {
                         treasuryTokenAccount.value.owner !== config.token_program_id ||
                         treasuryTokenAccount.value.data?.parsed?.type !== "account" ||
                         tokenInfo?.mint !== config.official_mint_address ||
-                        tokenInfo?.owner !== treasuryAddress) {
+                        tokenInfo?.owner !== approvedTreasuryAddress) {
                         readinessChecks.push("The treasury CYFUR associated token account is missing or does not match the configured authority and mint.");
+                        treasuryTokenAccountAddress = null;
+                    } else {
+                        treasuryAddress = approvedTreasuryAddress;
                     }
                 } catch (error) {
                     if (error instanceof TypeError) {
                         readinessChecks.push("The configured treasury address cannot own a standard associated token account.");
+                        treasuryTokenAccountAddress = null;
                     } else {
                         throw error;
                     }
@@ -180,10 +180,9 @@ module.exports = async function wallet(request, response) {
             fundingStatus: depositsEnabled ? "ready" : "disabled",
             network: network ?? null,
             disabledReason: depositsEnabled ? null : "direct_treasury_setup_incomplete",
-            readinessChecks,
             disabledMessage: depositsEnabled
                 ? "Deposit verification is ready. Send at least 1 CYFUR to the displayed treasury address, then submit the transaction signature or explorer link. RelicGrid verifies finality before crediting."
-                : `${readinessChecks.join(" ")} Do not send CYFUR until status is READY.`,
+                : "Deposits are temporarily unavailable. Please check back later. Do not send CYFUR until the status is READY.",
             exchangeRateCreditsPerToken: CYFUR_CREDITS_PER_TOKEN,
             treasuryAddress,
             treasuryTokenAccountAddress,

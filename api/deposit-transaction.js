@@ -539,8 +539,7 @@ module.exports = async function depositTransaction(request, response) {
 
         const missing = [
             "SUPABASE_SERVICE_ROLE_KEY",
-            "SOLANA_RPC_URL",
-            "SOLANA_TREASURY_ADDRESS"
+            "SOLANA_RPC_URL"
         ].filter((name) => !process.env[name]?.trim());
         if (missing.length) {
             return notReady(
@@ -578,8 +577,7 @@ module.exports = async function depositTransaction(request, response) {
             String(config.credits_per_token) !== "10000" ||
             config.rounding_policy !== "floor" ||
             !isBase58(config.treasury_address, 32) ||
-            config.treasury_address !== RELICGRID_TREASURY_ADDRESS ||
-            config.treasury_address !== process.env.SOLANA_TREASURY_ADDRESS) {
+            config.treasury_address !== RELICGRID_TREASURY_ADDRESS) {
             return notReady(response, "wallet_configuration_incomplete", "Deposit configuration is not ready.");
         }
         if (!isBase58(linkedWallet, 32)) {

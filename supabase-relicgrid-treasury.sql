@@ -1,6 +1,6 @@
 -- Apply after supabase-walletless-deposits.sql.
--- The treasury is an owner-supplied public wallet address. Deposits stay disabled
--- until its control, the production CYFUR configuration, and server variables pass review.
+-- Mirror the approved backend treasury constant into Supabase. Deposits stay disabled
+-- until the finalized treasury token account and production configuration pass review.
 
 update public.wallet_system_config
 set treasury_address = 'BQa1gxbBP2jNJEzyHHtMAUfJepXjTnqQEhBuojL9E3ts',

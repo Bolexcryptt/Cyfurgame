@@ -39,6 +39,7 @@ const {
     isOfficialCyfurMintAccount,
     normalizeTransactionSignature,
     RELICGRID_CYFUR_MINT_ADDRESS,
+    RELICGRID_TREASURY_ADDRESS,
     verifyFinalizedDeposit
 } = require("../server/lib/solana-deposit.js");
 const { getLevelEconomyAndStars, verifyLevelProof } = require("../server/lib/level-completion.js");
@@ -593,7 +594,6 @@ test("wallet API publishes the same exchange rate and keeps deposits disabled", 
         "SUPABASE_SERVICE_ROLE_KEY",
         "SOLANA_NETWORK",
         "SOLANA_RPC_URL",
-        "SOLANA_TREASURY_ADDRESS",
         "WALLET_DIRECT_TREASURY_READY",
         "WALLET_DEPOSITS_ENABLED",
         "WALLET_MAINNET_DEPOSITS_ENABLED"
@@ -636,10 +636,11 @@ test("wallet API publishes the same exchange rate and keeps deposits disabled", 
         assert.equal(response.payload.paidGameplayEnabled, false);
         assert.equal(response.payload.fundingStatus, "disabled");
         assert.equal(response.payload.disabledReason, "direct_treasury_setup_incomplete");
+        assert.equal(response.payload.treasuryAddress, null);
         assert.equal(response.payload.linkedWalletAddress, null);
         assert.equal(requestedUrls.some((target) => target.includes("player_solana_wallets")), false);
-        assert.ok(response.payload.readinessChecks.includes("Set SUPABASE_SERVICE_ROLE_KEY in Vercel."));
-        assert.ok(response.payload.readinessChecks.includes("Set WALLET_DEPOSITS_ENABLED=true in Vercel after approval."));
+        assert.equal(Object.hasOwn(response.payload, "readinessChecks"), false);
+        assert.doesNotMatch(response.payload.disabledMessage, /SOLANA_|SUPABASE_|wallet_system_config|Vercel|Supabase/);
         assert.match(response.payload.disabledMessage, /Do not send CYFUR/);
         assert.equal(response.payload.balanceCredits, "250");
         assert.equal(response.payload.balanceVerified, true);
@@ -696,16 +697,27 @@ test("RelicGrid branding is used in the game and hidden scenes stop rendering", 
     assert.match(scene, /crystalHits\.forEach/);
     assert.match(scene, /if \(document\.hidden \|\| canvas\.clientWidth === 0 \|\| canvas\.clientHeight === 0\) return;/);
     assert.match(scene, /cancelAnimationFrame\(renderRequest\)/);
+    assert.match(scene, /const coreScale = 0\.36/);
+    assert.match(scene, /gridX\(GRID\.target\.col\) - 1\.35 \* coreScale/);
+    assert.match(scene, /gridZ\(GRID\.target\.row\) - 0\.1 \* coreScale/);
+    assert.match(scene, /playSoundEffect\("mirror"\)/);
+    assert.match(scene, /playSoundEffect\("core"\)/);
+    assert.match(scene, /playSoundEffect\("completion"\)/);
+    assert.match(scene, /activationRingMaterials\.forEach/);
     const app = readFileSync(new URL("../app.js", import.meta.url), "utf8");
     assert.match(app, /next-level[\s\S]*?startLevel\(number, true\)/);
     assert.doesNotMatch(app, /playLevelTransition|transitionFor/);
+    assert.match(app, /videoAction\.textContent = "Play Now  →"/);
+    assert.match(html, /id="video-action-button"[^>]*>Play Now/);
+    assert.doesNotMatch(app, /Tap to play the opening transmission with sound/);
+    assert.match(html, /id="intro-video"[^>]+src="intro\.mp4"/);
 });
 
 test("deposit UI does not require a connected wallet and exposes memo-confirm verification", () => {
     const html = readFileSync(new URL("../index.html", import.meta.url), "utf8");
     assert.match(html, /FUND YOUR RELICGRID ACCOUNT/);
     assert.match(html, /at least 1 CYFUR/);
-    assert.match(html, /BQa1gxbBP2jNJEzyHHtMAUfJepXjTnqQEhBuojL9E3ts/);
+    assert.match(html, /id="wallet-address">Loading verified treasury…<\/code>/);
     assert.match(html, /id="wallet-copy-address"/);
     assert.match(html, /id="deposit-required-memo"/);
     assert.match(html, /COPY MEMO/);
@@ -715,12 +727,13 @@ test("deposit UI does not require a connected wallet and exposes memo-confirm ve
     assert.match(app, /fetchWithTimeout\(apiUrl\("payment-intent"\)/);
     assert.match(app, /Unavailable: \$\{readinessMessage\}/);
     assert.match(app, /typeof result\.disabledMessage === "string"/);
-    assert.match(app, /Check the Vercel function logs; deposits remain disabled/);
-    assert.match(app, /Check the Vercel function logs; do not send CYFUR/);
+    assert.doesNotMatch(app, /SOLANA_TREASURY_ADDRESS must exactly match Supabase treasury_address/);
+    assert.doesNotMatch(app, /wallet_system_config\.deposits_enabled/);
+    assert.match(app, /Deposits are temporarily unavailable\. Please check back later\./);
     assert.doesNotMatch(html, /id="wallet-transfer-amount"|id="wallet-transfer-form"|id="wallet-preflight-button"/);
     assert.doesNotMatch(html, /CONNECT SOLANA WALLET|CONNECT LINKED WALLET/);
     assert.match(app, /async function createCyfurDepositInstructions/);
-    assert.match(app, /BQa1gxbBP2jNJEzyHHtMAUfJepXjTnqQEhBuojL9E3ts/);
+    assert.match(app, /address\.textContent = result\.treasuryAddress \|\| "Treasury unavailable"/);
     assert.match(app, /relicgrid\.payment-intent\.v1/);
     assert.match(app, /body: JSON\.stringify\(\{ signature: signatureOrLink \}\)/);
     assert.doesNotMatch(app, /body: JSON\.stringify\(\{ signature: signatureOrLink, paymentIntentId \}\)/);
@@ -750,6 +763,8 @@ test("deposit backend pins the approved treasury and migration keeps deposits di
     }), false);
     const verifier = readFileSync(new URL("../server/lib/solana-deposit.js", import.meta.url), "utf8");
     const migration = readFileSync(new URL("../supabase-relicgrid-treasury.sql", import.meta.url), "utf8");
+    const app = readFileSync(new URL("../app.js", import.meta.url), "utf8");
+    const html = readFileSync(new URL("../index.html", import.meta.url), "utf8");
     assert.match(verifier, new RegExp(`RELICGRID_TREASURY_ADDRESS = "${treasury}"`));
     assert.match(verifier, new RegExp(`RELICGRID_CYFUR_MINT_ADDRESS = "${mint}"`));
     assert.match(migration, new RegExp(`treasury_address = '${treasury}'`));
@@ -759,7 +774,15 @@ test("deposit backend pins the approved treasury and migration keeps deposits di
         const api = readFileSync(new URL(`../api/${apiFile}`, import.meta.url), "utf8");
         assert.match(api, /RELICGRID_TREASURY_ADDRESS/);
         assert.match(api, /RELICGRID_CYFUR_MINT_ADDRESS/);
+        assert.doesNotMatch(api, /SOLANA_TREASURY_ADDRESS/);
     }
+    const paymentIntentApi = readFileSync(new URL("../api/payment-intent.js", import.meta.url), "utf8");
+    assert.match(paymentIntentApi, /WALLET_DIRECT_TREASURY_READY must be true/);
+    assert.match(paymentIntentApi, /WALLET_DEPOSITS_ENABLED must be true/);
+    assert.match(paymentIntentApi, /WALLET_MAINNET_DEPOSITS_ENABLED must be true for mainnet/);
+    assert.doesNotMatch(app, new RegExp(treasury));
+    assert.doesNotMatch(html, new RegExp(treasury));
+    assert.doesNotMatch(paymentIntentApi, /readinessChecks,/);
 });
 
 test("wallet API returns verified zero for a player with no credit account or ledger entries", async () => {
@@ -1835,7 +1858,6 @@ test("payment-intent API creates an authenticated intent without a linked wallet
         SUPABASE_SERVICE_ROLE_KEY: "service-test-key",
         SOLANA_RPC_URL: "https://mainnet.example/rpc",
         SOLANA_NETWORK: "mainnet-beta",
-        SOLANA_TREASURY_ADDRESS: "BQa1gxbBP2jNJEzyHHtMAUfJepXjTnqQEhBuojL9E3ts",
         WALLET_DIRECT_TREASURY_READY: "true",
         WALLET_DEPOSITS_ENABLED: "true",
         WALLET_MAINNET_DEPOSITS_ENABLED: "true"
@@ -1843,6 +1865,8 @@ test("payment-intent API creates an authenticated intent without a linked wallet
     const previousEnvironment = Object.fromEntries(
         Object.keys(environment).map((name) => [name, process.env[name]])
     );
+    const previousTreasuryEnvironment = process.env.SOLANA_TREASURY_ADDRESS;
+    delete process.env.SOLANA_TREASURY_ADDRESS;
     for (const [name, value] of Object.entries(environment)) process.env[name] = value;
     const originalFetch = globalThis.fetch;
     const requests = [];
@@ -1851,7 +1875,7 @@ test("payment-intent API creates an authenticated intent without a linked wallet
     let configuredMintAddress = mintAddress;
     const tokenProgramId = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
     const treasuryTokenAccount = deriveAssociatedTokenAccount(
-        environment.SOLANA_TREASURY_ADDRESS,
+        RELICGRID_TREASURY_ADDRESS,
         mintAddress,
         tokenProgramId
     );
@@ -1870,14 +1894,14 @@ test("payment-intent API creates an authenticated intent without a linked wallet
                 token_decimals: 8,
                 credits_per_token: "10000",
                 rounding_policy: "floor",
-                treasury_address: environment.SOLANA_TREASURY_ADDRESS
+                treasury_address: RELICGRID_TREASURY_ADDRESS
             }]), { status: 200 });
         }
         if (target === environment.SOLANA_RPC_URL) {
             const call = JSON.parse(options.body);
             const result = call.method === "getGenesisHash"
                 ? "5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d"
-                : call.params[0] === environment.SOLANA_TREASURY_ADDRESS
+                : call.params[0] === RELICGRID_TREASURY_ADDRESS
                     ? { value: { owner: "11111111111111111111111111111111" } }
                     : call.params[0] === mintAddress
                         ? { value: { owner: tokenProgramId, data: { parsed: { type: "mint", info: {
@@ -1885,7 +1909,7 @@ test("payment-intent API creates an authenticated intent without a linked wallet
                             mintAuthority: null,
                             freezeAuthority: null
                         } } } } }
-                        : { value: { owner: tokenProgramId, data: { parsed: { type: "account", info: { mint: mintAddress, owner: environment.SOLANA_TREASURY_ADDRESS } } } } };
+                        : { value: { owner: tokenProgramId, data: { parsed: { type: "account", info: { mint: mintAddress, owner: RELICGRID_TREASURY_ADDRESS } } } } };
             return new Response(JSON.stringify({ result }), { status: 200 });
         }
         if (target.includes("/wallet_payment_intents?") && options.method === "DELETE") {
@@ -1940,9 +1964,9 @@ test("payment-intent API creates an authenticated intent without a linked wallet
         assert.equal(response.statusCode, 201);
         assert.equal(response.payload.amountRaw, "100000000");
         assert.equal(Object.hasOwn(response.payload, "sourceWalletAddress"), false);
-        assert.equal(response.payload.treasuryAddress, environment.SOLANA_TREASURY_ADDRESS);
+        assert.equal(response.payload.treasuryAddress, RELICGRID_TREASURY_ADDRESS);
         assert.equal(response.payload.treasuryTokenAccount, deriveAssociatedTokenAccount(
-            environment.SOLANA_TREASURY_ADDRESS,
+            RELICGRID_TREASURY_ADDRESS,
             mintAddress,
             tokenProgramId
         ));
@@ -1995,6 +2019,8 @@ test("payment-intent API creates an authenticated intent without a linked wallet
             if (value === undefined) delete process.env[name];
             else process.env[name] = value;
         }
+        if (previousTreasuryEnvironment === undefined) delete process.env.SOLANA_TREASURY_ADDRESS;
+        else process.env.SOLANA_TREASURY_ADDRESS = previousTreasuryEnvironment;
     }
 });
 
@@ -2914,7 +2940,7 @@ test("all 99 generated layouts are unique, valid, and solvable through every ord
     const scene = readFileSync(new URL("../script.js", import.meta.url), "utf8");
 
     assert.equal(levels.length, 99);
-    assert.match(scene, /coreSystem\.scale\.setScalar\(0\.42\)/);
+    assert.match(scene, /const coreScale = 0\.36/);
     assert.match(scene, /decorativeTerminalGroup\.visible = false/);
     assert.match(scene, /new THREE\.IcosahedronGeometry\(0\.29, 1\)/);
     for (const [index, level] of levels.entries()) {
@@ -2961,6 +2987,14 @@ test("all 99 generated layouts are unique, valid, and solvable through every ord
         }
         assert.equal(obstacles.has(`${level.start.row},${level.start.col}`), false);
         assert.equal(obstacles.has(`${level.target.row},${level.target.col}`), false);
+        const targetGridX = -5.6 + level.target.col * 1.4;
+        const targetGridZ = -3.8 + level.target.row * 1.4;
+        const coreScale = 0.36;
+        const corePositionX = targetGridX - 1.35 * coreScale;
+        const corePositionZ = targetGridZ - 0.1 * coreScale;
+        assert.ok(Math.abs(corePositionX + 1.35 * coreScale - targetGridX) < 1e-12);
+        assert.ok(Math.abs(corePositionZ + 0.1 * coreScale - targetGridZ) < 1e-12);
+        assert.ok(2 * 1.82 * coreScale < 1.4, `Level ${level.number} core spills into adjacent cells.`);
 
         let row = level.start.row;
         let col = level.start.col;

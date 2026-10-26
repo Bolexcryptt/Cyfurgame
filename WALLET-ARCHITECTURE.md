@@ -10,6 +10,8 @@ The server independently verifies the configured Solana network, exact CYFUR min
 
 The authenticated deposit flow creates a 15-minute server-side intent tied to the player, exact amount, network, mint, token program, and treasury. The game displays the treasury address, exact amount, and unique memo for the player to include in an external wallet transfer. The player then submits the transaction signature; this signature is only an RPC lookup key, never proof of payment. The migration is not applied and no real deposit has been tested; do not enable deposits until deployment, schema, and end-to-end checks are complete.
 
+The approved treasury address has one code source of truth: `RELICGRID_TREASURY_ADDRESS` in `server/lib/solana-deposit.js`. Supabase `wallet_system_config.treasury_address` must mirror that address and is rejected if it differs. The browser displays the server-returned approved address; no separate Vercel treasury-address variable is used.
+
 The campaign and leaderboard are unchanged. Depositing does not open Phantom or sign/broadcast a transaction from the game. After the player sends the transfer externally, the server checks it at finalized commitment and credits only after the verifier and atomic ledger RPC confirm it. A missing or not-yet-finalized transaction can be retried with the same signature; duplicate credit is prevented. A failed transfer, wrong destination, wrong mint, wrong amount, missing memo, expired intent, or unfinalized transfer receives no credit.
 
 ## Required setup
@@ -23,7 +25,7 @@ Apply these SQL files in order in the Supabase SQL Editor if not already applied
 5. `supabase-payment-intents.sql`
 6. `supabase-walletless-deposits.sql`
 
-The direct-treasury migration adds the owner treasury address and service-only RPCs. The wallet-link tables remain for compatibility but are not required for deposits. The wallet-less migration makes pending intents sender-independent while preserving finalized verification and atomic duplicate protection. The migrations leave `deposits_enabled` and `paid_gameplay_enabled` false. Set `wallet_system_config.treasury_address` to the owner's **public** Solana wallet address only after owner confirmation. Do not paste secrets into chat.
+The direct-treasury migration adds the approved treasury address and service-only RPCs. The wallet-link tables remain for compatibility but are not required for deposits. The wallet-less migration makes pending intents sender-independent while preserving finalized verification and atomic duplicate protection. The migrations leave `deposits_enabled` and `paid_gameplay_enabled` false. The Supabase treasury row must match the approved backend address. Do not paste secrets into chat.
 
 Configure these Vercel **server-side** variables:
 
@@ -32,7 +34,6 @@ Configure these Vercel **server-side** variables:
 - `SUPABASE_SERVICE_ROLE_KEY` — secret service-role key, used only by API routes for trusted reads and RPCs.
 - `SOLANA_RPC_URL` — trusted HTTPS Solana RPC endpoint.
 - `SOLANA_NETWORK` — `devnet` for isolated testing; `mainnet-beta` only for production review.
-- `SOLANA_TREASURY_ADDRESS` — the owner's public Solana wallet address; it must exactly match `wallet_system_config.treasury_address`.
 - `WALLET_DIRECT_TREASURY_READY=true` — owner/operator acknowledgment that the treasury address, ownership, monitoring, and reconciliation process are reviewed. Leave unset until confirmed.
 - `WALLET_DEPOSITS_ENABLED=true` — global deposit verification switch; leave unset until all tests and reviews pass.
 - `WALLET_MAINNET_DEPOSITS_ENABLED=true` — additional production-only switch; leave unset unless the mainnet launch is explicitly approved.
