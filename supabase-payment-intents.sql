@@ -4,7 +4,7 @@
 create table if not exists public.wallet_payment_intents (
     id uuid primary key,
     player_id uuid not null references public.player_profiles (id) on delete cascade,
-    source_wallet_address text not null,
+    source_wallet_address text,
     network text not null check (network in ('devnet', 'mainnet-beta')),
     mint_address text not null,
     token_program_id text not null,
@@ -83,7 +83,8 @@ begin
     for update;
     if not found
        or v_intent.player_id <> p_player_id
-       or v_intent.source_wallet_address <> p_source_wallet_address
+       or (v_intent.source_wallet_address is not null
+           and v_intent.source_wallet_address <> p_source_wallet_address)
        or v_intent.network <> p_network
        or v_intent.mint_address <> p_mint_address
        or v_intent.token_program_id <> p_token_program_id

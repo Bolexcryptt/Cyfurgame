@@ -51,12 +51,10 @@ module.exports = async function paymentIntent(request, response) {
             });
         }
 
-        const [configs, linkedWallets] = await Promise.all([
-            serviceRequest("wallet_system_config?select=deposits_enabled,network,official_mint_address,token_program_id,token_decimals,credits_per_token,rounding_policy,treasury_address&id=eq.1"),
-            serviceRequest(`player_solana_wallets?select=wallet_address&player_id=eq.${encodeURIComponent(user.id)}&limit=1`)
-        ]);
+        const configs = await serviceRequest(
+            "wallet_system_config?select=deposits_enabled,network,official_mint_address,token_program_id,token_decimals,credits_per_token,rounding_policy,treasury_address&id=eq.1"
+        );
         const config = configs[0];
-        const walletAddress = linkedWallets[0]?.wallet_address;
         if (!config || config.deposits_enabled !== true || config.network !== network ||
             !isBase58(config.official_mint_address, 32) ||
             !TOKEN_PROGRAM_IDS.has(config.token_program_id) ||
@@ -74,13 +72,6 @@ module.exports = async function paymentIntent(request, response) {
                 message: "The enabled network, approved CYFUR mint metadata, treasury, and database configuration must match."
             });
         }
-        if (!isBase58(walletAddress, 32)) {
-            return sendJson(response, 409, {
-                error: "solana_wallet_not_linked",
-                message: "Connect and verify a Solana wallet before creating a payment intent."
-            });
-        }
-
         if (request.body?.action === "validate") {
             const paymentIntentId = request.body?.paymentIntentId;
             if (typeof paymentIntentId !== "string" ||
@@ -88,13 +79,12 @@ module.exports = async function paymentIntent(request, response) {
                 return sendJson(response, 400, { error: "payment_intent_required" });
             }
             const [storedIntent] = await serviceRequest(
-                `wallet_payment_intents?select=id,player_id,source_wallet_address,network,mint_address,token_program_id,treasury_address,amount_raw,token_decimals,expires_at,status&id=eq.${encodeURIComponent(paymentIntentId)}&player_id=eq.${encodeURIComponent(user.id)}&limit=1`
+                `wallet_payment_intents?select=id,player_id,network,mint_address,token_program_id,treasury_address,amount_raw,token_decimals,expires_at,status&id=eq.${encodeURIComponent(paymentIntentId)}&player_id=eq.${encodeURIComponent(user.id)}&limit=1`
             );
             const amountRaw = String(storedIntent?.amount_raw ?? "");
             const expiresAt = Date.parse(storedIntent?.expires_at);
             if (!storedIntent ||
                 storedIntent.player_id !== user.id ||
-                storedIntent.source_wallet_address !== walletAddress ||
                 storedIntent.network !== network ||
                 storedIntent.mint_address !== config.official_mint_address ||
                 storedIntent.token_program_id !== config.token_program_id ||
@@ -114,7 +104,6 @@ module.exports = async function paymentIntent(request, response) {
             return sendJson(response, 200, {
                 intentId: storedIntent.id,
                 network: storedIntent.network,
-                sourceWalletAddress: storedIntent.source_wallet_address,
                 mintAddress: storedIntent.mint_address,
                 tokenProgramId: storedIntent.token_program_id,
                 treasuryAddress: storedIntent.treasury_address,
@@ -150,7 +139,7 @@ module.exports = async function paymentIntent(request, response) {
         const intent = {
             id,
             player_id: user.id,
-            source_wallet_address: walletAddress,
+            source_wallet_address: null,
             network,
             mint_address: config.official_mint_address,
             token_program_id: config.token_program_id,
@@ -175,7 +164,6 @@ module.exports = async function paymentIntent(request, response) {
         return sendJson(response, 201, {
             intentId: id,
             network,
-            sourceWalletAddress: walletAddress,
             mintAddress: config.official_mint_address,
             tokenProgramId: config.token_program_id,
             treasuryAddress: config.treasury_address,
@@ -189,6 +177,12 @@ module.exports = async function paymentIntent(request, response) {
             status: error.status ?? 500,
             code: error.code ?? "payment_intent_creation_failed"
         });
+        if (error.code === "23502") {
+            return sendJson(response, 503, {
+                error: "payment_intent_migration_required",
+                message: "Apply supabase-walletless-deposits.sql in Supabase before creating deposits."
+            });
+        }
         if (error.status === 404 && error.code === "PGRST205") {
             return sendJson(response, 503, { error: "payment_intent_migration_required" });
         }

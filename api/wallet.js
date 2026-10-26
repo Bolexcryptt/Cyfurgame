@@ -22,11 +22,7 @@ module.exports = async function wallet(request, response) {
         const user = await authenticate(request);
         if (!user) return sendJson(response, 401, { error: "authentication_required" });
 
-        const [linkedWallets, accounts, deposits] = await Promise.all([
-            selectOwn(request, "player_solana_wallets", new URLSearchParams({
-                select: "wallet_address,verified_at",
-                limit: "1"
-            })),
+        const [accounts, deposits] = await Promise.all([
             selectOwn(request, "wallet_credit_accounts", new URLSearchParams({
                 select: "balance_credits,updated_at",
                 limit: "1"
@@ -45,10 +41,9 @@ module.exports = async function wallet(request, response) {
             config = configs[0] ?? null;
         }
         const network = process.env.SOLANA_NETWORK;
-        const linkedWalletAddress = linkedWallets[0]?.wallet_address ?? null;
+        const linkedWalletAddress = null;
         const treasuryAddress = config?.treasury_address ?? null;
         const readinessChecks = [];
-        if (!linkedWalletAddress) readinessChecks.push("Connect and verify your Solana wallet.");
         if (!config ||
             !config.official_mint_address ||
             !config.token_program_id ||
@@ -99,7 +94,7 @@ module.exports = async function wallet(request, response) {
             disabledReason: depositsEnabled ? null : "direct_treasury_setup_incomplete",
             readinessChecks,
             disabledMessage: depositsEnabled
-                ? "Deposit verification is ready. Approve a CYFUR transfer from your linked Solana wallet; RelicGrid will verify the finalized transaction before crediting."
+                ? "Deposit verification is ready. Send the exact CYFUR amount to the displayed treasury address with the unique payment memo, then submit the transaction signature. RelicGrid verifies finality before crediting."
                 : `${readinessChecks.join(" ")} Do not send CYFUR until status is READY.`,
             exchangeRateCreditsPerToken: CYFUR_CREDITS_PER_TOKEN,
             treasuryAddress,

@@ -77,10 +77,9 @@ module.exports = async function deposits(request, response) {
             return sendJson(response, 400, { error: "payment_intent_required", credited: false });
         }
 
-        const [configs, linkedWallets, intents] = await Promise.all([
+        const [configs, intents] = await Promise.all([
             serviceRequest("wallet_system_config?select=deposits_enabled,network,official_mint_address,token_program_id,token_decimals,credits_per_token,rounding_policy,treasury_address&id=eq.1"),
-            serviceRequest(`player_solana_wallets?select=wallet_address&player_id=eq.${encodeURIComponent(user.id)}&limit=1`),
-            serviceRequest(`wallet_payment_intents?select=id,player_id,source_wallet_address,network,mint_address,token_program_id,treasury_address,amount_raw,token_decimals,expires_at,status,transaction_signature&id=eq.${encodeURIComponent(paymentIntentId)}&player_id=eq.${encodeURIComponent(user.id)}&limit=1`)
+            serviceRequest(`wallet_payment_intents?select=id,player_id,network,mint_address,token_program_id,treasury_address,amount_raw,token_decimals,expires_at,status,transaction_signature&id=eq.${encodeURIComponent(paymentIntentId)}&player_id=eq.${encodeURIComponent(user.id)}&limit=1`)
         ]);
         const config = configs[0];
         if (!config || config.deposits_enabled !== true || config.network !== configuredNetwork ||
@@ -97,17 +96,8 @@ module.exports = async function deposits(request, response) {
                 "Deposit verification is disabled: the approved network, mint, token metadata, treasury address, floor-rounding policy, and enabled database configuration must match. Do not send CYFUR."
             );
         }
-        const linkedWallet = linkedWallets[0]?.wallet_address;
-        if (!linkedWallet) {
-            return sendJson(response, 409, {
-                error: "solana_wallet_not_linked",
-                credited: false,
-                message: "Connect and verify ownership of your Solana wallet before depositing."
-            });
-        }
         const intent = intents[0];
         if (!intent || intent.player_id !== user.id ||
-            intent.source_wallet_address !== linkedWallet ||
             intent.network !== config.network ||
             intent.mint_address !== config.official_mint_address ||
             intent.token_program_id !== config.token_program_id ||
@@ -125,7 +115,6 @@ module.exports = async function deposits(request, response) {
         const verified = await verifyFinalizedDeposit({
             signature,
             depositAddress: config.treasury_address,
-            expectedSourceWallet: linkedWallet,
             officialMint: config.official_mint_address,
             tokenProgramId: config.token_program_id,
             tokenDecimals: config.token_decimals,
@@ -178,7 +167,7 @@ module.exports = async function deposits(request, response) {
             body: JSON.stringify({
                 p_payment_intent_id: paymentIntentId,
                 p_player_id: user.id,
-                p_source_wallet_address: linkedWallet,
+                p_source_wallet_address: verified.sourceWalletAddress,
                 p_network: config.network,
                 p_transaction_signature: signature,
                 p_mint_address: config.official_mint_address,

@@ -107,7 +107,6 @@ set search_path = ''
 as $$
 declare
     v_config public.wallet_system_config%rowtype;
-    v_wallet public.player_solana_wallets%rowtype;
     v_deposit public.wallet_deposits%rowtype;
     v_deposit_id uuid;
     v_expected_credits numeric;
@@ -147,15 +146,6 @@ begin
        or v_config.credits_per_token <> 10000
        or v_config.rounding_policy <> 'floor' then
         raise exception 'Deposit configuration is disabled or does not match.' using errcode = '22023';
-    end if;
-
-    select * into v_wallet
-    from public.player_solana_wallets
-    where player_id = p_player_id
-      and wallet_address = p_source_wallet_address
-    for share;
-    if not found then
-        raise exception 'Source wallet is not linked to this player.' using errcode = '22023';
     end if;
 
     v_expected_credits := floor(

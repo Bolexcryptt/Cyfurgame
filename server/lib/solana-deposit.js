@@ -255,17 +255,23 @@ async function verifyFinalizedDeposit({
     ]));
     const recipientAccounts = new Set();
     const sourceAccounts = new Set();
+    const transactionSigners = new Set(
+        (transaction.transaction.message.accountKeys ?? [])
+            .filter((key) => key?.signer === true)
+            .map(getPublicKey)
+            .filter(Boolean)
+    );
     let receivedAmount = 0n;
     if (expectedSourceWallet !== undefined) {
         for (const entry of [
             ...(transaction.meta.preTokenBalances ?? []),
             ...(transaction.meta.postTokenBalances ?? [])
         ]) {
-            if (entry.mint === officialMint && entry.owner === expectedSourceWallet) {
-                const accountKey = transaction.transaction.message.accountKeys[entry.accountIndex];
-                const tokenAccount = getPublicKey(accountKey);
-                if (tokenAccount) sourceAccounts.add(tokenAccount);
-            }
+            if (entry.mint !== officialMint || entry.owner !== expectedSourceWallet) continue;
+            const tokenAccount = getPublicKey(
+                transaction.transaction.message.accountKeys[entry.accountIndex]
+            );
+            if (tokenAccount) sourceAccounts.add(tokenAccount);
         }
     }
     for (const entry of transaction.meta.postTokenBalances ?? []) {
@@ -302,6 +308,7 @@ async function verifyFinalizedDeposit({
         if (!hasIntentMemo) return { state: "payment_intent_mismatch" };
     }
     let instructionAmount = 0n;
+    const sourceWallets = new Set();
     for (const instruction of instructions) {
         if (getPublicKey(instruction.programId) !== tokenProgramId ||
             !["transfer", "transferChecked"].includes(instruction.parsed?.type)) continue;
@@ -311,14 +318,18 @@ async function verifyFinalizedDeposit({
             (!sourceAccounts.has(info?.source) || info?.authority !== expectedSourceWallet)) {
             return { state: "wrong_destination_or_token" };
         }
+        if (!isBase58(info?.authority, 32) || !transactionSigners.has(info.authority)) {
+            return { state: "wrong_destination_or_token" };
+        }
         if (info.mint && info.mint !== officialMint) {
             throw new Error("Transaction contains a transfer of a different token mint.");
         }
         const amount = getInstructionAmount(info);
         if (amount === null || amount <= 0n) throw new Error("Transaction contains an invalid token transfer amount.");
         instructionAmount += amount;
+        sourceWallets.add(info.authority);
     }
-    if (instructionAmount !== receivedAmount) {
+    if (instructionAmount !== receivedAmount || sourceWallets.size !== 1) {
         return { state: "wrong_destination_or_token" };
     }
     if (expectedAmountRaw !== undefined && receivedAmount !== BigInt(expectedAmountRaw)) {
@@ -328,6 +339,7 @@ async function verifyFinalizedDeposit({
     return {
         state: "finalized",
         amountRaw: receivedAmount.toString(),
+        sourceWalletAddress: [...sourceWallets][0],
         finalizedSlot: transaction.slot,
         finalizedAt: transaction.blockTime
     };

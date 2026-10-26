@@ -119,9 +119,9 @@
                 <article class="info-card wallet-card wallet-home-card" id="wallet-card" aria-labelledby="wallet-heading">
                     <div class="wallet-home-overview">
                         <div class="wallet-emblem" aria-hidden="true"><i></i><b>R</b></div>
-                        <span class="eyebrow"><span class="wallet-signal"></span> PILOT RESOURCES // ACCOUNT REQUIRED</span>
+                        <span class="eyebrow"><span class="wallet-signal"></span> PILOT RESOURCES // VERIFIED DEPOSITS</span>
                         <h2 id="wallet-heading">Wallet &amp; balance</h2>
-                        <p class="wallet-description">Connect your Solana wallet, approve a CYFUR transfer to the owner-controlled treasury, and see credits only after server verification.</p>
+                        <p class="wallet-description">Send CYFUR from any Solana wallet. No wallet connection or linked wallet is required; credits appear only after independent server verification.</p>
                         <p class="wallet-exchange-rate">EXCHANGE RATE <b id="wallet-exchange-rate">1 CYFUR = 10,000 CREDITS</b> · DISPLAY ONLY</p>
                         <div class="wallet-data-panel wallet-balance-panel">
                             <span class="wallet-field-label">VERIFIED IN-GAME BALANCE</span>
@@ -133,13 +133,13 @@
                             <span class="wallet-field-label">WALLET LINKED TO THIS GAME ACCOUNT</span>
                             <code id="wallet-player-address">No wallet linked</code>
                         </div>
-                        <p id="wallet-player-state" class="wallet-player-state" aria-live="polite">PHANTOM NOT CONNECTED</p>
-                        <button id="fund-account-button" class="button button-primary wallet-fund-button" type="button" aria-controls="wallet-api-status">CONNECT SOLANA WALLET <span>→</span></button>
+                        <p id="wallet-player-state" class="wallet-player-state" aria-live="polite">SEND FROM ANY SOLANA WALLET · NO CONNECTION REQUIRED</p>
+                        <button id="fund-account-button" class="button button-primary wallet-fund-button" type="button" aria-controls="wallet-api-status">CREATE DEPOSIT INSTRUCTIONS <span>→</span></button>
                     </div>
                     <div class="wallet-home-details">
                         <div class="wallet-gates" id="wallet-gates">
                             <span id="wallet-gate-mint">OFFICIAL CYFUR MINT AND NETWORK VERIFIED SERVER-SIDE</span>
-                            <span id="wallet-gate-custody">SENDER OWNERSHIP PROVED BY SIGNATURE · NO GAME CUSTODY</span>
+                            <span id="wallet-gate-custody">NON-CUSTODIAL · NO WALLET CONNECTION OR PRIVATE KEYS</span>
                         </div>
                         <div class="wallet-data-panel wallet-address-panel">
                             <span class="wallet-field-label">OWNER-CONTROLLED CYFUR TREASURY</span>
@@ -150,22 +150,29 @@
                             <span>DEPOSIT STATUS</span><b id="wallet-status-value">DISABLED</b>
                         </div>
                         <p id="wallet-api-status" class="wallet-api-status" tabindex="-1" role="status" aria-live="polite">Wallet linking and deposits are disabled until the owner-controlled treasury and backend verification are configured. Do not send CYFUR.</p>
-                        <p class="wallet-transfer-instructions">When the backend shows READY, enter an amount and approve the transfer in your connected wallet. RelicGrid verifies the linked sender, exact mint, treasury recipient, finalized status, and duplicate signature before crediting. Your wallet pays the Solana network fee. For an 8-decimal mint, transfers below 0.0001 CYFUR convert to zero credits and are rejected.</p>
+                        <p class="wallet-transfer-instructions">Create deposit instructions first. Send the exact amount to the displayed treasury address and include the unique memo in your wallet's transaction. Then paste the transaction signature and confirm. Use a Solana wallet that supports transaction memos. The backend independently checks the configured CYFUR mint, exact amount, treasury, successful finalized status, and duplicate signature. For an 8-decimal mint, transfers below 0.0001 CYFUR convert to zero credits and are rejected.</p>
                         <form id="wallet-transfer-form" class="wallet-transfer-form">
                             <label class="wallet-field-label" for="wallet-transfer-amount">CYFUR AMOUNT</label>
                             <div class="wallet-transfer-controls">
                                 <input id="wallet-transfer-amount" name="amount" type="number" inputmode="decimal" min="0.0001" step="0.00000001" placeholder="0.0001" required disabled>
-                                <button id="wallet-transfer-button" class="button button-primary" type="submit" disabled>DEPOSIT CYFUR</button>
+                                <button id="wallet-transfer-button" class="button button-primary" type="submit" disabled>CREATE DEPOSIT INSTRUCTIONS</button>
                             </div>
-                            <button id="wallet-preflight-button" class="button button-quiet" type="button" disabled>RUN READ-ONLY DIAGNOSTIC</button>
+                            <button id="wallet-preflight-button" class="button button-quiet" type="button" disabled hidden>RUN READ-ONLY DIAGNOSTIC</button>
                             <pre id="wallet-preflight-results" class="wallet-preflight-results" role="status" aria-live="polite" hidden></pre>
                         </form>
+                        <section id="wallet-deposit-instructions" class="wallet-deposit-instructions" hidden aria-live="polite">
+                            <h3>Send this exact deposit</h3>
+                            <p>Amount: <strong id="deposit-required-amount"></strong></p>
+                            <p>Destination: use the owner-controlled treasury address above.</p>
+                            <p>CYFUR mint: <code id="deposit-required-mint"></code></p>
+                            <p>Memo: <code id="deposit-required-memo"></code></p>
+                            <button id="deposit-copy-memo" class="button button-quiet" type="button">COPY MEMO</button>
+                        </section>
                         <form id="deposit-signature-form" class="deposit-signature-form">
-                            <label class="wallet-field-label" for="deposit-intent-id">PAYMENT INTENT ID</label>
-                            <input id="deposit-intent-id" name="paymentIntentId" type="text" inputmode="text" autocomplete="off" spellcheck="false" maxlength="36" placeholder="Provided when the deposit is prepared" required disabled>
+                            <input id="deposit-intent-id" name="paymentIntentId" type="hidden">
                             <label class="wallet-field-label" for="deposit-signature">SOLANA TRANSACTION SIGNATURE</label>
                             <input id="deposit-signature" name="signature" type="text" inputmode="text" autocomplete="off" spellcheck="false" maxlength="100" placeholder="Paste transaction signature" required disabled>
-                            <button id="deposit-verify-button" class="button button-quiet" type="submit" disabled>VERIFY &amp; CREDIT</button>
+                            <button id="deposit-verify-button" class="button button-quiet" type="submit" disabled>CONFIRM DEPOSIT</button>
                         </form>
                         <div class="wallet-history-heading">
                             <span class="wallet-field-label">DEPOSIT HISTORY</span>

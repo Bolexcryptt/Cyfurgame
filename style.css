@@ -1694,6 +1694,24 @@ button { -webkit-tap-highlight-color: transparent; }
         padding: 4px 0;
     }
     .wallet-transfer-form { display: grid; gap: 8px; margin: 15px 0; }
+    .wallet-deposit-instructions {
+        display: grid;
+        gap: 8px;
+        margin: 12px 0;
+        padding: 12px;
+        border: 1px solid #72d7db52;
+        border-radius: 5px;
+        background: #0a1920;
+        animation: panel-arrive .35s ease both;
+    }
+    .wallet-deposit-instructions[hidden] { display: none; }
+    .wallet-deposit-instructions h3,
+    .wallet-deposit-instructions p { margin: 0; }
+    .wallet-deposit-instructions p { overflow-wrap: anywhere; color: #a9c0c8; font-size: 9px; line-height: 1.6; }
+    .wallet-deposit-instructions strong,
+    .wallet-deposit-instructions code { color: #b8f3e2; font-family: "Consolas", monospace; }
+    .wallet-api-status[data-state="pending"] { color: #b7e7ed; animation: status-pulse 1.2s ease-in-out infinite alternate; }
+    .wallet-api-status[data-state="ready"] { animation: panel-arrive .35s ease both; }
     .wallet-transfer-controls { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 9px; }
     .wallet-transfer-controls input {
         min-width: 0;
