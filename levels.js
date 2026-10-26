@@ -1,5 +1,7 @@
 const ROWS = 6;
 const COLS = 8;
+const CLEAR_TARGET_ROWS = Object.freeze([2, 3, 4]);
+const CLEAR_TARGET_COLS = Object.freeze([2, 3, 4, 5]);
 export const CYFUR_CREDITS_PER_TOKEN = 10000;
 export const STAR_TIME_CONFIG = Object.freeze({
     threeStarBaseSeconds: 25,
@@ -105,8 +107,8 @@ function makeLevel(number, usedLayouts) {
             direction: random() < 0.5 ? 1 : 3
         };
         const target = {
-            row: Math.floor(random() * ROWS),
-            col: Math.floor(random() * COLS)
+            row: CLEAR_TARGET_ROWS[Math.floor(random() * CLEAR_TARGET_ROWS.length)],
+            col: CLEAR_TARGET_COLS[Math.floor(random() * CLEAR_TARGET_COLS.length)]
         };
         const distance = Math.abs(start.row - target.row) + Math.abs(start.col - target.col);
         if (distance < 4 || (target.row === start.row && target.col === start.col)) continue;

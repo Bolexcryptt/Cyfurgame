@@ -407,7 +407,13 @@ button { -webkit-tap-highlight-color: transparent; }
     animation: readout-blink 1.7s ease-in-out infinite;
 }
 .video-action p { margin: 0 0 18px; color: #d4e2eb; font-size: clamp(14px, 2vw, 20px); }
-.video-action .button { min-width: min(200px, 100%); min-height: 52px; }
+.video-action .button {
+    min-width: min(220px, 100%);
+    min-height: 58px;
+    font-size: clamp(17px, 4vw, 20px);
+    font-weight: 800;
+    letter-spacing: .06em;
+}
 .video-skip-button {
     position: absolute;
     z-index: 3;

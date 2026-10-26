@@ -708,9 +708,13 @@ test("RelicGrid branding is used in the game and hidden scenes stop rendering", 
     assert.match(app, /next-level[\s\S]*?startLevel\(number, true\)/);
     assert.doesNotMatch(app, /playLevelTransition|transitionFor/);
     assert.match(app, /videoAction\.textContent = "Play Now  →"/);
+    assert.match(app, /transitionVideo\.onended = \(\) => \{[\s\S]*?showNameOrHome\(\);/);
+    assert.doesNotMatch(app, /videoAction\.textContent = "CONTINUE  →"/);
     assert.match(html, /id="video-action-button"[^>]*>Play Now/);
     assert.doesNotMatch(app, /Tap to play the opening transmission with sound/);
     assert.match(html, /id="intro-video"[^>]+src="intro\.mp4"/);
+    const styles = readFileSync(new URL("../style.css", import.meta.url), "utf8");
+    assert.match(styles, /video-action \.button \{[\s\S]*?font-size: clamp\(17px, 4vw, 20px\)/);
 });
 
 test("deposit UI does not require a connected wallet and exposes memo-confirm verification", () => {
@@ -2953,6 +2957,8 @@ test("all 99 generated layouts are unique, valid, and solvable through every ord
         assert.ok(level.start.col >= 0 && level.start.col < 8);
         assert.ok(level.target.row >= 0 && level.target.row < 6);
         assert.ok(level.target.col >= 0 && level.target.col < 8);
+        assert.ok(level.target.row >= 2 && level.target.row <= 4, `Level ${level.number} target is too close to the back or front scenery.`);
+        assert.ok(level.target.col >= 2 && level.target.col <= 5, `Level ${level.number} target is too close to side scenery.`);
         assert.ok(level.par > 0);
         assert.equal(level.solutionMirrors.length, level.par);
 
@@ -2993,6 +2999,8 @@ test("all 99 generated layouts are unique, valid, and solvable through every ord
         assert.equal(obstacles.has(`${level.target.row},${level.target.col}`), false);
         const targetGridX = -5.6 + level.target.col * 1.4;
         const targetGridZ = -3.8 + level.target.row * 1.4;
+        assert.ok(Math.hypot(targetGridX + 2.55, targetGridZ + 3.55) > 1.8,
+            `Level ${level.number} target overlaps the source pylon clearance.`);
         const coreScale = 0.36;
         const corePositionX = targetGridX - 1.35 * coreScale;
         const corePositionZ = targetGridZ - 0.1 * coreScale;

@@ -1544,17 +1544,11 @@ function beginGameIntro() {
     transitionVideo.onended = () => {
         player.watchedGameIntro = true;
         savePlayer();
+        transitionVideo.pause();
+        transitionVideo.hidden = true;
         videoSkip.hidden = true;
         videoCaption.textContent = "Welcome, pilot.";
-        videoAction.textContent = "CONTINUE  →";
-        videoAction.hidden = false;
-        videoAction.onclick = () => {
-            transitionVideo.pause();
-            transitionVideo.hidden = true;
-            introVideo.hidden = false;
-            videoAction.hidden = true;
-            showNameOrHome();
-        };
+        showNameOrHome();
     };
     transitionVideo.onerror = () => {
         console.error("Gameplay introduction video could not be decoded.", transitionVideo.error);
