@@ -25,6 +25,16 @@
             <video id="intro-video" class="intro-video" src="intro.mp4" playsinline preload="auto"></video>
             <video id="transition-video" class="intro-video" playsinline preload="metadata" hidden></video>
             <div class="video-shade"></div>
+            <div id="rotate-device-prompt" class="rotate-device-prompt" role="status" aria-live="polite" hidden>
+                <svg viewBox="0 0 64 64" aria-hidden="true">
+                    <path d="M22 7h20a5 5 0 0 1 5 5v40a5 5 0 0 1-5 5H22a5 5 0 0 1-5-5V12a5 5 0 0 1 5-5Z"/>
+                    <path d="M27 48h10"/>
+                    <path d="M9 29a23 23 0 0 1 38-16M55 35a23 23 0 0 1-38 16"/>
+                    <path d="m43 8 5 5-7 2M21 56l-5-5 7-2"/>
+                </svg>
+                <strong>ROTATE YOUR DEVICE</strong>
+                <span>Watch transmissions in landscape</span>
+            </div>
             <button id="video-skip-button" class="video-skip-button button button-quiet" type="button" hidden>SKIP GAME VIDEO <span>→</span></button>
             <div class="video-brand">
                 <img src="logo.png" alt="RelicGrid">
@@ -168,6 +178,62 @@
                         </div>
                         <ol id="wallet-history" class="wallet-history" aria-label="Deposit history">
                             <li class="wallet-history-empty">No verified deposits recorded.</li>
+                        </ol>
+                    </div>
+                </article>
+
+                <article class="info-card wallet-card wallet-withdrawal-card" aria-labelledby="withdrawal-heading">
+                    <div class="wallet-home-overview">
+                        <div class="wallet-emblem" aria-hidden="true"><i></i><b>W</b></div>
+                        <span class="eyebrow"><span class="wallet-signal"></span> PLAYER WITHDRAWAL // SECURE SERVER-SIDE TRANSFER</span>
+                        <h2 id="withdrawal-heading">Withdraw CYFUR</h2>
+                        <p class="wallet-description">Sends an authenticated request to the server for an on-chain SPL transfer only after the approved treasury, wallet config, and signer are verified.</p>
+                    </div>
+                    <div class="wallet-home-details">
+                        <div class="wallet-withdrawal-summary">
+                            <div class="wallet-data-panel">
+                                <span class="wallet-field-label">ELIGIBLE WITHDRAWAL BALANCE</span>
+                                <b id="withdrawal-eligible-balance">0 CREDITS</b>
+                                <small id="withdrawal-balance-note">No active withdrawal balance loaded yet.</small>
+                            </div>
+                            <div class="wallet-data-panel">
+                                <span class="wallet-field-label">CONVERSION RATE</span>
+                                <b id="withdrawal-conversion-rate">1 CYFUR = 10,000 CREDITS</b>
+                                <small id="withdrawal-rate-note">Conversion follows the project credit rate.</small>
+                            </div>
+                            <div class="wallet-data-panel">
+                                <span class="wallet-field-label">MINIMUM WITHDRAWAL</span>
+                                <b id="withdrawal-minimum">Not configured</b>
+                                <small id="withdrawal-minimum-note">No minimum withdrawal rule is defined in the approved project rules.</small>
+                            </div>
+                        </div>
+
+                        <form id="withdrawal-form" class="deposit-signature-form withdrawal-form">
+                            <label class="wallet-field-label" for="withdrawal-wallet-address">SOLANA RECEIVING ADDRESS</label>
+                            <input id="withdrawal-wallet-address" name="walletAddress" type="text" inputmode="text" autocomplete="off" spellcheck="false" maxlength="500" placeholder="Enter the player wallet that should receive CYFUR" required>
+                            <div class="withdrawal-inline-actions">
+                                <button id="withdrawal-validate-address" class="button button-quiet" type="button">VALIDATE ADDRESS</button>
+                                <button id="withdrawal-refresh" class="wallet-refresh" type="button">REFRESH WITHDRAWAL</button>
+                            </div>
+
+                            <label class="wallet-field-label" for="withdrawal-amount">WITHDRAWAL AMOUNT (CREDITS)</label>
+                            <input id="withdrawal-amount" name="amountCredits" type="text" inputmode="numeric" autocomplete="off" spellcheck="false" maxlength="64" placeholder="Example: 10000" required>
+
+                            <div class="withdrawal-preview-bar" aria-live="polite">
+                                <span>EXACT CYFUR</span>
+                                <strong id="withdrawal-preview-amount">0.00000000 CYFUR</strong>
+                            </div>
+
+                            <button id="withdrawal-submit" class="button button-primary" type="submit" disabled>REQUEST WITHDRAWAL</button>
+                            <p id="withdrawal-status" class="wallet-api-status" role="status" aria-live="polite">Real withdrawals remain disabled until the owner-approved treasury signer, official CYFUR mint, funding, and Supabase migration are verified.</p>
+                            <p id="withdrawal-transaction-status" class="wallet-api-status" hidden></p>
+                        </form>
+
+                        <div class="wallet-history-heading">
+                            <span class="wallet-field-label">WITHDRAWAL HISTORY</span>
+                        </div>
+                        <ol id="withdrawal-history" class="wallet-history" aria-label="Withdrawal history">
+                            <li class="wallet-history-empty">No withdrawals recorded.</li>
                         </ol>
                     </div>
                 </article>

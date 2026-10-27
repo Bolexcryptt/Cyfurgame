@@ -201,31 +201,39 @@ function startScene() {
                 return;
             }
             audioContext ??= new AudioContextConstructor();
-            if (audioContext.state === "suspended") {
-                void audioContext.resume().catch((error) => {
+            const sounds = {
+                mirror: { startFrequency: 620, endFrequency: 920, duration: 0.075, type: "triangle", volume: 0.045 },
+                laser: { startFrequency: 180, endFrequency: 740, duration: 0.18, type: "sawtooth", volume: 0.055 },
+                core: { startFrequency: 440, endFrequency: 1040, duration: 0.2, type: "sine", volume: 0.075 },
+                completion: { startFrequency: 880, endFrequency: 1320, duration: 0.22, type: "sine", volume: 0.075 }
+            };
+            const sound = sounds[effect];
+            if (!sound) return;
+            const schedule = () => {
+                if (audioContext.state !== "running") return;
+                const startAt = Math.max(audioContext.currentTime, audioQueueUntil);
+                const endAt = startAt + sound.duration;
+                const oscillator = audioContext.createOscillator();
+                const gain = audioContext.createGain();
+                oscillator.type = sound.type;
+                oscillator.frequency.setValueAtTime(sound.startFrequency, startAt);
+                oscillator.frequency.exponentialRampToValueAtTime(sound.endFrequency, endAt);
+                gain.gain.setValueAtTime(0.0001, startAt);
+                gain.gain.exponentialRampToValueAtTime(sound.volume, startAt + 0.012);
+                gain.gain.exponentialRampToValueAtTime(0.0001, endAt);
+                oscillator.connect(gain);
+                gain.connect(audioContext.destination);
+                oscillator.start(startAt);
+                oscillator.stop(endAt);
+                audioQueueUntil = endAt + 0.025;
+            };
+            if (audioContext.state !== "running") {
+                void audioContext.resume().then(schedule).catch((error) => {
                     console.warn("Game sound effects could not be enabled.", error);
                 });
+                return;
             }
-            const sound = effect === "mirror"
-                ? { startFrequency: 620, endFrequency: 920, duration: 0.075, type: "triangle" }
-                : effect === "core"
-                    ? { startFrequency: 440, endFrequency: 1040, duration: 0.2, type: "sine" }
-                    : { startFrequency: 880, endFrequency: 1320, duration: 0.22, type: "sine" };
-            const startAt = Math.max(audioContext.currentTime, audioQueueUntil);
-            const endAt = startAt + sound.duration;
-            const oscillator = audioContext.createOscillator();
-            const gain = audioContext.createGain();
-            oscillator.type = sound.type;
-            oscillator.frequency.setValueAtTime(sound.startFrequency, startAt);
-            oscillator.frequency.exponentialRampToValueAtTime(sound.endFrequency, endAt);
-            gain.gain.setValueAtTime(0.0001, startAt);
-            gain.gain.exponentialRampToValueAtTime(effect === "mirror" ? 0.045 : 0.075, startAt + 0.012);
-            gain.gain.exponentialRampToValueAtTime(0.0001, endAt);
-            oscillator.connect(gain);
-            gain.connect(audioContext.destination);
-            oscillator.start(startAt);
-            oscillator.stop(endAt);
-            audioQueueUntil = endAt + 0.025;
+            schedule();
         } catch (error) {
             console.warn("Game sound effect could not be played.", error);
         }
@@ -801,7 +809,6 @@ function startScene() {
             marker.add(arrow);
             return arrow;
         });
-
         const hitArea = new THREE.Mesh(
             new THREE.PlaneGeometry(1.05, 1.05),
             new THREE.MeshBasicMaterial({
@@ -819,11 +826,20 @@ function startScene() {
         sourceTargets.push(hitArea);
 
         const update = () => {
-            const x = gridX(GRID.start.col);
+            const x = gridX(GRID.start.col) + launchDirection * 0.45;
             const z = gridZ(GRID.start.row);
             marker.position.set(x, 0.25, z);
             hitArea.position.set(x, 0.29, z);
             sourcePylon?.position.set(x, 0.05, z);
+            if (sourcePylon?.userData.wallEmitter) {
+                sourcePylon.userData.wallEmitter.position.x = -launchDirection * 0.3;
+                sourcePylon.userData.emitterRing.position.x = launchDirection * 0.2;
+                sourcePylon.userData.emitterRing.rotation.y = launchDirection === 1
+                    ? Math.PI / 2
+                    : -Math.PI / 2;
+                sourcePylon.userData.emitterCore.position.x = launchDirection * 0.2;
+                sourcePylon.userData.beaconLight.position.x = launchDirection * 0.22;
+            }
             arrows.forEach((arrow, index) => {
                 const isSelected = (index === 1) === (launchDirection === 1);
                 arrow.material.color.setHex(isSelected ? 0xffb8f0 : 0x744d78);
@@ -959,7 +975,11 @@ function startScene() {
         let outcome = "edge";
         let reflections = 0;
         let finalCell = { row, col };
-        let         from = new THREE.Vector3(gridX(GRID.start.col), 0.82, gridZ(GRID.start.row));
+        let from = new THREE.Vector3(
+            gridX(GRID.start.col) + launchDirection * 0.37,
+            0.82,
+            gridZ(GRID.start.row)
+        );
 
         for (let step = 0; step < GRID.rows * GRID.cols * 2; step++) {
             const state = `${row},${col},${direction}`;
@@ -1220,6 +1240,7 @@ function startScene() {
         GRID.start = { row: level.start.row, col: level.start.col };
         GRID.target = { row: level.target.row, col: level.target.col };
         launchDirection = level.start.direction;
+        GRID.start.col = launchDirection === 1 ? -1 : GRID.cols;
         placeLevelTarget();
         createLevelObstacles();
         resetGame();
@@ -1396,6 +1417,7 @@ function startScene() {
         if (tracing || corePowered) return;
         startSolveTimer();
         launchDirection = launchDirection === 1 ? 3 : 1;
+        GRID.start.col = launchDirection === 1 ? -1 : GRID.cols;
         updateSourceMarker();
         clearObjectGroup(activeBeamGroup);
         beamSegments.length = 0;
@@ -1418,6 +1440,7 @@ function startScene() {
         tracing = true;
         traceStartedAt = performance.now();
         traceResult = previewRoute;
+        playSoundEffect("laser");
         if (firstLevelTutorial && firstLevelTutorialStage !== "complete") {
             updateFirstLevelTutorial(
                 "03 / 03",
@@ -1442,6 +1465,7 @@ function startScene() {
         resetCrystalStates();
         delete gameHud.dataset.completed;
         launchDirection = activeLevel.start.direction;
+        GRID.start.col = launchDirection === 1 ? -1 : GRID.cols;
         updateSourceMarker();
         placedMirrors.clear();
         clearObjectGroup(mirrorGroup);
@@ -1702,6 +1726,40 @@ function startScene() {
         const parent = type === "source" ? platform : decorativeTerminalGroup ?? platform;
         const isBeacon = type === "beacon" || type === "source";
         parent.add(group);
+        if (type === "source") {
+            const wallEmitter = new THREE.Group();
+            group.add(wallEmitter);
+            addBox(wallEmitter, [0.36, 1.55, 1.42], [0, 0.78, 0], materials.stone[2]);
+            addBox(wallEmitter, [0.48, 0.12, 1.56], [0, 1.52, 0], materials.metalEdge);
+            addBox(wallEmitter, [0.48, 0.12, 1.56], [0, 0.08, 0], materials.metalEdge);
+            addBox(wallEmitter, [0.08, 1.35, 0.1], [0, 0.8, -0.55], materials.metal);
+            addBox(wallEmitter, [0.08, 1.35, 0.1], [0, 0.8, 0.55], materials.metal);
+
+            const emitterRing = new THREE.Mesh(
+                new THREE.TorusGeometry(0.31, 0.055, 8, 28),
+                new THREE.MeshBasicMaterial({
+                    color: 0x79eaff,
+                    toneMapped: false,
+                    blending: THREE.AdditiveBlending
+                })
+            );
+            emitterRing.position.set(0.2, 0.82, 0);
+            wallEmitter.add(emitterRing);
+            const emitterCore = new THREE.Mesh(
+                new THREE.SphereGeometry(0.16, 12, 8),
+                new THREE.MeshBasicMaterial({ color: 0xd8fbff, toneMapped: false })
+            );
+            emitterCore.position.copy(emitterRing.position);
+            wallEmitter.add(emitterCore);
+            const beaconLight = configureQualityLight(new THREE.PointLight(0x63dfff, 8, 3.8, 2));
+            beaconLight.position.copy(emitterRing.position);
+            wallEmitter.add(beaconLight);
+            group.userData.wallEmitter = wallEmitter;
+            group.userData.emitterRing = emitterRing;
+            group.userData.emitterCore = emitterCore;
+            group.userData.beaconLight = beaconLight;
+            return group;
+        }
         const colorMaterial = new THREE.MeshStandardMaterial({
             color,
             emissive: color,

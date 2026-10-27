@@ -705,25 +705,39 @@ test("RelicGrid branding is used in the game and hidden scenes stop rendering", 
     assert.match(scene, /gridX\(GRID\.target\.col\) - 1\.35 \* CORE_SCALE/);
     assert.match(scene, /gridZ\(GRID\.target\.row\) - 0\.1 \* CORE_SCALE/);
     assert.match(scene, /playSoundEffect\("mirror"\)/);
+    assert.match(scene, /playSoundEffect\("laser"\)/);
     assert.match(scene, /playSoundEffect\("core"\)/);
     assert.match(scene, /playSoundEffect\("completion"\)/);
+    assert.match(scene, /group\.userData\.wallEmitter = wallEmitter/);
+    assert.match(scene, /GRID\.start\.col = launchDirection === 1 \? -1 : GRID\.cols/);
     assert.match(scene, /activationRingMaterials\.forEach/);
     const app = readFileSync(new URL("../app.js", import.meta.url), "utf8");
     assert.match(app, /next-level[\s\S]*?startLevel\(number, true\)/);
-    assert.doesNotMatch(app, /playLevelTransition|transitionFor/);
+    assert.match(app, /function playLevelTransition\(nextLevel\)/);
+    assert.match(app, /10 \+ Math\.floor\(Math\.random\(\) \* 6\)/);
+    assert.match(app, /const transitionClips = \["levels\.mp4", "levels2\.mp4"\]/);
+    assert.match(app, /interstitialClipIndex = \(interstitialClipIndex \+ 1\) % transitionClips\.length/);
+    assert.match(app, /videoOrientationQuery = window\.matchMedia\("\(max-width: 900px\) and \(orientation: portrait\)"\)/);
+    assert.match(app, /function playVideoInLandscape\(video, onError\)/);
     assert.match(app, /videoAction\.textContent = "Play Now  →"/);
     assert.match(app, /transitionVideo\.onended = \(\) => \{[\s\S]*?showNameOrHome\(\);/);
     assert.doesNotMatch(app, /videoAction\.textContent = "CONTINUE  →"/);
     assert.match(html, /id="video-action-button"[^>]*>Play Now/);
+    assert.match(html, /id="rotate-device-prompt"/);
     assert.doesNotMatch(app, /Tap to play the opening transmission with sound/);
+    assert.match(app, /videoAction\.onclick = continueAfterIntro/);
+    assert.match(app, /function fitVideoFrame\(video\)/);
     assert.match(html, /id="intro-video"[^>]+src="intro\.mp4"/);
     assert.match(app, /transitionVideo\.src = "gamevideo\.mp4"/);
     assert.match(app, /function playCampaignEnding\(\)/);
     assert.match(app, /if \(number === 99\) playCampaignEnding\(\)/);
     assert.match(app, /transitionVideo\.src = "theend\.mp4"/);
     assert.equal(existsSync(new URL("../gamevideo.mp4", import.meta.url)), true);
+    assert.equal(existsSync(new URL("../levels.mp4", import.meta.url)), true);
+    assert.equal(existsSync(new URL("../levels2.mp4", import.meta.url)), true);
     assert.equal(existsSync(new URL("../theend.mp4", import.meta.url)), true);
     const styles = readFileSync(new URL("../style.css", import.meta.url), "utf8");
+    assert.match(styles, /\.intro-video \{[\s\S]*?object-fit: contain/);
     assert.match(styles, /video-action \.button \{[\s\S]*?font-size: clamp\(17px, 4vw, 20px\)/);
 });
 
@@ -2968,7 +2982,7 @@ test("all 99 generated layouts are unique, valid, and solvable through every ord
     for (const [index, level] of levels.entries()) {
         assert.equal(level.number, index + 1);
         assert.ok(level.start.row >= 0 && level.start.row < 6);
-        assert.ok(level.start.col >= 0 && level.start.col < 8);
+        assert.equal(level.start.col, level.start.direction === 1 ? -1 : 8);
         assert.ok(level.target.row >= 0 && level.target.row < 6);
         assert.ok(level.target.col >= 0 && level.target.col < 8);
         assert.ok(level.target.row >= 2 && level.target.row <= 4, `Level ${level.number} target is too close to the back or front scenery.`);
@@ -2994,7 +3008,7 @@ test("all 99 generated layouts are unique, valid, and solvable through every ord
         ]));
         const mirrors = new Map(level.solutionMirrors.map((mirror) => [`${mirror.row},${mirror.col}`, mirror.orientation]));
         const crystalCells = [...crystals.keys()];
-        assert.equal(level.crystals.length, 1 + Math.floor((level.band - 1) / 2));
+        assert.equal(level.crystals.length, Math.min(1 + Math.floor((level.number - 1) / 3), 6));
         assert.equal(crystalCells.length, level.crystals.length);
         for (const crystal of level.crystals) {
             const key = `${crystal.row},${crystal.col}`;
@@ -3060,4 +3074,8 @@ test("all 99 generated layouts are unique, valid, and solvable through every ord
         assert.equal(nextCrystal, level.crystals.length, `Level ${level.number} solution must activate every crystal.`);
     }
     assert.equal(signatures.size, 99);
+    assert.ok(levels[8].crystals.length >= 3);
+    assert.ok(levels[9].crystals.length >= 4);
+    assert.ok(levels[8].obstacles.length >= 6);
+    assert.ok(levels[9].obstacles.length >= 6);
 });

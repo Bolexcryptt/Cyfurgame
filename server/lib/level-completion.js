@@ -9,7 +9,7 @@ const backslashReflection = [3, 2, 1, 0];
 
 function verifyLevelProof(level, mirrors, launchDirection) {
     if (!level || !Array.isArray(level.obstacles) || !Array.isArray(level.crystals) ||
-        !Number.isInteger(level.start?.row) || !Number.isInteger(level.start?.col) ||
+        !Number.isInteger(level.start?.row) || level.start.row < 0 || level.start.row >= 6 ||
         !Number.isInteger(level.target?.row) || !Number.isInteger(level.target?.col) ||
         ![1, 3].includes(launchDirection) ||
         !Array.isArray(mirrors) || mirrors.length > 48) {
@@ -17,7 +17,6 @@ function verifyLevelProof(level, mirrors, launchDirection) {
     }
 
     const mirrorMap = new Map();
-    const startKey = `${level.start.row},${level.start.col}`;
     const targetKey = `${level.target.row},${level.target.col}`;
     const obstacleKeys = new Set(level.obstacles.map(({ row, col }) => `${row},${col}`));
     const crystalMap = new Map(level.crystals.map((crystal, index) => [
@@ -32,7 +31,7 @@ function verifyLevelProof(level, mirrors, launchDirection) {
             return { connected: false, reason: "invalid_mirror" };
         }
         const key = `${mirror.row},${mirror.col}`;
-        if (key === startKey || key === targetKey || obstacleKeys.has(key) ||
+        if (key === targetKey || obstacleKeys.has(key) ||
             crystalMap.has(key) || mirrorMap.has(key)) {
             return { connected: false, reason: "invalid_mirror_position" };
         }
@@ -40,7 +39,7 @@ function verifyLevelProof(level, mirrors, launchDirection) {
     }
 
     let row = level.start.row;
-    let col = level.start.col;
+    let col = launchDirection === 1 ? -1 : 8;
     let direction = launchDirection;
     let reflections = 0;
     let nextCrystalIndex = 0;

@@ -346,14 +346,57 @@ button { -webkit-tap-highlight-color: transparent; }
     overflow: hidden;
     background: radial-gradient(ellipse at center, #13202b 0, #080d14 43%, #03070d 78%);
 }
+.video-screen[data-orientation-blocked="true"] .video-shade,
+.video-screen[data-orientation-blocked="true"] .video-brand,
+.video-screen[data-orientation-blocked="true"] .video-action,
+.video-screen[data-orientation-blocked="true"] .video-skip-button {
+    visibility: hidden;
+}
+.rotate-device-prompt {
+    position: absolute;
+    z-index: 4;
+    inset: 0;
+    display: grid;
+    place-content: center;
+    justify-items: center;
+    gap: 12px;
+    padding: 24px;
+    background:
+        radial-gradient(ellipse at center, #18243ce8, #080a14f5 72%),
+        #080a14;
+    color: #eef4ff;
+    text-align: center;
+}
+.rotate-device-prompt[hidden] { display: none; }
+.rotate-device-prompt svg {
+    width: 76px;
+    height: 76px;
+    fill: none;
+    stroke: #72e6f4;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    stroke-width: 2.5;
+    filter: drop-shadow(0 0 12px #58dcec66);
+}
+.rotate-device-prompt strong {
+    color: #f0dcff;
+    font: 800 13px "Consolas", monospace;
+    letter-spacing: .16em;
+}
+.rotate-device-prompt span {
+    color: #adc0d3;
+    font-size: 13px;
+}
 .intro-video {
     position: absolute;
     top: 50%;
     left: 50%;
-    width: var(--phone-width);
-    height: var(--phone-height);
     transform: translate(-50%, -50%);
-    object-fit: cover;
+    width: auto;
+    height: auto;
+    max-width: calc(100vw - 24px);
+    max-height: calc(100svh - 24px);
+    object-fit: contain;
     background: #03070d;
     border: 1px solid #a9d9e02b;
     border-radius: 22px;
@@ -1231,6 +1274,79 @@ button { -webkit-tap-highlight-color: transparent; }
 .wallet-history-state[data-state="confirmed"] { border-color: #6cdbad4a; color: #91e9bd; }
 .wallet-history-state[data-state="failed"] { border-color: #ef92774a; color: #ffad94; }
 .wallet-history-empty { padding: 9px; color: #7e929d; font-size: 9px; }
+.wallet-withdrawal-summary {
+    position: relative;
+    z-index: 1;
+    display: grid;
+    gap: 8px;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    margin: 12px 0 14px;
+}
+.wallet-withdrawal-summary .wallet-data-panel {
+    min-height: 120px;
+    justify-content: start;
+}
+.wallet-withdrawal-summary .wallet-data-panel b {
+    color: #e4faff;
+    font: 700 13px/1.3 "Consolas",monospace;
+}
+.wallet-withdrawal-summary .wallet-data-panel small {
+    color: #7b94a0;
+    font: 700 7px/1.5 "Consolas",monospace;
+    letter-spacing: .07em;
+}
+.withdrawal-inline-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+.withdrawal-inline-actions .button,
+.withdrawal-inline-actions .wallet-refresh {
+    flex: 1 1 140px;
+    min-height: 36px;
+}
+.withdrawal-preview-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 9px 10px;
+    border: 1px solid #59dff933;
+    border-radius: 5px;
+    background: rgba(8, 19, 25, .75);
+    color: #9bb4be;
+    font: 700 7px "Consolas",monospace;
+    letter-spacing: .08em;
+}
+.withdrawal-preview-bar strong {
+    color: #dffbff;
+    font-size: 10px;
+    letter-spacing: .04em;
+}
+.withdrawal-form {
+    margin-top: 14px;
+}
+.withdrawal-form .button-primary {
+    margin-top: 4px;
+}
+.wallet-api-status[data-state="ready"] {
+    color: #9ce8ca;
+}
+.wallet-api-status[data-state="pending"] {
+    color: #f7d280;
+}
+.wallet-api-status[data-state="error"] {
+    color: #ffba9e;
+}
+@media (max-width: 780px) {
+    .wallet-withdrawal-summary {
+        grid-template-columns: 1fr;
+    }
+    .withdrawal-preview-bar {
+        align-items: start;
+        flex-direction: column;
+    }
+}
 @keyframes step-arrive {
     from { opacity: 0; transform: translateX(-10px); }
     to { opacity: 1; transform: translateX(0); }

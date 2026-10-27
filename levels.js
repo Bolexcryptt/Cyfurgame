@@ -97,14 +97,16 @@ function buildRoute(random, start, target, minimumTurns) {
 
 function makeLevel(number, usedLayouts) {
     const band = Math.ceil(number / 10);
-    const requiredTurns = band;
+    const requiredTurns = Math.min(1 + Math.floor((number - 1) / 8), 12);
+    const crystalCount = Math.min(1 + Math.floor((number - 1) / 3), 6);
 
-    for (let attempt = 0; attempt < 300; attempt++) {
+    for (let attempt = 0; attempt < 900; attempt++) {
         const random = randomFor(number * 7919 + attempt * 104729);
+        const direction = random() < 0.5 ? 1 : 3;
         const start = {
             row: Math.floor(random() * ROWS),
-            col: Math.floor(random() * 2) === 0 ? 2 : 5,
-            direction: random() < 0.5 ? 1 : 3
+            col: direction === 1 ? -1 : COLS,
+            direction
         };
         const target = {
             row: CLEAR_TARGET_ROWS[Math.floor(random() * CLEAR_TARGET_ROWS.length)],
@@ -136,7 +138,6 @@ function makeLevel(number, usedLayouts) {
                 straightRouteCells.push(route[i]);
             }
         }
-        const crystalCount = 1 + Math.floor((band - 1) / 2);
         if (straightRouteCells.length < crystalCount) continue;
         for (let i = straightRouteCells.length - 1; i > 0; i--) {
             const j = Math.floor(random() * (i + 1));
@@ -166,7 +167,7 @@ function makeLevel(number, usedLayouts) {
             const j = Math.floor(random() * (i + 1));
             [candidates[i], candidates[j]] = [candidates[j], candidates[i]];
         }
-        const obstacleCount = Math.min(1 + band, candidates.length);
+        const obstacleCount = Math.min(2 + Math.floor((number - 1) / 2), 18, candidates.length);
         const obstacles = candidates.slice(0, obstacleCount);
         const layoutKey = JSON.stringify({
             start,

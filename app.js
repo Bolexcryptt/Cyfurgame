@@ -34,8 +34,10 @@ const screens = [
 ].map((id) => document.getElementById(id));
 const introVideo = document.getElementById("intro-video");
 const transitionVideo = document.getElementById("transition-video");
+const videoScreen = document.getElementById("video-screen");
 const videoAction = document.getElementById("video-action-button");
 const videoSkip = document.getElementById("video-skip-button");
+const rotateDevicePrompt = document.getElementById("rotate-device-prompt");
 const videoCaption = document.getElementById("video-caption");
 const backgroundMusic = document.getElementById("background-music");
 const playerNameInput = document.getElementById("player-name");
@@ -99,13 +101,16 @@ function readPlayer() {
 }
 
 let player = readPlayer();
+let activeVideoPlayback = null;
+let nextInterstitialAt = player.completedLevels.length + randomTransitionInterval();
+let interstitialScheduleNeedsSync = true;
+let interstitialClipIndex = Math.floor(Math.random() * 2);
 let pendingLevel = null;
 let activeWalletLevelSessionId = null;
 let walletTimerStartPromise = Promise.resolve(false);
 const processedLevelCompletions = new Set();
 const pendingLevelEntryRequests = new Map();
 let levelEntryRequestInProgress = false;
-let introFinished = false;
 let musicStarted = false;
 let authUser = null;
 let backendStatus = supabaseConfigured ? "Connecting to Supabase…" : "Supabase is not configured.";
@@ -116,6 +121,60 @@ let solanaWeb3ModulePromise = null;
 function savePlayer() {
     localStorage.setItem(storageKey, JSON.stringify(player));
 }
+
+function randomTransitionInterval() {
+    return 10 + Math.floor(Math.random() * 6);
+}
+
+function stopVideoPlayback(video) {
+    if (activeVideoPlayback?.video !== video) return;
+    activeVideoPlayback = null;
+    rotateDevicePrompt.hidden = true;
+    delete videoScreen.dataset.orientationBlocked;
+}
+
+function attemptActiveVideoPlayback() {
+    const active = activeVideoPlayback;
+    if (!active || videoOrientationQuery.matches) return;
+    try {
+        const playback = active.video.play();
+        if (playback && typeof playback.catch === "function") {
+            playback.catch((error) => {
+                if (activeVideoPlayback !== active ||
+                    (error.name === "AbortError" && active.video.paused)) return;
+                active.onError(error);
+            });
+        }
+    } catch (error) {
+        active.onError(error);
+    }
+}
+
+const videoOrientationQuery = window.matchMedia("(max-width: 900px) and (orientation: portrait)");
+
+function updateVideoOrientation() {
+    const active = activeVideoPlayback;
+    if (!active) return;
+    fitVideoFrame(active.video);
+    if (videoOrientationQuery.matches) {
+        active.video.pause();
+        videoScreen.dataset.orientationBlocked = "true";
+        rotateDevicePrompt.hidden = false;
+        return;
+    }
+    rotateDevicePrompt.hidden = true;
+    delete videoScreen.dataset.orientationBlocked;
+    if (active.video.paused) attemptActiveVideoPlayback();
+}
+
+function playVideoInLandscape(video, onError) {
+    activeVideoPlayback = { video, onError };
+    updateVideoOrientation();
+}
+
+videoOrientationQuery.addEventListener("change", updateVideoOrientation);
+window.addEventListener("resize", updateVideoOrientation);
+window.screen.orientation?.addEventListener("change", updateVideoOrientation);
 
 function nextUnlockedLevel(completedLevels) {
     const completed = new Set(completedLevels);
@@ -138,6 +197,10 @@ async function refreshOwnProgress() {
     if (error) throw error;
     player.completedLevels = [...new Set(data.map((record) => record.level_number))].sort((a, b) => a - b);
     player.unlockedLevel = nextUnlockedLevel(player.completedLevels);
+    if (interstitialScheduleNeedsSync) {
+        nextInterstitialAt = player.completedLevels.length + randomTransitionInterval();
+        interstitialScheduleNeedsSync = false;
+    }
     savePlayer();
 }
 
@@ -627,6 +690,249 @@ function renderWalletHistory(deposits) {
     history.replaceChildren(fragment);
 }
 
+function renderWithdrawalHistory(withdrawals) {
+    const history = document.getElementById("withdrawal-history");
+    if (!history) return;
+    if (!Array.isArray(withdrawals)) {
+        history.replaceChildren();
+        const empty = document.createElement("li");
+        empty.className = "wallet-history-empty";
+        empty.textContent = "Withdrawal history is unavailable.";
+        history.append(empty);
+        return;
+    }
+
+    const fragment = document.createDocumentFragment();
+    for (const withdrawal of withdrawals) {
+        const item = document.createElement("li");
+        item.className = "wallet-history-item";
+        const detail = document.createElement("span");
+        detail.className = "wallet-history-detail";
+        const amount = document.createElement("b");
+        amount.textContent = `${formatTokenAmount((withdrawal.amount_raw ?? "0").toString(), Number(withdrawal.token_decimals ?? 8))} CYFUR`;
+        const info = document.createElement("small");
+        info.textContent = typeof withdrawal.transaction_signature === "string"
+            ? `SIG ${withdrawal.transaction_signature.slice(0, 8)}…${withdrawal.transaction_signature.slice(-8)}`
+            : `Status: ${withdrawal.status || "unknown"}`;
+        detail.append(amount, info);
+
+        const state = document.createElement("span");
+        state.className = "wallet-history-state";
+        const normalized = (withdrawal.status || "unknown").toLowerCase();
+        state.dataset.state = ["pending", "confirmed", "failed"].includes(normalized) ? normalized : "unknown";
+        state.textContent = state.dataset.state.toUpperCase();
+        item.append(detail, state);
+        fragment.append(item);
+    }
+    if (!withdrawals.length) {
+        const empty = document.createElement("li");
+        empty.className = "wallet-history-empty";
+        empty.textContent = "No withdrawals recorded.";
+        fragment.append(empty);
+    }
+    history.replaceChildren(fragment);
+}
+
+function setWithdrawalStatus(message, state = "") {
+    const status = document.getElementById("withdrawal-status");
+    if (!status) return;
+    status.textContent = message;
+    status.dataset.state = state;
+}
+
+function updateWithdrawalPreview() {
+    const amountInput = document.getElementById("withdrawal-amount");
+    const preview = document.getElementById("withdrawal-preview-amount");
+    const decimals = Number(document.getElementById("withdrawal-token-decimals")?.dataset.decimals || 8);
+    if (!amountInput || !preview) return;
+    const value = (amountInput.value || "").trim();
+    if (!/^\d+$/.test(value) || BigInt(value) <= 0n) {
+        preview.textContent = "0.00000000 CYFUR";
+        return;
+    }
+    const credits = BigInt(value);
+    const rawAmount = (credits * 10n ** BigInt(decimals)) / 10000n;
+    preview.textContent = `${formatTokenAmount(rawAmount.toString(), decimals)} CYFUR`;
+}
+
+async function refreshWithdrawalStatus() {
+    const addressInput = document.getElementById("withdrawal-wallet-address");
+    const submit = document.getElementById("withdrawal-submit");
+    const validateButton = document.getElementById("withdrawal-validate-address");
+    const amountInput = document.getElementById("withdrawal-amount");
+    const balanceValue = document.getElementById("withdrawal-eligible-balance");
+    const balanceNote = document.getElementById("withdrawal-balance-note");
+    const minimumValue = document.getElementById("withdrawal-minimum");
+    const minimumNote = document.getElementById("withdrawal-minimum-note");
+    const history = document.getElementById("withdrawal-history");
+    const tokenDecimals = document.getElementById("withdrawal-token-decimals");
+    if (!addressInput || !submit || !validateButton || !amountInput || !balanceValue || !balanceNote || !minimumValue || !minimumNote || !history) return;
+    setWithdrawalStatus("Loading withdrawal details…", "pending");
+    submit.disabled = true;
+    validateButton.disabled = true;
+    amountInput.disabled = true;
+    addressInput.disabled = true;
+    minimumValue.textContent = "Not configured";
+    minimumNote.textContent = "No minimum withdrawal rule is defined in the approved project rules.";
+    balanceValue.textContent = "0 CREDITS";
+    balanceNote.textContent = "No active withdrawal balance loaded yet.";
+    history.replaceChildren();
+    const empty = document.createElement("li");
+    empty.className = "wallet-history-empty";
+    empty.textContent = "No withdrawals recorded.";
+    history.append(empty);
+
+    try {
+        if (!supabaseConfigured || !supabase) {
+            setWithdrawalStatus("Sign in to your game account before requesting a CYFUR withdrawal.", "error");
+            return;
+        }
+        const { data, error } = await supabase.auth.getSession();
+        if (error) throw error;
+        const accessToken = data.session?.access_token;
+        if (!accessToken) {
+            setWithdrawalStatus("Sign in to your RelicGrid account before requesting a CYFUR withdrawal.", "error");
+            return;
+        }
+        const response = await fetch(apiUrl("withdrawals"), {
+            headers: {
+                Authorization: `Bearer ${accessToken}`,
+                "Content-Type": "application/json"
+            },
+            cache: "no-store"
+        });
+        const result = await response.json().catch(() => ({}));
+        if (!response.ok) {
+            const message = result.message || result.error || `Withdrawal status could not be loaded (${response.status}).`;
+            setWithdrawalStatus(message, "error");
+            return;
+        }
+        const availableCredits = BigInt(result.availableCredits || "0");
+        const totalCredits = BigInt(result.balanceCredits || "0");
+        const decimals = Number(result.config?.tokenDecimals ?? 8);
+        if (tokenDecimals) tokenDecimals.dataset.decimals = String(decimals);
+        if (typeof result.walletAddress === "string" && result.walletAddress.trim() && !addressInput.value.trim()) {
+            addressInput.value = result.walletAddress.trim();
+        }
+        balanceValue.textContent = `${formatCredits(result.availableCredits || "0")} CREDITS`;
+        balanceNote.textContent = `${formatCredits(result.balanceCredits || "0")} total credits on file · ${formatCredits(result.availableCredits || "0")} eligible for withdrawal`;
+        minimumValue.textContent = "Not configured";
+        minimumNote.textContent = "No minimum withdrawal rule is defined in the approved project rules.";
+        renderWithdrawalHistory(result.withdrawals || []);
+        const ready = result.withdrawalEnabled === true && typeof result.walletAddress === "string" && result.walletAddress.trim();
+        submit.disabled = !ready || availableCredits <= 0n || !amountInput.value.trim();
+        validateButton.disabled = !ready;
+        amountInput.disabled = !ready;
+        addressInput.disabled = !ready;
+        if (!ready) {
+            setWithdrawalStatus("Real withdrawals remain disabled until the treasury signer, approved CYFUR mint, and owner authorization are verified.", "error");
+            return;
+        }
+        if (amountInput.value.trim() === "") {
+            amountInput.value = availableCredits > 0n ? availableCredits.toString() : "0";
+        }
+        updateWithdrawalPreview();
+        setWithdrawalStatus("Withdrawal requests are enabled. Review the linked wallet and send the request only after confirming the destination is correct.", "ready");
+    } catch (error) {
+        console.error("Withdrawal status failed to load.", error);
+        setWithdrawalStatus(error.message || "Withdrawal details could not be loaded.", "error");
+    }
+}
+
+async function submitWithdrawalRequest(event) {
+    event.preventDefault();
+    const form = document.getElementById("withdrawal-form");
+    const addressInput = document.getElementById("withdrawal-wallet-address");
+    const amountInput = document.getElementById("withdrawal-amount");
+    const submitButton = document.getElementById("withdrawal-submit");
+    const statusNode = document.getElementById("withdrawal-transaction-status");
+    if (!form || !addressInput || !amountInput || !submitButton) return;
+    const walletAddress = (addressInput.value || "").trim();
+    const amountCredits = (amountInput.value || "").trim();
+    if (!/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(walletAddress)) {
+        setWithdrawalStatus("Enter a valid Solana wallet address that matches the verified linked wallet for this account.", "error");
+        return;
+    }
+    if (!/^\d+$/.test(amountCredits) || BigInt(amountCredits) <= 0n) {
+        setWithdrawalStatus("Enter a valid positive credit amount to withdraw.", "error");
+        return;
+    }
+    submitButton.disabled = true;
+    setWithdrawalStatus("Submitting withdrawal request to the secure server…", "pending");
+    if (statusNode) {
+        statusNode.hidden = false;
+        statusNode.textContent = "Requesting the on-chain transfer…";
+        statusNode.dataset.state = "pending";
+    }
+
+    try {
+        if (!supabaseConfigured || !supabase) throw new Error("Supabase authentication is unavailable.");
+        const { data, error } = await supabase.auth.getSession();
+        if (error) throw error;
+        const accessToken = data.session?.access_token;
+        if (!accessToken) throw new Error("Sign in to your RelicGrid account before requesting a CYFUR withdrawal.");
+        const response = await fetch(apiUrl("withdrawals"), {
+            method: "POST",
+            headers: {
+                Authorization: `Bearer ${accessToken}`,
+                "Content-Type": "application/json"
+            },
+            body: JSON.stringify({ action: "submit", amountCredits }),
+            cache: "no-store"
+        });
+        const result = await response.json().catch(() => ({}));
+        if (!response.ok) {
+            const errorMessage = result.message || result.error || `Withdrawal request failed (${response.status}).`;
+            setWithdrawalStatus(errorMessage, "error");
+            if (statusNode) {
+                statusNode.textContent = errorMessage;
+                statusNode.dataset.state = "error";
+            }
+            return;
+        }
+        if (result.status === "confirmed") {
+            setWithdrawalStatus(`Withdrawal confirmed. Signature: ${result.signature || "pending verification"}`, "ready");
+            if (statusNode) {
+                statusNode.textContent = `Transaction signature: ${result.signature || "unavailable"}`;
+                statusNode.dataset.state = "ready";
+            }
+            await refreshWithdrawalStatus();
+            return;
+        }
+        setWithdrawalStatus(result.message || "The server accepted the request but the final transfer status is pending.", "pending");
+        if (statusNode) {
+            statusNode.textContent = result.message || "Withdrawal is pending verification.";
+            statusNode.dataset.state = "pending";
+        }
+        await refreshWithdrawalStatus();
+    } catch (error) {
+        console.error("Withdrawal submission failed.", error);
+        setWithdrawalStatus(error.message || "The withdrawal request could not be completed.", "error");
+        if (statusNode) {
+            statusNode.textContent = error.message || "Withdrawal failed.";
+            statusNode.dataset.state = "error";
+        }
+    } finally {
+        submitButton.disabled = false;
+    }
+}
+
+async function validateWithdrawalAddress() {
+    const addressInput = document.getElementById("withdrawal-wallet-address");
+    const status = document.getElementById("withdrawal-status");
+    if (!addressInput || !status) return;
+    const value = (addressInput.value || "").trim();
+    if (!value) {
+        setWithdrawalStatus("Enter the Solana wallet address that should receive CYFUR.", "error");
+        return;
+    }
+    if (!/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(value)) {
+        setWithdrawalStatus("This is not a valid Solana public key. Check the address and try again.", "error");
+        return;
+    }
+    setWithdrawalStatus("This wallet address looks valid and matches the expected Solana format.", "ready");
+}
+
 async function refreshWallet() {
     const address = document.getElementById("wallet-address");
     const copyButton = document.getElementById("wallet-copy-address");
@@ -732,6 +1038,7 @@ async function refreshWallet() {
             paymentMemo.textContent = `Unavailable: ${readinessMessage}`;
             setWalletMessage(readinessMessage, "disabled");
         }
+        await refreshWithdrawalStatus();
     } catch (error) {
         console.error("Wallet data could not be refreshed.", error);
         paymentMemo.textContent = "Deposits are temporarily unavailable.";
@@ -1532,6 +1839,7 @@ function playCampaignEnding() {
     const finish = () => {
         if (finished) return;
         finished = true;
+        stopVideoPlayback(transitionVideo);
         transitionVideo.pause();
         transitionVideo.hidden = true;
         videoSkip.hidden = true;
@@ -1552,6 +1860,11 @@ function playCampaignEnding() {
     transitionVideo.src = "theend.mp4";
     transitionVideo.currentTime = 0;
     transitionVideo.muted = false;
+    if (transitionVideo.readyState >= HTMLMediaElement.HAVE_METADATA) {
+        fitVideoFrame(transitionVideo);
+    } else {
+        transitionVideo.addEventListener("loadedmetadata", () => fitVideoFrame(transitionVideo), { once: true });
+    }
     transitionVideo.hidden = false;
     videoAction.hidden = true;
     videoCaption.textContent = "Campaign complete. Final transmission incoming…";
@@ -1564,40 +1877,83 @@ function playCampaignEnding() {
         offerContinue("The campaign ending video could not be played.");
     };
 
-    const playback = transitionVideo.play();
-    if (playback && typeof playback.catch === "function") {
-        playback.catch((error) => {
-            if (error.name === "AbortError" && transitionVideo.paused) return;
-            console.warn("Campaign ending video could not autoplay.", error);
-            videoCaption.textContent = "Tap to play the final transmission.";
-            videoAction.textContent = "PLAY ENDING →";
-            videoAction.hidden = false;
-            videoAction.onclick = () => {
-                const retry = transitionVideo.play();
-                if (retry && typeof retry.then === "function") {
-                    retry.then(() => {
-                        videoAction.hidden = true;
-                        videoCaption.textContent = "Final transmission online.";
-                    }).catch((retryError) => {
-                        console.error("Campaign ending video could not start after interaction.", retryError);
-                        offerContinue("The campaign ending video could not be played.");
-                    });
-                }
-            };
+    playVideoInLandscape(transitionVideo, (error) => {
+        console.warn("Campaign ending video could not autoplay.", error);
+        videoCaption.textContent = "Tap to play the final transmission.";
+        videoAction.textContent = "PLAY ENDING →";
+        videoAction.hidden = false;
+        videoAction.onclick = () => playVideoInLandscape(transitionVideo, (retryError) => {
+            console.error("Campaign ending video could not start after interaction.", retryError);
+            offerContinue("The campaign ending video could not be played.");
         });
+    });
+}
+
+function playLevelTransition(nextLevel) {
+    const transitionClips = ["levels.mp4", "levels2.mp4"];
+    const clip = transitionClips[interstitialClipIndex];
+    interstitialClipIndex = (interstitialClipIndex + 1) % transitionClips.length;
+    nextInterstitialAt = player.completedLevels.length + randomTransitionInterval();
+    let finished = false;
+    const finish = () => {
+        if (finished) return;
+        finished = true;
+        stopVideoPlayback(transitionVideo);
+        transitionVideo.pause();
+        transitionVideo.hidden = true;
+        videoSkip.hidden = true;
+        videoAction.hidden = true;
+        startLevel(nextLevel, true);
+    };
+    const offerContinue = (error) => {
+        console.error(`Inter-level transmission ${clip} could not be played.`, error);
+        videoCaption.textContent = "Transmission unavailable. Continue to the next sector when ready.";
+        videoAction.textContent = "CONTINUE →";
+        videoAction.hidden = false;
+        videoAction.onclick = finish;
+    };
+
+    showScreen("video-screen");
+    stopVideoPlayback(introVideo);
+    introVideo.pause();
+    introVideo.hidden = true;
+    transitionVideo.pause();
+    transitionVideo.src = clip;
+    transitionVideo.currentTime = 0;
+    transitionVideo.muted = false;
+    if (transitionVideo.readyState >= HTMLMediaElement.HAVE_METADATA) {
+        fitVideoFrame(transitionVideo);
+    } else {
+        transitionVideo.addEventListener("loadedmetadata", () => fitVideoFrame(transitionVideo), { once: true });
     }
+    transitionVideo.hidden = false;
+    videoAction.hidden = true;
+    videoCaption.textContent = `Sector ${String(nextLevel).padStart(2, "0")} transmission incoming…`;
+    videoSkip.textContent = "SKIP TRANSMISSION →";
+    videoSkip.hidden = false;
+    videoSkip.onclick = finish;
+    transitionVideo.onended = finish;
+    transitionVideo.onerror = () => offerContinue(transitionVideo.error);
+    playVideoInLandscape(transitionVideo, offerContinue);
 }
 
 function beginGameIntro() {
+    stopVideoPlayback(introVideo);
     introVideo.pause();
     introVideo.hidden = true;
     transitionVideo.hidden = false;
     transitionVideo.src = "gamevideo.mp4";
     transitionVideo.currentTime = 0;
     transitionVideo.muted = false;
-    videoSkip.hidden = !player.watchedGameIntro;
+    if (transitionVideo.readyState >= HTMLMediaElement.HAVE_METADATA) {
+        fitVideoFrame(transitionVideo);
+    } else {
+        transitionVideo.addEventListener("loadedmetadata", () => fitVideoFrame(transitionVideo), { once: true });
+    }
+    videoSkip.hidden = false;
     videoSkip.onclick = () => {
         transitionVideo.pause();
+        stopVideoPlayback(transitionVideo);
         transitionVideo.hidden = true;
         videoSkip.hidden = true;
         showNameOrHome();
@@ -1605,6 +1961,7 @@ function beginGameIntro() {
     transitionVideo.onended = () => {
         player.watchedGameIntro = true;
         savePlayer();
+        stopVideoPlayback(transitionVideo);
         transitionVideo.pause();
         transitionVideo.hidden = true;
         videoSkip.hidden = true;
@@ -1617,6 +1974,7 @@ function beginGameIntro() {
         videoAction.textContent = "CONTINUE WITHOUT VIDEO  →";
         videoAction.hidden = false;
         videoAction.onclick = () => {
+            stopVideoPlayback(transitionVideo);
             transitionVideo.hidden = true;
             videoSkip.hidden = true;
             showNameOrHome();
@@ -1624,37 +1982,24 @@ function beginGameIntro() {
     };
     videoAction.hidden = true;
     videoCaption.textContent = "Initializing your first mission…";
-    const playback = transitionVideo.play();
-    if (playback && typeof playback.then === "function") {
-        playback.then(() => {
-            videoCaption.textContent = "Gameplay transmission online · audio enabled.";
-        }).catch((error) => {
-            if (error.name === "AbortError" && transitionVideo.paused) return;
-            console.warn("Gameplay introduction video could not start.", error);
-            videoCaption.textContent = "Tap to play the gameplay introduction with sound.";
-            videoAction.textContent = "PLAY VIDEO WITH SOUND  →";
+    playVideoInLandscape(transitionVideo, (error) => {
+        console.warn("Gameplay introduction video could not start.", error);
+        videoCaption.textContent = "Tap to play the gameplay introduction with sound.";
+        videoAction.textContent = "PLAY VIDEO WITH SOUND  →";
+        videoAction.hidden = false;
+        videoAction.onclick = () => playVideoInLandscape(transitionVideo, (retryError) => {
+            console.error("Gameplay introduction video could not start after interaction.", retryError);
+            videoCaption.textContent = "The gameplay introduction could not be played.";
+            videoAction.textContent = "CONTINUE WITHOUT VIDEO  →";
             videoAction.hidden = false;
             videoAction.onclick = () => {
-                const retry = transitionVideo.play();
-                if (retry && typeof retry.then === "function") {
-                    retry.then(() => {
-                        videoAction.hidden = true;
-                        videoCaption.textContent = "Gameplay transmission online · audio enabled.";
-                    }).catch((retryError) => {
-                        console.error("Gameplay introduction video could not start after interaction.", retryError);
-                        videoCaption.textContent = "The gameplay introduction could not be played.";
-                        videoAction.textContent = "CONTINUE WITHOUT VIDEO  →";
-                        videoAction.hidden = false;
-                        videoAction.onclick = () => {
-                            transitionVideo.hidden = true;
-                            videoSkip.hidden = true;
-                            showNameOrHome();
-                        };
-                    });
-                }
+                stopVideoPlayback(transitionVideo);
+                transitionVideo.hidden = true;
+                videoSkip.hidden = true;
+                showNameOrHome();
             };
         });
-    }
+    });
 }
 
 function continueAfterIntro() {
@@ -1670,12 +2015,18 @@ function showOpeningIntro() {
         void backendReady.then(() => refreshWallet());
         return;
     }
+    stopVideoPlayback(transitionVideo);
     showScreen("video-screen");
     transitionVideo.hidden = true;
     introVideo.hidden = false;
     introVideo.muted = false;
+    fitVideoFrame(introVideo);
+    if (introVideo.readyState < HTMLMediaElement.HAVE_METADATA) {
+        introVideo.addEventListener("loadedmetadata", () => fitVideoFrame(introVideo), { once: true });
+    }
     videoSkip.hidden = true;
     videoSkip.onclick = () => {
+        stopVideoPlayback(introVideo);
         introVideo.pause();
         transitionVideo.pause();
         introVideo.hidden = true;
@@ -1683,18 +2034,12 @@ function showOpeningIntro() {
         videoSkip.hidden = true;
         showNameOrHome();
     };
-    introFinished = false;
-    videoAction.hidden = true;
-    videoCaption.textContent = "A new signal is waiting.";
+    videoAction.textContent = "Play Now  →";
+    videoAction.hidden = false;
+    videoAction.onclick = continueAfterIntro;
+    videoCaption.textContent = player.watchedGameIntro ? "Welcome back, pilot." : "Your first signal is ready.";
     introVideo.onended = () => {
-        introFinished = true;
-        videoCaption.textContent = player.watchedGameIntro
-            ? "Welcome back, pilot."
-            : "Your first signal is ready.";
-        videoAction.textContent = "Play Now  →";
-        videoAction.hidden = false;
-        videoAction.onclick = continueAfterIntro;
-        videoSkip.hidden = !player.watchedGameIntro;
+        videoCaption.textContent = "Your first signal is ready.";
     };
     introVideo.onerror = () => {
         console.error("Opening introduction video could not be decoded.", introVideo.error);
@@ -1703,29 +2048,20 @@ function showOpeningIntro() {
         videoAction.hidden = false;
         videoAction.onclick = continueAfterIntro;
     };
-    const playback = introVideo.play();
-    if (playback && typeof playback.catch === "function") {
-        playback.catch((error) => {
-            console.warn("Opening introduction video could not autoplay.", error);
-            videoCaption.textContent = "A new signal is waiting.";
-            videoAction.textContent = "Play Now  →";
-            videoAction.hidden = false;
-            videoAction.onclick = () => {
-                const retry = introVideo.play();
-                if (retry && typeof retry.then === "function") {
-                    retry.then(() => {
-                        videoCaption.textContent = "Opening transmission online · audio enabled.";
-                        videoAction.hidden = true;
-                    }).catch((retryError) => {
-                        console.error("Opening introduction video could not start after interaction.", retryError);
-                        videoCaption.textContent = "The opening video could not be played.";
-                        videoAction.textContent = "CONTINUE WITHOUT VIDEO  →";
-                        videoAction.onclick = continueAfterIntro;
-                    });
-                }
-            };
-        });
-    }
+    playVideoInLandscape(introVideo, (error) => {
+        console.warn("Opening introduction video could not autoplay.", error);
+        videoCaption.textContent = "Your first signal is ready.";
+    });
+}
+
+function fitVideoFrame(video) {
+    if (!video.videoWidth || !video.videoHeight) return;
+    const scale = Math.min(
+        (window.innerWidth - 24) / video.videoWidth,
+        (window.innerHeight - 24) / video.videoHeight
+    );
+    videoScreen.style.setProperty("--phone-width", `${video.videoWidth * scale}px`);
+    videoScreen.style.setProperty("--phone-height", `${video.videoHeight * scale}px`);
 }
 
 async function startLevel(number, resumeMusic = false) {
@@ -1791,7 +2127,11 @@ document.getElementById("continue-game").addEventListener("click", () => {
 document.getElementById("next-level").addEventListener("click", (event) => {
     const number = Number(event.currentTarget.dataset.nextLevel);
     if (!Number.isInteger(number) || number < 1 || number > 99) return;
-    startLevel(number, true);
+    if (player.completedLevels.length >= nextInterstitialAt) {
+        playLevelTransition(number);
+    } else {
+        startLevel(number, true);
+    }
 });
 document.getElementById("home-levels-toggle").addEventListener("click", (event) => {
     const button = event.currentTarget;
@@ -1968,6 +2308,35 @@ async function saveWalletLevelCompletion(detail) {
     await refreshOwnProgress();
     backendStatus = "Connected to the RelicGrid leaderboard.";
     return result;
+}
+
+const withdrawalAddressInput = document.getElementById("withdrawal-wallet-address");
+const withdrawalAmountInput = document.getElementById("withdrawal-amount");
+const withdrawalValidateButton = document.getElementById("withdrawal-validate-address");
+const withdrawalForm = document.getElementById("withdrawal-form");
+if (withdrawalForm && withdrawalAddressInput && withdrawalAmountInput && withdrawalValidateButton) {
+    withdrawalValidateButton.addEventListener("click", validateWithdrawalAddress);
+    withdrawalAddressInput.addEventListener("input", () => {
+        const value = (withdrawalAddressInput.value || "").trim();
+        if (!value) {
+            setWithdrawalStatus("Enter the Solana wallet address that should receive CYFUR.", "error");
+            return;
+        }
+        if (!/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(value)) {
+            setWithdrawalStatus("This wallet address is not yet a valid Solana public key.", "error");
+            return;
+        }
+        setWithdrawalStatus("This wallet address looks valid and is ready for a withdrawal review.", "ready");
+    });
+    withdrawalAmountInput.addEventListener("input", () => {
+        const value = (withdrawalAmountInput.value || "").trim();
+        if (!/^\d*$/.test(value)) {
+            setWithdrawalStatus("Only whole credit values can be withdrawn.", "error");
+            return;
+        }
+        updateWithdrawalPreview();
+    });
+    withdrawalForm.addEventListener("submit", submitWithdrawalRequest);
 }
 
 window.addEventListener("fluxgrid:level-timer-start", (event) => {
