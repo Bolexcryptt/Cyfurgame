@@ -145,6 +145,10 @@ function startScene() {
         start: { row: 0, col: 2 },
         target: { row: 3, col: 5 }
     };
+    const CORE_SCALE = 0.36;
+    const CORE_HOLOGRAM_Y = 1.42;
+    const CORE_PULSE_Y = 0.09;
+    const CORE_CONTACT_HEIGHT = CORE_SCALE * (CORE_HOLOGRAM_Y + CORE_PULSE_Y);
     const gridKey = (row, col) => `${row},${col}`;
     const gridX = (col) => GRID.x0 + col * GRID.step;
     const gridZ = (row) => GRID.z0 + row * GRID.step;
@@ -987,7 +991,7 @@ function startScene() {
             const mirror = placedMirrors.get(gridKey(row, col));
             const isObstacle = activeLevel.obstacles.some((cell) => cell.row === row && cell.col === col);
             const to = isTarget
-                ? new THREE.Vector3(gridX(col), 1.17, gridZ(row))
+                ? new THREE.Vector3(gridX(col), CORE_CONTACT_HEIGHT, gridZ(row))
                 : new THREE.Vector3(gridX(col), 0.72, gridZ(row));
             segments.push({ from: from.clone(), to, color: beamColors[colorIndex % beamColors.length] });
             from = to.clone();
@@ -1074,12 +1078,11 @@ function startScene() {
     }
 
     function placeLevelTarget() {
-        const coreScale = 0.36;
-        coreSystem.scale.setScalar(coreScale);
+        coreSystem.scale.setScalar(CORE_SCALE);
         coreSystem.position.set(
-            gridX(GRID.target.col) - 1.35 * coreScale,
+            gridX(GRID.target.col) - 1.35 * CORE_SCALE,
             0,
-            gridZ(GRID.target.row) - 0.1 * coreScale
+            gridZ(GRID.target.row) - 0.1 * CORE_SCALE
         );
         coreActivationGroup.position.set(gridX(GRID.target.col), 0, gridZ(GRID.target.row));
         coreLight.position.set(gridX(GRID.target.col), 1.5, gridZ(GRID.target.row));
@@ -1893,7 +1896,7 @@ function startScene() {
         }
 
         const hologram = new THREE.Group();
-        hologram.position.set(x, 1.42, z);
+        hologram.position.set(x, CORE_HOLOGRAM_Y, z);
         platform.add(hologram);
         const hologramMaterial = (color, opacity) => new THREE.MeshBasicMaterial({
             color,
@@ -1986,7 +1989,7 @@ function startScene() {
                 roughness: 0.2
             })
         );
-        corePulse.position.y = 0.09;
+        corePulse.position.y = CORE_PULSE_Y;
         hologram.add(corePulse);
         hologram.userData.animate = true;
         animatedObjects.push(hologram);

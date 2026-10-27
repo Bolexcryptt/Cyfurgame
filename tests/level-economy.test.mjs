@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { generateKeyPairSync, sign as signMessage } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import test from "node:test";
 import { createRequire } from "node:module";
 import {
@@ -697,9 +697,13 @@ test("RelicGrid branding is used in the game and hidden scenes stop rendering", 
     assert.match(scene, /crystalHits\.forEach/);
     assert.match(scene, /if \(document\.hidden \|\| canvas\.clientWidth === 0 \|\| canvas\.clientHeight === 0\) return;/);
     assert.match(scene, /cancelAnimationFrame\(renderRequest\)/);
-    assert.match(scene, /const coreScale = 0\.36/);
-    assert.match(scene, /gridX\(GRID\.target\.col\) - 1\.35 \* coreScale/);
-    assert.match(scene, /gridZ\(GRID\.target\.row\) - 0\.1 \* coreScale/);
+    assert.match(scene, /const CORE_SCALE = 0\.36/);
+    assert.match(scene, /const CORE_CONTACT_HEIGHT = CORE_SCALE \* \(CORE_HOLOGRAM_Y \+ CORE_PULSE_Y\)/);
+    assert.match(scene, /new THREE\.Vector3\(gridX\(col\), CORE_CONTACT_HEIGHT, gridZ\(row\)\)/);
+    assert.match(scene, /hologram\.position\.set\(x, CORE_HOLOGRAM_Y, z\)/);
+    assert.match(scene, /corePulse\.position\.y = CORE_PULSE_Y/);
+    assert.match(scene, /gridX\(GRID\.target\.col\) - 1\.35 \* CORE_SCALE/);
+    assert.match(scene, /gridZ\(GRID\.target\.row\) - 0\.1 \* CORE_SCALE/);
     assert.match(scene, /playSoundEffect\("mirror"\)/);
     assert.match(scene, /playSoundEffect\("core"\)/);
     assert.match(scene, /playSoundEffect\("completion"\)/);
@@ -713,6 +717,12 @@ test("RelicGrid branding is used in the game and hidden scenes stop rendering", 
     assert.match(html, /id="video-action-button"[^>]*>Play Now/);
     assert.doesNotMatch(app, /Tap to play the opening transmission with sound/);
     assert.match(html, /id="intro-video"[^>]+src="intro\.mp4"/);
+    assert.match(app, /transitionVideo\.src = "gamevideo\.mp4"/);
+    assert.match(app, /function playCampaignEnding\(\)/);
+    assert.match(app, /if \(number === 99\) playCampaignEnding\(\)/);
+    assert.match(app, /transitionVideo\.src = "theend\.mp4"/);
+    assert.equal(existsSync(new URL("../gamevideo.mp4", import.meta.url)), true);
+    assert.equal(existsSync(new URL("../theend.mp4", import.meta.url)), true);
     const styles = readFileSync(new URL("../style.css", import.meta.url), "utf8");
     assert.match(styles, /video-action \.button \{[\s\S]*?font-size: clamp\(17px, 4vw, 20px\)/);
 });
@@ -2944,7 +2954,7 @@ test("all 99 generated layouts are unique, valid, and solvable through every ord
     const scene = readFileSync(new URL("../script.js", import.meta.url), "utf8");
 
     assert.equal(levels.length, 99);
-    assert.match(scene, /const coreScale = 0\.36/);
+    assert.match(scene, /const CORE_SCALE = 0\.36/);
     assert.match(scene, /decorativeTerminalGroup\.visible = false/);
     assert.match(scene, /function createFacetedCrystalGeometry\(radius, height, segments = 6\)/);
     assert.match(scene, /createFacetedCrystalGeometry\(shard\.radius, shard\.height, 5\)/);
@@ -3011,6 +3021,7 @@ test("all 99 generated layouts are unique, valid, and solvable through every ord
         assert.ok(Math.abs(corePositionX + 1.35 * coreScale - targetGridX) < 1e-12);
         assert.ok(Math.abs(corePositionZ + 0.1 * coreScale - targetGridZ) < 1e-12);
         assert.ok(2 * 1.82 * coreScale < 1.4, `Level ${level.number} core spills into adjacent cells.`);
+        assert.ok(Math.abs((1.42 + 0.09) * coreScale - 0.5436) < 1e-12);
 
         let row = level.start.row;
         let col = level.start.col;

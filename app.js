@@ -1527,6 +1527,67 @@ function showNameOrHome() {
     }
 }
 
+function playCampaignEnding() {
+    let finished = false;
+    const finish = () => {
+        if (finished) return;
+        finished = true;
+        transitionVideo.pause();
+        transitionVideo.hidden = true;
+        videoSkip.hidden = true;
+        videoAction.hidden = true;
+        showNameOrHome();
+    };
+    const offerContinue = (message) => {
+        videoCaption.textContent = message;
+        videoAction.textContent = "CONTINUE →";
+        videoAction.hidden = false;
+        videoAction.onclick = finish;
+    };
+
+    showScreen("video-screen");
+    introVideo.pause();
+    introVideo.hidden = true;
+    transitionVideo.pause();
+    transitionVideo.src = "theend.mp4";
+    transitionVideo.currentTime = 0;
+    transitionVideo.muted = false;
+    transitionVideo.hidden = false;
+    videoAction.hidden = true;
+    videoCaption.textContent = "Campaign complete. Final transmission incoming…";
+    videoSkip.textContent = "SKIP ENDING →";
+    videoSkip.hidden = false;
+    videoSkip.onclick = finish;
+    transitionVideo.onended = finish;
+    transitionVideo.onerror = () => {
+        console.error("Campaign ending video could not be decoded.", transitionVideo.error);
+        offerContinue("The campaign ending video could not be played.");
+    };
+
+    const playback = transitionVideo.play();
+    if (playback && typeof playback.catch === "function") {
+        playback.catch((error) => {
+            if (error.name === "AbortError" && transitionVideo.paused) return;
+            console.warn("Campaign ending video could not autoplay.", error);
+            videoCaption.textContent = "Tap to play the final transmission.";
+            videoAction.textContent = "PLAY ENDING →";
+            videoAction.hidden = false;
+            videoAction.onclick = () => {
+                const retry = transitionVideo.play();
+                if (retry && typeof retry.then === "function") {
+                    retry.then(() => {
+                        videoAction.hidden = true;
+                        videoCaption.textContent = "Final transmission online.";
+                    }).catch((retryError) => {
+                        console.error("Campaign ending video could not start after interaction.", retryError);
+                        offerContinue("The campaign ending video could not be played.");
+                    });
+                }
+            };
+        });
+    }
+}
+
 function beginGameIntro() {
     introVideo.pause();
     introVideo.hidden = true;
@@ -1984,6 +2045,7 @@ window.addEventListener("fluxgrid:level-complete", async (event) => {
         nextLevelButton.textContent = number >= 99 ? "CAMPAIGN COMPLETE" : "NEXT LEVEL →";
     }
     renderProfile();
+    if (number === 99) playCampaignEnding();
 });
 
 backendReady = initializeBackend();
