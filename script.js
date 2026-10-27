@@ -413,6 +413,55 @@ function startScene() {
         return mesh;
     };
 
+    function createFacetedCrystalGeometry(radius, height, segments = 6) {
+        const rings = [
+            { y: 0.2 * height, radius: 0.58 * radius },
+            { y: 0.62 * height, radius },
+            { y: 0.82 * height, radius: 0.56 * radius }
+        ];
+        const positions = [];
+        const colors = [];
+        const facetShades = [0.58, 0.82, 1.12, 0.72, 1];
+        const addFace = (a, b, c, faceIndex) => {
+            positions.push(...a, ...b, ...c);
+            const shade = facetShades[faceIndex % facetShades.length];
+            for (let vertex = 0; vertex < 3; vertex++) colors.push(shade, shade, shade);
+        };
+        const pointAt = (angle, ring) => [
+            Math.cos(angle) * ring.radius,
+            ring.y,
+            Math.sin(angle) * ring.radius
+        ];
+        const bottom = [0, 0, 0];
+        const top = [0, height, 0];
+        let faceIndex = 0;
+
+        for (let segment = 0; segment < segments; segment++) {
+            const angleA = (segment / segments) * Math.PI * 2;
+            const angleB = ((segment + 1) / segments) * Math.PI * 2;
+            const firstRingA = pointAt(angleA, rings[0]);
+            const firstRingB = pointAt(angleB, rings[0]);
+            addFace(bottom, firstRingA, firstRingB, faceIndex++);
+
+            for (let ringIndex = 0; ringIndex < rings.length - 1; ringIndex++) {
+                const lowerA = pointAt(angleA, rings[ringIndex]);
+                const lowerB = pointAt(angleB, rings[ringIndex]);
+                const upperA = pointAt(angleA, rings[ringIndex + 1]);
+                const upperB = pointAt(angleB, rings[ringIndex + 1]);
+                addFace(lowerA, upperB, lowerB, faceIndex++);
+                addFace(lowerA, upperA, upperB, faceIndex++);
+            }
+
+            addFace(pointAt(angleA, rings[2]), top, pointAt(angleB, rings[2]), faceIndex++);
+        }
+
+        const geometry = new THREE.BufferGeometry();
+        geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+        geometry.setAttribute("color", new THREE.Float32BufferAttribute(colors, 3));
+        geometry.computeVertexNormals();
+        return geometry;
+    }
+
     const extrudedPolygon = (parent, points, depth, y, material, bevel = 0) => {
         const shape = new THREE.Shape();
         shape.moveTo(points[0][0], -points[0][1]);
@@ -1082,22 +1131,23 @@ function startScene() {
                 emissiveIntensity: 0.34,
                 metalness: 0.08,
                 roughness: 0.24,
-                flatShading: true
+                flatShading: true,
+                vertexColors: true
             });
             const prism = new THREE.Group();
             const shards = [
-                { x: 0, z: 0, height: 0.82, radius: 0.19 },
-                { x: -0.17, z: 0.04, height: 0.58, radius: 0.14 },
-                { x: 0.16, z: 0.05, height: 0.63, radius: 0.15 },
-                { x: -0.06, z: -0.16, height: 0.51, radius: 0.13 },
-                { x: 0.08, z: 0.17, height: 0.55, radius: 0.135 }
+                { x: 0, z: 0, height: 0.91, radius: 0.25 },
+                { x: -0.23, z: 0.04, height: 0.58, radius: 0.15 },
+                { x: 0.22, z: 0.06, height: 0.64, radius: 0.16 },
+                { x: -0.08, z: -0.22, height: 0.52, radius: 0.14 },
+                { x: 0.1, z: 0.22, height: 0.57, radius: 0.145 }
             ];
             shards.forEach((shard, shardIndex) => {
                 const crystal = new THREE.Mesh(
-                    new THREE.CylinderGeometry(0, shard.radius, shard.height, 5, 1),
+                    createFacetedCrystalGeometry(shard.radius, shard.height, 5),
                     material
                 );
-                crystal.position.set(shard.x, 0.11 + shard.height / 2, shard.z);
+                crystal.position.set(shard.x, 0.11, shard.z);
                 crystal.rotation.y = (shardIndex * Math.PI) / 5 + index * 0.23;
                 crystal.castShadow = true;
                 prism.add(crystal);
@@ -1652,26 +1702,24 @@ function startScene() {
         const colorMaterial = new THREE.MeshStandardMaterial({
             color,
             emissive: color,
-            emissiveIntensity: 0.72,
-            metalness: 0.18,
-            roughness: 0.22
+            emissiveIntensity: 0.48,
+            metalness: 0.08,
+            roughness: 0.24,
+            flatShading: true,
+            vertexColors: true
         });
-        const whiteMaterial = makeMaterial(0xa8b3bb, 0.31, 0.76);
         const foot = addBox(group, [0.8 * scale, 0.14, 0.67 * scale], [0, 0.12, 0], materials.metal);
         foot.rotation.y = Math.PI / 8;
         addBox(group, [0.62 * scale, 0.09, 0.48 * scale], [0, 0.23, 0], materials.metalEdge);
-        addBox(group, [0.43 * scale, 0.045, 0.34 * scale], [0, 0.3, 0], colorMaterial);
 
         const shaftHeight = (isBeacon ? 1.14 : 0.72) * scale;
         const crystal = new THREE.Mesh(
-            new THREE.BoxGeometry(0.25 * scale, shaftHeight, 0.25 * scale),
+            createFacetedCrystalGeometry(0.28 * scale, shaftHeight, 6),
             colorMaterial
         );
-        crystal.position.set(0, 0.34 + shaftHeight / 2, 0);
-        crystal.rotation.y = Math.PI / 4;
+        crystal.position.set(0, 0.3, 0);
         crystal.castShadow = true;
         group.add(crystal);
-        addBox(group, [0.36 * scale, 0.08, 0.36 * scale], [0, 0.35 + shaftHeight, 0], whiteMaterial);
 
         const pointLight = configureQualityLight(new THREE.PointLight(
             color,
@@ -1679,7 +1727,7 @@ function startScene() {
             isBeacon ? 3.8 : 2.4,
             2
         ));
-        pointLight.position.set(0, 0.85 + shaftHeight, 0);
+        pointLight.position.set(0, 0.3 + shaftHeight * 0.82, 0);
         group.add(pointLight);
         if (isBeacon) group.userData.beaconLight = pointLight;
         return group;

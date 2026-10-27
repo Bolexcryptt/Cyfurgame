@@ -2946,7 +2946,11 @@ test("all 99 generated layouts are unique, valid, and solvable through every ord
     assert.equal(levels.length, 99);
     assert.match(scene, /const coreScale = 0\.36/);
     assert.match(scene, /decorativeTerminalGroup\.visible = false/);
-    assert.match(scene, /new THREE\.CylinderGeometry\(0, shard\.radius, shard\.height, 5, 1\)/);
+    assert.match(scene, /function createFacetedCrystalGeometry\(radius, height, segments = 6\)/);
+    assert.match(scene, /createFacetedCrystalGeometry\(shard\.radius, shard\.height, 5\)/);
+    assert.match(scene, /createFacetedCrystalGeometry\(0\.28 \* scale, shaftHeight, 6\)/);
+    assert.match(scene, /vertexColors: true/);
+    assert.doesNotMatch(scene, /new THREE\.BoxGeometry\(0\.25 \* scale, shaftHeight, 0\.25 \* scale\)/);
     assert.match(scene, /const shards = \[/);
     assert.doesNotMatch(scene, /addCylinder\(crystalGroup, 0\.3, 0\.38/);
     assert.match(scene, /new THREE\.TubeGeometry\(curve, 1, 0\.14, 8, false\)/);
