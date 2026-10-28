@@ -4,6 +4,7 @@ import { RenderPass } from "three/addons/postprocessing/RenderPass.js";
 import { UnrealBloomPass } from "three/addons/postprocessing/UnrealBloomPass.js";
 import { OutputPass } from "three/addons/postprocessing/OutputPass.js";
 import { levels, calculateSolveTimeMilliseconds, evaluateLevelStars } from "./levels.js";
+import { GAME_API_BASE_URL } from "./supabase-config.js";
 
 const canvas = document.getElementById("scene-canvas");
 const errorPanel = document.getElementById("load-error");
@@ -161,6 +162,7 @@ function startScene() {
     const beamSegments = [];
     const animatedObjects = [];
     let activeLevel = levels[0];
+    let levelsGloballyLocked = true;
     let previewRoute = null;
     let sourcePylon = null;
     let decorativeTerminalGroup = null;
@@ -1221,6 +1223,10 @@ function startScene() {
     }
 
     function loadLevel(levelDetails) {
+        if (levelsGloballyLocked) {
+            console.warn("Level load rejected because the global campaign lock is active.");
+            return;
+        }
         const level = levelDetails?.level ?? levelDetails;
         if (!level || !Number.isInteger(level.number) || level.number < 1 || level.number > levels.length) {
             console.error("Cannot load an invalid RelicGrid level.", level);
@@ -1255,6 +1261,21 @@ function startScene() {
                 "The live preview shows the beam leaving the source. Place a mirror at row " +
                     `${level.solutionMirrors[0].row + 1}, column ${level.solutionMirrors[0].col + 1}.`
             );
+        }
+    }
+
+    async function isGlobalLevelLockActive() {
+        try {
+            const configUrl = GAME_API_BASE_URL
+                ? new URL("/api/game-config", GAME_API_BASE_URL)
+                : "/api/game-config";
+            const response = await fetch(configUrl, { cache: "no-store" });
+            if (!response.ok) return true;
+            const config = await response.json();
+            return config.levelsLocked !== false;
+        } catch (error) {
+            console.error("The campaign lock could not be verified; refusing to load a level.", error);
+            return true;
         }
     }
 
@@ -2225,7 +2246,14 @@ function startScene() {
     bindCameraControls();
     bindGameplay(hoverRing);
     resize();
-    window.addEventListener("fluxgrid:load-level", (event) => loadLevel(event.detail));
+    window.addEventListener("fluxgrid:load-level", async (event) => {
+        levelsGloballyLocked = await isGlobalLevelLockActive();
+        if (levelsGloballyLocked) {
+            console.warn("Level load rejected because the server campaign lock is active.");
+            return;
+        }
+        loadLevel(event.detail);
+    });
 
     const clock = new THREE.Clock();
     function scheduleRender() {

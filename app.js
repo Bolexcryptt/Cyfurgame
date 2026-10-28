@@ -117,6 +117,7 @@ let backendStatus = supabaseConfigured ? "Connecting to Supabase…" : "Supabase
 let backendReady;
 let walletStatusSnapshot = null;
 let solanaWeb3ModulePromise = null;
+let levelsGloballyLocked = true;
 
 function savePlayer() {
     localStorage.setItem(storageKey, JSON.stringify(player));
@@ -429,6 +430,55 @@ function statCard(label, value) {
     return card;
 }
 
+function applyLevelsLockState(locked, statusMessage = "") {
+    const changed = levelsGloballyLocked !== locked;
+    levelsGloballyLocked = locked;
+    const continueButton = document.getElementById("continue-game");
+    const lockBanner = document.getElementById("levels-lock-banner");
+    const sectionDescription = document.getElementById("level-section-description");
+    const nextLevelButton = document.getElementById("next-level");
+
+    continueButton.disabled = locked;
+    lockBanner.hidden = !locked;
+    sectionDescription.textContent = locked
+        ? "All 99 sectors are temporarily locked. Your campaign progress and saved records remain unchanged."
+        : "Choose any sector and track campaign progress as you go.";
+    if (nextLevelButton) nextLevelButton.disabled = locked || Number(nextLevelButton.dataset.nextLevel) > 99;
+
+    if (locked) {
+        setLevelEntryMessage(statusMessage ||
+            "All 99 levels are temporarily locked. Your saved progress remains intact.", "disabled");
+    } else {
+        setLevelEntryMessage("Campaign access is open. Your saved progress remains intact.", "ready");
+    }
+
+    if (changed && document.getElementById("level-list")) renderLevels();
+
+    if (locked && !document.getElementById("play-screen").hidden) {
+        activeWalletLevelSessionId = null;
+        pendingLevel = null;
+        stopMusic();
+        showScreen("home-screen");
+    }
+}
+
+async function refreshLevelsLockState() {
+    try {
+        const response = await fetch(apiUrl("game-config"), { cache: "no-store" });
+        if (!response.ok) throw new Error(`Campaign lock status unavailable (${response.status}).`);
+        const config = await response.json();
+        if (typeof config.levelsLocked !== "boolean") {
+            throw new Error("Campaign lock status returned an invalid response.");
+        }
+        applyLevelsLockState(config.levelsLocked);
+        return config.levelsLocked;
+    } catch (error) {
+        console.error("Campaign lock status could not be verified; levels remain locked.", error);
+        applyLevelsLockState(true, "Campaign availability could not be verified. All 99 levels remain locked.");
+        return true;
+    }
+}
+
 function renderLevels() {
     const list = document.getElementById("level-list");
     const fragment = document.createDocumentFragment();
@@ -436,11 +486,15 @@ function renderLevels() {
     for (const level of levels) {
         const completed = player.completedLevels.includes(level.number);
         const current = level.number === continueLevel && !completed;
+        const locked = levelsGloballyLocked;
         const item = document.createElement("li");
         const button = document.createElement("button");
         button.style.setProperty("--card-index", String((level.number - 1) % 12));
-        button.className = `level-card is-unlocked${completed ? " is-complete" : ""}${current ? " is-current" : ""}`;
+        button.className = locked
+            ? "level-card is-locked is-temporarily-locked"
+            : `level-card is-unlocked${completed ? " is-complete" : ""}${current ? " is-current" : ""}`;
         button.type = "button";
+        button.disabled = locked;
         button.dataset.level = String(level.number);
 
         const number = document.createElement("span");
@@ -454,16 +508,18 @@ function renderLevels() {
         meta.textContent = `${level.par} MIRROR${level.par === 1 ? "" : "S"} REQUIRED · TIER ${level.band}`;
         const entryCost = document.createElement("small");
         entryCost.className = "level-cost";
-        entryCost.textContent = "FREE PLAY";
+        entryCost.textContent = locked ? "TEMPORARILY LOCKED" : "FREE PLAY";
         detail.append(title, meta);
         const badge = document.createElement("span");
         badge.className = "level-state";
-        badge.textContent = completed ? "CLEARED" : current ? "NEXT UP" : "PLAY";
+        badge.textContent = locked ? "LOCKED" : completed ? "CLEARED" : current ? "NEXT UP" : "PLAY";
         const cost = document.createElement("span");
         cost.className = "level-entry-cost";
         cost.append(entryCost);
         button.append(number, detail, cost, badge);
-        button.setAttribute("aria-label", `Play level ${level.number}, free play${completed ? ", completed" : ""}`);
+        button.setAttribute("aria-label", locked
+            ? `Level ${level.number}, temporarily locked`
+            : `Play level ${level.number}, free play${completed ? ", completed" : ""}`);
         button.addEventListener("click", () => void startLevel(level.number));
         item.append(button);
         fragment.append(item);
@@ -544,6 +600,10 @@ async function requestLevelEntry(levelNumber) {
             }
             if (response.status === 403 && result.error === "level_locked") {
                 setLevelEntryMessage(`This sector is campaign-locked. Complete the currently available level first.`, "error");
+                return null;
+            }
+            if (response.status === 423 && result.error === "levels_locked") {
+                applyLevelsLockState(true);
                 return null;
             }
             if (result.error === "paid_gameplay_disabled") {
@@ -2065,6 +2125,11 @@ function fitVideoFrame(video) {
 }
 
 async function startLevel(number, resumeMusic = false) {
+    if (await refreshLevelsLockState()) {
+        showScreen("home-screen");
+        setLevelEntryMessage("All 99 levels are temporarily locked. Your saved progress remains intact.", "disabled");
+        return;
+    }
     const level = levels[number - 1];
     if (!level) return;
     const gameGuide = document.getElementById("game-guide");
@@ -2370,6 +2435,11 @@ window.addEventListener("fluxgrid:level-timer-start", (event) => {
 });
 
 window.addEventListener("fluxgrid:level-complete", async (event) => {
+    if (await refreshLevelsLockState()) {
+        setLevelEntryMessage("The campaign is temporarily locked. No completion or reward was recorded.", "disabled");
+        showScreen("home-screen");
+        return;
+    }
     const detail = event.detail ?? {};
     const number = detail.number;
     if (!Number.isInteger(number) || number < 1 || number > 99) {
@@ -2418,6 +2488,12 @@ window.addEventListener("fluxgrid:level-complete", async (event) => {
 });
 
 backendReady = initializeBackend();
+void refreshLevelsLockState();
+window.addEventListener("focus", () => void refreshLevelsLockState());
+document.addEventListener("visibilitychange", () => {
+    if (!document.hidden) void refreshLevelsLockState();
+});
+window.setInterval(() => void refreshLevelsLockState(), 30000);
 const phantomMobileCallback = readPhantomMobileCallback(window);
 if (phantomMobileCallback) {
     showNameOrHome();

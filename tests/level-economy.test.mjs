@@ -670,7 +670,8 @@ test("free gameplay testing does not request paid level entry or change wallet c
     assert.ok(endIndex > startIndex);
     assert.doesNotMatch(startLevel, /requestLevelEntry/);
     assert.match(startLevel, /activeWalletLevelSessionId = null/);
-    assert.match(app, /entryCost\.textContent = "FREE PLAY"/);
+    assert.match(app, /entryCost\.textContent = locked \? "TEMPORARILY LOCKED" : "FREE PLAY"/);
+    assert.match(app, /if \(await refreshLevelsLockState\(\)\)/);
 
     const scene = readFileSync(new URL("../script.js", import.meta.url), "utf8");
     assert.match(scene, /reward\.textContent = "0 credits"/);
@@ -860,21 +861,28 @@ test("wallet API returns verified zero for a player with no credit account or le
     }
 });
 
-test("all campaign levels are selectable and the in-game field guide is available", () => {
+test("all campaign levels render locked by default and the in-game field guide is available", () => {
     const app = readFileSync(new URL("../app.js", import.meta.url), "utf8");
     const levelPicker = app.slice(app.indexOf("function renderLevels"), app.indexOf("\nfunction renderHome"));
     const startLevel = app.slice(app.indexOf("async function startLevel"), app.indexOf("\nfunction leaveGameplay"));
-    assert.match(levelPicker, /className = `level-card is-unlocked/);
-    assert.doesNotMatch(levelPicker, /button\.disabled\s*=/);
-    assert.doesNotMatch(startLevel, /number > player\.unlockedLevel/);
+    assert.match(levelPicker, /className = locked\s*\?/);
+    assert.match(levelPicker, /button\.disabled = locked/);
+    assert.match(levelPicker, /badge\.textContent = locked \? "LOCKED"/);
+    assert.match(startLevel, /await refreshLevelsLockState\(\)/);
+    assert.match(startLevel, /showScreen\("home-screen"\)/);
 
     const html = readFileSync(new URL("../index.html", import.meta.url), "utf8");
+    assert.match(html, /id="continue-game"[^>]+disabled/);
+    assert.match(html, /CAMPAIGN TEMPORARILY LOCKED/);
     assert.match(html, /id="game-guide-toggle"/);
     assert.match(html, /id="game-guide"/);
     assert.match(html, /Charge crystals in order/);
     assert.match(html, /LIVE TUTORIAL/);
     assert.match(app, /game-guide-close/);
     const scene = readFileSync(new URL("../script.js", import.meta.url), "utf8");
+    assert.match(scene, /async function isGlobalLevelLockActive\(\)/);
+    assert.match(scene, /config\.levelsLocked !== false/);
+    assert.match(scene, /Level load rejected because the server campaign lock is active/);
     assert.match(scene, /tutorialTargetMarker/);
     assert.match(scene, /drawActiveRoute\(previewRoute, previewRoute\.segments\.length, true\)/);
     assert.match(scene, /firstLevelTutorialStage = "complete"/);
@@ -1195,11 +1203,13 @@ test("level completion API derives the reward from server time and returns dupli
     const envNames = [
         "SUPABASE_URL",
         "SUPABASE_PUBLISHABLE_KEY",
-        "SUPABASE_SERVICE_ROLE_KEY"
+        "SUPABASE_SERVICE_ROLE_KEY",
+        "LEVELS_LOCKED"
     ];
     const previousEnv = Object.fromEntries(envNames.map((name) => [name, process.env[name]]));
     for (const name of envNames) process.env[name] = `test-${name.toLowerCase()}`;
     process.env.SUPABASE_URL = "https://example.supabase.co";
+    process.env.LEVELS_LOCKED = "false";
     const originalFetch = globalThis.fetch;
     const level = levels[0];
     const mirrors = level.solutionMirrors.map(({ row, col, orientation }) => ({
@@ -2055,8 +2065,10 @@ test("payment-intent API creates an authenticated intent without a linked wallet
 test("level entry API rejects insufficient balances and never enables paid gameplay", async () => {
     const previousUrl = process.env.SUPABASE_URL;
     const previousKey = process.env.SUPABASE_PUBLISHABLE_KEY;
+    const previousLevelLock = process.env.LEVELS_LOCKED;
     process.env.SUPABASE_URL = "https://example.supabase.co";
     process.env.SUPABASE_PUBLISHABLE_KEY = "public-test-key";
+    process.env.LEVELS_LOCKED = "false";
     const originalFetch = globalThis.fetch;
     const endpoint = require("../api/level-entry.js");
 
@@ -2106,14 +2118,18 @@ test("level entry API rejects insufficient balances and never enables paid gamep
         else process.env.SUPABASE_URL = previousUrl;
         if (previousKey === undefined) delete process.env.SUPABASE_PUBLISHABLE_KEY;
         else process.env.SUPABASE_PUBLISHABLE_KEY = previousKey;
+        if (previousLevelLock === undefined) delete process.env.LEVELS_LOCKED;
+        else process.env.LEVELS_LOCKED = previousLevelLock;
     }
 });
 
 test("level entry API validates campaign unlocks before checking wallet funds", async () => {
     const previousUrl = process.env.SUPABASE_URL;
     const previousKey = process.env.SUPABASE_PUBLISHABLE_KEY;
+    const previousLevelLock = process.env.LEVELS_LOCKED;
     process.env.SUPABASE_URL = "https://example.supabase.co";
     process.env.SUPABASE_PUBLISHABLE_KEY = "public-test-key";
+    process.env.LEVELS_LOCKED = "false";
     const originalFetch = globalThis.fetch;
     globalThis.fetch = async (url) => {
         const target = String(url);
@@ -2148,6 +2164,8 @@ test("level entry API validates campaign unlocks before checking wallet funds", 
         else process.env.SUPABASE_URL = previousUrl;
         if (previousKey === undefined) delete process.env.SUPABASE_PUBLISHABLE_KEY;
         else process.env.SUPABASE_PUBLISHABLE_KEY = previousKey;
+        if (previousLevelLock === undefined) delete process.env.LEVELS_LOCKED;
+        else process.env.LEVELS_LOCKED = previousLevelLock;
     }
 });
 
@@ -2156,13 +2174,15 @@ test("enabled level entry sends a stable request ID to the atomic charge operati
         "SUPABASE_URL",
         "SUPABASE_PUBLISHABLE_KEY",
         "SUPABASE_SERVICE_ROLE_KEY",
-        "WALLET_PAID_GAMEPLAY_ENABLED"
+        "WALLET_PAID_GAMEPLAY_ENABLED",
+        "LEVELS_LOCKED"
     ];
     const previous = Object.fromEntries(names.map((name) => [name, process.env[name]]));
     process.env.SUPABASE_URL = "https://example.supabase.co";
     process.env.SUPABASE_PUBLISHABLE_KEY = "public-test-key";
     process.env.SUPABASE_SERVICE_ROLE_KEY = "server-only-test-key";
     process.env.WALLET_PAID_GAMEPLAY_ENABLED = "true";
+    process.env.LEVELS_LOCKED = "false";
     const originalFetch = globalThis.fetch;
     let rpcPayload;
     globalThis.fetch = async (url, options = {}) => {

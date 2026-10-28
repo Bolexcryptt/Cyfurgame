@@ -14,6 +14,10 @@ The configured treasury address has one code source of truth: `RELICGRID_TREASUR
 
 The campaign and leaderboard are unchanged. Depositing does not open Phantom or sign/broadcast a transaction from the game. After the player sends the transfer externally, the server checks it at finalized commitment and credits only after the verifier and atomic ledger RPC confirm it. A missing or not-yet-finalized transaction can be retried with the same signature; duplicate credit is prevented. A failed transfer, wrong destination, wrong mint, wrong amount, missing memo, expired intent, or unfinalized transfer receives no credit.
 
+## Reversible global level lock
+
+All levels default to locked unless the server environment variable `LEVELS_LOCKED` is set to the exact string `false`. The frontend reads the runtime value from `GET /api/game-config`; the level-entry, timer-start, and completion APIs independently reject requests with HTTP 423 while locked. The browser also disables every level card and mission button, and the 3D scene refuses level-load events unless the server confirms the lock is off. To unlock later, set `LEVELS_LOCKED=false` in the Vercel environment and redeploy the API; no level data or player progress is changed. Verify the deployed setting by requesting `/api/game-config` and checking `{"levelsLocked":true}` while the lock is on.
+
 ## Required setup
 
 Apply these SQL files in order in the Supabase SQL Editor if not already applied:
@@ -47,7 +51,7 @@ Configure these Vercel **server-side** variables:
 
 Never set a variable beginning with `NEXT_PUBLIC_` for private or server-only values. Deposits are player-signed transfers to the treasury and do not use the treasury private key. Withdrawals use that single key for server-side signing. No second treasury signer is needed by the current implementation.
 
-Free gameplay testing is currently enabled in the client: selecting an unlocked level does not call the paid-entry API, charge credits, or award wallet credits. Campaign progress is still saved through the existing local/leaderboard completion path. Paid gameplay remains server-gated: both `WALLET_PAID_GAMEPLAY_ENABLED=true` and `wallet_system_config.paid_gameplay_enabled=true` are required by the server, and both remain off until payment and game-economy testing is complete.
+When the campaign is unlocked, free gameplay does not call the paid-entry API, charge credits, or award wallet credits. The global `LEVELS_LOCKED` switch blocks access independently of that wallet gate. Campaign progress continues through the existing local/leaderboard completion path when play is available. Paid gameplay remains server-gated: both `WALLET_PAID_GAMEPLAY_ENABLED=true` and `wallet_system_config.paid_gameplay_enabled=true` are required by the server, and both remain off until payment and game-economy testing is complete.
 
 ## Wallet-less deposit flow
 

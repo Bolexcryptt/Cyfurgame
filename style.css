@@ -562,6 +562,39 @@ button { -webkit-tap-highlight-color: transparent; }
 .hero-copy h1 { margin: 20px 0 13px; color: #f2f7fb; font-size: clamp(36px, 6vw, 65px); line-height: .98; letter-spacing: -.065em; }
 .hero-copy h1 em { color: #9deaf0; font-style: normal; }
 .hero-copy p { max-width: 410px; margin: 0 0 23px; color: #aabac7; font-size: 14px; line-height: 1.7; }
+.levels-lock-banner {
+    display: flex;
+    max-width: 390px;
+    align-items: center;
+    gap: 12px;
+    margin-top: 16px;
+    padding: 12px 14px;
+    border: 1px solid #e8bc7252;
+    border-left: 2px solid #f0c77c;
+    border-radius: 8px;
+    background: linear-gradient(110deg, #33271dce, #171923e8);
+    box-shadow: inset 0 1px #fff1, 0 10px 24px #0003;
+}
+.levels-lock-banner[hidden] { display: none; }
+.levels-lock-icon {
+    display: grid;
+    width: 32px;
+    height: 32px;
+    flex: 0 0 auto;
+    place-items: center;
+    border: 1px solid #f0c77c66;
+    border-radius: 50%;
+    color: #f0c77c;
+    font: 700 14px "Consolas", monospace;
+}
+.levels-lock-banner b,
+.levels-lock-banner small { display: block; }
+.levels-lock-banner b { color: #f2d89e; font: 700 9px "Consolas", monospace; letter-spacing: .1em; }
+.levels-lock-banner small { margin-top: 5px; color: #c3b9ab; font-size: 10px; line-height: 1.45; }
+.level-card:disabled { cursor: not-allowed; }
+.level-card.is-locked { opacity: .58; }
+.level-card.is-locked:hover { transform: none; border-color: #aaa4d82c; background: linear-gradient(145deg, #171929, #101320 78%); box-shadow: inset 0 1px #fff1, 0 9px 24px #0003; }
+.level-card.is-temporarily-locked .level-state { border-color: #e8bc724c; background: #30261980; color: #e9c981; }
 .hero-art { position: absolute; top: 0; right: 0; width: min(47%, 470px); height: 100%; overflow: hidden; }
 .hero-core { position: absolute; top: 50%; left: 55%; width: 80px; height: 80px; transform: translate(-50%,-50%); border: 1px solid #93f2f4; border-radius: 50%; background: radial-gradient(circle,#d5ffff 0,#45c2d6 12%,#163247 42%,#08131d 72%); box-shadow: 0 0 24px #61e4f0a6, 0 0 85px #38bcd36b; animation: core-pulse 3.6s ease-in-out infinite; }
 .hero-orbit { position: absolute; top: 50%; left: 55%; width: 210px; height: 78px; border: 1px solid #80e6f46b; border-radius: 50%; transform: translate(-50%,-50%) rotate(-24deg); }

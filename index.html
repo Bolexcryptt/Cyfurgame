@@ -88,11 +88,15 @@
                         <p>Explore 99 progressively challenging laser puzzles. Direct the beam, charge the crystals, and power the grid.</p>
                         <div class="hero-mission-actions">
                             <button id="home-levels-toggle" class="button button-quiet" type="button" aria-controls="level-section" aria-expanded="false">LEVELS <span aria-hidden="true">↓</span></button>
-                            <button id="continue-game" class="button button-primary" type="button">
+                            <button id="continue-game" class="button button-primary" type="button" disabled>
                                 <span class="mission-button-label">START MISSION<small id="hero-next-level">LEVEL 01 / 99</small></span>
                                 <span aria-hidden="true">→</span>
                             </button>
                         </div>
+                        <aside id="levels-lock-banner" class="levels-lock-banner" role="status" aria-live="polite">
+                            <span class="levels-lock-icon" aria-hidden="true">Ⅱ</span>
+                            <span><b>CAMPAIGN TEMPORARILY LOCKED</b><small>All 99 sectors are unavailable while the campaign is paused.</small></span>
+                        </aside>
                     </div>
                     <div class="hero-art" aria-hidden="true">
                         <div class="hero-radar-sweep"></div>
@@ -114,7 +118,7 @@
                         <div>
                             <span class="eyebrow">THE CAMPAIGN</span>
                             <h2 id="level-heading">Select a sector</h2>
-                            <p>Every sector is open from the start. Choose any level, solve at your own pace, and track campaign progress as you go.</p>
+                            <p id="level-section-description">All 99 sectors are temporarily locked. Your campaign progress and saved records remain unchanged.</p>
                         </div>
                         <div class="campaign-progress-card">
                             <span>SECTORS CLEARED</span>
@@ -122,7 +126,7 @@
                             <i><span id="campaign-progress-fill"></span></i>
                         </div>
                     </div>
-                    <p id="level-entry-status" class="level-entry-status" role="status" aria-live="polite">Free gameplay testing is enabled. No credits are charged or awarded.</p>
+                    <p id="level-entry-status" class="level-entry-status" role="status" aria-live="polite">All levels are temporarily locked. Your saved progress remains intact.</p>
                     <ol id="level-list" class="level-list" aria-label="Levels"></ol>
                 </section>
 
