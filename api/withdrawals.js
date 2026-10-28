@@ -81,7 +81,9 @@ module.exports = async function withdrawals(request, response) {
             !TOKEN_PROGRAM_IDS.has(configs.token_program_id) ||
             !Number.isInteger(configs.token_decimals) ||
             configs.token_decimals < 0 || configs.token_decimals > 18 ||
-            configs.credits_per_token !== 10000) {
+            String(configs.credits_per_token) !== "10000" ||
+            configs.network !== process.env.SOLANA_NETWORK ||
+            !["devnet", "mainnet-beta"].includes(configs.network)) {
             return sendJson(response, 503, {
                 error: "withdrawal_not_configured",
                 message: "The treasury and CYFUR mint configuration for withdrawals is not ready. The owner-approved configuration must be rechecked before any token transfer is attempted."
@@ -128,6 +130,13 @@ module.exports = async function withdrawals(request, response) {
         }
 
         const idempotencyKey = `${user.id}:${linkedWallet.wallet_address}:${amountCreditsString}:${Date.now()}`;
+        const signer = getWithdrawalSignerFromEnvironment();
+        if (signer.publicKey.toBase58() !== configs.treasury_address) {
+            return sendJson(response, 503, {
+                error: "withdrawal_signer_mismatch",
+                message: "The configured server-side signer does not match the authorized treasury address. No transfer was submitted."
+            });
+        }
         const pendingRecord = {
             player_id: user.id,
             wallet_address: linkedWallet.wallet_address,
@@ -149,7 +158,6 @@ module.exports = async function withdrawals(request, response) {
         const withdrawalRecord = Array.isArray(insertResult) ? insertResult[0] : insertResult;
 
         try {
-            const signer = getWithdrawalSignerFromEnvironment();
             const execution = await executeCyfurWithdrawal({
                 rpcUrl: process.env.SOLANA_RPC_URL,
                 playerWalletAddress: linkedWallet.wallet_address,

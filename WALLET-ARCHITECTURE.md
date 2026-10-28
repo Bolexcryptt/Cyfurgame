@@ -10,7 +10,7 @@ The server independently verifies the configured Solana network, exact CYFUR min
 
 The authenticated deposit flow creates a 15-minute server-side intent tied to the player, exact amount, network, mint, token program, and treasury. The game displays the treasury address, exact amount, and unique memo for the player to include in an external wallet transfer. The player then submits the transaction signature; this signature is only an RPC lookup key, never proof of payment. The migration is not applied and no real deposit has been tested; do not enable deposits until deployment, schema, and end-to-end checks are complete.
 
-The approved treasury address has one code source of truth: `RELICGRID_TREASURY_ADDRESS` in `server/lib/solana-deposit.js`. Supabase `wallet_system_config.treasury_address` must mirror that address and is rejected if it differs. The browser displays the server-returned approved address; no separate Vercel treasury-address variable is used.
+The configured treasury address has one code source of truth: `RELICGRID_TREASURY_ADDRESS` in `server/lib/solana-deposit.js` (`6KTSpvxGR2xvje3BG42QvmFjg2XLnFneCCSyVXhSKvys`). Supabase `wallet_system_config.treasury_address` must mirror that address and is rejected if it differs. The browser displays the server-returned address; no separate Vercel treasury-address variable is used. This code value is not independent proof of treasury ownership or owner approval.
 
 The campaign and leaderboard are unchanged. Depositing does not open Phantom or sign/broadcast a transaction from the game. After the player sends the transfer externally, the server checks it at finalized commitment and credits only after the verifier and atomic ledger RPC confirm it. A missing or not-yet-finalized transaction can be retried with the same signature; duplicate credit is prevented. A failed transfer, wrong destination, wrong mint, wrong amount, missing memo, expired intent, or unfinalized transfer receives no credit.
 
@@ -24,8 +24,10 @@ Apply these SQL files in order in the Supabase SQL Editor if not already applied
 4. `supabase-direct-treasury-deposits.sql`
 5. `supabase-payment-intents.sql`
 6. `supabase-walletless-deposits.sql`
+7. `supabase-relicgrid-treasury.sql`
+8. `supabase-wallet-withdrawals.sql`
 
-The direct-treasury migration adds the approved treasury address and service-only RPCs. The wallet-link tables remain for compatibility but are not required for deposits. The wallet-less migration makes pending intents sender-independent while preserving finalized verification and atomic duplicate protection. The migrations leave `deposits_enabled` and `paid_gameplay_enabled` false. The Supabase treasury row must match the approved backend address. Do not paste secrets into chat.
+The direct-treasury migration adds the treasury address and service-only RPCs. The wallet-link tables remain for compatibility but are not required for deposits. The wallet-less migration makes pending intents sender-independent while preserving finalized verification and atomic duplicate protection. The treasury migration updates `wallet_system_config.treasury_address` to the code value and explicitly leaves deposits and paid gameplay disabled. Apply it in the Supabase SQL Editor; editing this file does not update a live database. Do not paste secrets into chat.
 
 Configure these Vercel **server-side** variables:
 
@@ -34,13 +36,16 @@ Configure these Vercel **server-side** variables:
 - `SUPABASE_SERVICE_ROLE_KEY` — secret service-role key, used only by API routes for trusted reads and RPCs.
 - `SOLANA_RPC_URL` — trusted HTTPS Solana RPC endpoint.
 - `SOLANA_NETWORK` — `devnet` for isolated testing; `mainnet-beta` only for production review.
+- `WITHDRAWAL_TREASURY_PRIVATE_KEY` — the one server-side treasury signing key used for withdrawals. Accepted formats are a base58-encoded 64-byte Solana secret key, base64-encoded 64-byte key, or JSON array of 64 byte values. The server verifies that its public key matches the configured treasury before submitting a payout. Do not use a client-prefixed variable, commit it, log it, or send it to the browser. `TREASURY_PRIVATE_KEY` is supported only as a legacy fallback; a second key is not required.
+- `WITHDRAWAL_ENABLED` — leave unset or `false` until the signer, owner-approved mint, live Supabase row, token account and funding, and a separately authorized small test are verified.
+- `WITHDRAWAL_DIAGNOSTIC_SECRET` — optional strong server-only secret protecting `GET /api/withdrawal-diagnostics`; required to run that deployment-only diagnostic.
 - `WALLET_DIRECT_TREASURY_READY=true` — owner/operator acknowledgment that the treasury address, ownership, monitoring, and reconciliation process are reviewed. Leave unset until confirmed.
 - `WALLET_DEPOSITS_ENABLED=true` — global deposit verification switch; leave unset until all tests and reviews pass.
 - `WALLET_MAINNET_DEPOSITS_ENABLED=true` — additional production-only switch; leave unset unless the mainnet launch is explicitly approved.
 - `GAME_FRONTEND_ORIGIN` — exact HTTPS browser origin allowed to call the API cross-origin (for example, the GitHub Pages origin); never use a wildcard.
 - `GAME_API_BASE_URL` — frontend build-time/public config in `supabase-config.js`, set to the deployed HTTPS API origin when the game and API use different origins. Leave empty only when `/api` is served from the same origin.
 
-Never set a variable beginning with `NEXT_PUBLIC_` for these values. Do not configure CDP keys or treasury signing keys; this flow does not need them. The owner receives transfers directly in the owner's treasury wallet, so no in-game custody service or automated sweep is involved.
+Never set a variable beginning with `NEXT_PUBLIC_` for private or server-only values. Deposits are player-signed transfers to the treasury and do not use the treasury private key. Withdrawals use that single key for server-side signing. No second treasury signer is needed by the current implementation.
 
 Free gameplay testing is currently enabled in the client: selecting an unlocked level does not call the paid-entry API, charge credits, or award wallet credits. Campaign progress is still saved through the existing local/leaderboard completion path. Paid gameplay remains server-gated: both `WALLET_PAID_GAMEPLAY_ENABLED=true` and `wallet_system_config.paid_gameplay_enabled=true` are required by the server, and both remain off until payment and game-economy testing is complete.
 

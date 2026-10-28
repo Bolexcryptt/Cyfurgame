@@ -1,7 +1,7 @@
 const {
-    buildWithdrawalDiagnostic,
     getSupabaseWithdrawalConfig,
     getTreasuryDiagnosticSummary,
+    verifyChainConfiguration,
     verifyWithdrawalRpc
 } = require("../server/lib/withdrawal-diagnostics");
 const { RELICGRID_CYFUR_MINT_ADDRESS, RELICGRID_TREASURY_ADDRESS } = require("../server/lib/solana-deposit");
@@ -32,10 +32,24 @@ module.exports = async function withdrawalDiagnostics(request, response) {
     const rpcResult = await verifyWithdrawalRpc();
 
     const configData = configResult.config ?? null;
-    const treasuryMatches = Boolean(configData?.treasury_address) && configData.treasury_address === RELICGRID_TREASURY_ADDRESS;
+    const signerMatchesConfig = Boolean(treasurySummary.publicAddress) &&
+        treasurySummary.publicAddress === configData?.treasury_address;
+    const signerMatchesExpected = treasurySummary.publicAddress === RELICGRID_TREASURY_ADDRESS;
+    const treasuryMatches = Boolean(configData?.treasury_address) &&
+        configData.treasury_address === RELICGRID_TREASURY_ADDRESS;
     const mintMatches = Boolean(configData?.official_mint_address) && configData.official_mint_address === RELICGRID_CYFUR_MINT_ADDRESS;
     const networkMatches = configData?.network ? configData.network === process.env.SOLANA_NETWORK : false;
-    const overallReady = treasurySummary.valid && configResult.connected && rpcResult.available && treasuryMatches && mintMatches && networkMatches;
+    const chainResult = configData ? await verifyChainConfiguration(configData) : {
+        networkVerified: false,
+        mintVerified: false,
+        treasuryTokenAccountVerified: false,
+        reason: "Supabase wallet configuration was not loaded."
+    };
+    const overallReady = treasurySummary.valid && signerMatchesConfig &&
+        signerMatchesExpected && configResult.connected && rpcResult.available &&
+        treasuryMatches && mintMatches && networkMatches &&
+        chainResult.networkVerified && chainResult.mintVerified &&
+        chainResult.treasuryTokenAccountVerified;
 
     return sendJson(response, 200, {
         ok: overallReady,
@@ -43,7 +57,8 @@ module.exports = async function withdrawalDiagnostics(request, response) {
             treasuryPrivateKeyPresent: treasurySummary.present,
             treasuryPrivateKeyValid: treasurySummary.valid,
             treasuryPublicAddress: treasurySummary.publicAddress ?? null,
-            treasuryPublicAddressMatchesConfig: treasuryMatches,
+            treasuryPublicAddressMatchesConfig: signerMatchesConfig,
+            treasuryPublicAddressMatchesExpected: signerMatchesExpected,
             treasuryPublicAddressExpected: RELICGRID_TREASURY_ADDRESS
         },
         config: {
@@ -61,6 +76,12 @@ module.exports = async function withdrawalDiagnostics(request, response) {
             roundingPolicy: configData?.rounding_policy ?? null,
             reason: configResult.reason ?? null
         },
+        chain: {
+            networkVerified: chainResult.networkVerified,
+            mintVerified: chainResult.mintVerified,
+            treasuryTokenAccountVerified: chainResult.treasuryTokenAccountVerified,
+            reason: chainResult.reason
+        },
         rpc: {
             available: rpcResult.available,
             httpStatus: rpcResult.httpStatus ?? null,
@@ -68,9 +89,13 @@ module.exports = async function withdrawalDiagnostics(request, response) {
         },
         checks: {
             treasuryPrivateKey: treasurySummary.valid,
+            signerMatchesConfig: signerMatchesConfig,
+            signerMatchesExpectedTreasury: signerMatchesExpected,
             configMatchesTreasury: treasuryMatches,
             configMatchesMint: mintMatches,
-            networkMatches: networkMatches,
+            networkMatches: networkMatches && chainResult.networkVerified,
+            mintVerifiedOnChain: chainResult.mintVerified,
+            treasuryTokenAccountVerified: chainResult.treasuryTokenAccountVerified,
             supabaseConnected: configResult.connected,
             withdrawalRpcAvailable: rpcResult.available
         },

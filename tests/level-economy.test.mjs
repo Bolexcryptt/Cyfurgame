@@ -769,7 +769,7 @@ test("deposit UI does not require a connected wallet and exposes memo-confirm ve
 });
 
 test("deposit backend pins the approved treasury and migration keeps deposits disabled", () => {
-    const treasury = "BQa1gxbBP2jNJEzyHHtMAUfJepXjTnqQEhBuojL9E3ts";
+    const treasury = "6KTSpvxGR2xvje3BG42QvmFjg2XLnFneCCSyVXhSKvys";
     const mint = "9F4hLLngEAhepsH2HLTH6kBYmmq6dzm4GXRrcpME3uam";
     assert.equal(RELICGRID_CYFUR_MINT_ADDRESS, mint);
     const mintAccount = {
@@ -1553,7 +1553,7 @@ test("deposit API rejects a failed on-chain transaction before requesting ledger
         SUPABASE_SERVICE_ROLE_KEY: "server-only-test-key",
         SOLANA_RPC_URL: "https://mainnet.example/rpc",
         SOLANA_NETWORK: "mainnet-beta",
-        SOLANA_TREASURY_ADDRESS: "BQa1gxbBP2jNJEzyHHtMAUfJepXjTnqQEhBuojL9E3ts",
+        SOLANA_TREASURY_ADDRESS: "6KTSpvxGR2xvje3BG42QvmFjg2XLnFneCCSyVXhSKvys",
         WALLET_DIRECT_TREASURY_READY: "true",
         WALLET_DEPOSITS_ENABLED: "true",
         WALLET_MAINNET_DEPOSITS_ENABLED: "true"
@@ -1643,7 +1643,7 @@ test("deposit API credits a finalized transfer only with its authenticated playe
         SUPABASE_SERVICE_ROLE_KEY: "server-only-test-key",
         SOLANA_RPC_URL: "https://mainnet.example/rpc",
         SOLANA_NETWORK: "mainnet-beta",
-        SOLANA_TREASURY_ADDRESS: "BQa1gxbBP2jNJEzyHHtMAUfJepXjTnqQEhBuojL9E3ts",
+        SOLANA_TREASURY_ADDRESS: "6KTSpvxGR2xvje3BG42QvmFjg2XLnFneCCSyVXhSKvys",
         WALLET_DIRECT_TREASURY_READY: "true",
         WALLET_DEPOSITS_ENABLED: "true",
         WALLET_MAINNET_DEPOSITS_ENABLED: "true"
@@ -2396,7 +2396,7 @@ test("deposit transaction API prepares and broadcasts through the authenticated 
         SUPABASE_SERVICE_ROLE_KEY: "server-only-test-key",
         SOLANA_RPC_URL: "https://mainnet.example/rpc",
         SOLANA_NETWORK: "mainnet-beta",
-        SOLANA_TREASURY_ADDRESS: "BQa1gxbBP2jNJEzyHHtMAUfJepXjTnqQEhBuojL9E3ts",
+        SOLANA_TREASURY_ADDRESS: "6KTSpvxGR2xvje3BG42QvmFjg2XLnFneCCSyVXhSKvys",
         WALLET_DIRECT_TREASURY_READY: "true",
         WALLET_DEPOSITS_ENABLED: "true",
         WALLET_MAINNET_DEPOSITS_ENABLED: "true"

@@ -1,34 +1,12 @@
-const { Keypair } = require("@solana/web3.js");
-const { RELICGRID_CYFUR_MINT_ADDRESS, RELICGRID_TREASURY_ADDRESS } = require("./solana-deposit");
-
-function parseTreasurySecret(secretValue) {
-    if (typeof secretValue !== "string") {
-        return null;
-    }
-    const trimmed = secretValue.trim();
-    if (!trimmed) {
-        return null;
-    }
-
-    let decoded = null;
-    try {
-        decoded = Buffer.from(trimmed, "base64");
-        if (decoded.length === 64) return decoded;
-    } catch {
-        // Intentionally reject unsupported formats; deployments must provide real 64-byte keys.
-    }
-
-    try {
-        const parsed = JSON.parse(trimmed);
-        if (Array.isArray(parsed) && parsed.length === 64 && parsed.every((value) => Number.isInteger(value) && value >= 0 && value <= 255)) {
-            return Buffer.from(parsed);
-        }
-    } catch {
-        // Intentionally reject unsupported formats; deployments must provide real 64-byte keys.
-    }
-
-    return null;
-}
+const { getWithdrawalSignerFromEnvironment, parseWithdrawalSecret } = require("./withdrawals");
+const {
+    deriveAssociatedTokenAccount,
+    GENESIS_HASHES,
+    isOfficialCyfurMintAccount,
+    RELICGRID_CYFUR_MINT_ADDRESS,
+    RELICGRID_TREASURY_ADDRESS,
+    solanaRpc
+} = require("./solana-deposit");
 
 function getTreasuryDiagnosticSummary() {
     const secretValue = process.env.WITHDRAWAL_TREASURY_PRIVATE_KEY?.trim() || process.env.TREASURY_PRIVATE_KEY?.trim();
@@ -41,31 +19,20 @@ function getTreasuryDiagnosticSummary() {
         };
     }
 
-    const secretBytes = parseTreasurySecret(secretValue);
-    if (!secretBytes || secretBytes.length !== 64) {
-        return {
-            present: true,
-            configured: true,
-            valid: false,
-            reason: "The treasury private key is present but not a valid 64-byte Solana secret key."
-        };
-    }
-
     try {
-        const keypair = Keypair.fromSecretKey(secretBytes);
+        const keypair = getWithdrawalSignerFromEnvironment();
         return {
             present: true,
             configured: true,
             valid: true,
-            publicAddress: keypair.publicKey.toBase58(),
-            secretLength: secretBytes.length
+            publicAddress: keypair.publicKey.toBase58()
         };
     } catch (error) {
         return {
             present: true,
             configured: true,
             valid: false,
-            reason: error?.message || "The treasury private key could not be loaded."
+            reason: "The treasury private key is present but could not be parsed as a valid Solana key."
         };
     }
 }
@@ -174,38 +141,75 @@ async function verifyWithdrawalRpc() {
     }
 }
 
-function buildWithdrawalDiagnostic() {
-    const treasurySummary = getTreasuryDiagnosticSummary();
-    const configCheck = {
-        expectedTreasuryAddress: RELICGRID_TREASURY_ADDRESS,
-        expectedMintAddress: RELICGRID_CYFUR_MINT_ADDRESS,
-        treasuryMatchesConfig: false,
-        mintMatchesConfig: false,
-        configLoaded: false,
-        configNetwork: null,
-        configTreasuryAddress: null,
-        configMintAddress: null
+async function verifyChainConfiguration(config) {
+    const rpcUrl = process.env.SOLANA_RPC_URL?.trim();
+    const network = config?.network;
+    if (!rpcUrl || !GENESIS_HASHES[network]) {
+        return {
+            networkVerified: false,
+            mintVerified: false,
+            treasuryTokenAccountVerified: false,
+            reason: "SOLANA_RPC_URL or a supported configured network is missing."
+        };
     };
 
-    return {
-        ok: false,
-        treasury: treasurySummary,
-        config: configCheck,
-        rpc: {
-            available: false,
-            reason: "Not checked yet."
-        },
-        supabase: {
-            connected: false,
-            reason: "Not checked yet."
+    try {
+        const genesisHash = await solanaRpc(rpcUrl, "getGenesisHash", []);
+        const networkVerified = genesisHash === GENESIS_HASHES[network];
+        if (!networkVerified) {
+            return {
+                networkVerified: false,
+                mintVerified: false,
+                treasuryTokenAccountVerified: false,
+                reason: "SOLANA_RPC_URL is connected to a different Solana network."
+            };
         }
-    };
+
+        const [mintAccount, treasuryTokenAccount] = await Promise.all([
+            solanaRpc(rpcUrl, "getAccountInfo", [
+                config.official_mint_address,
+                { commitment: "finalized", encoding: "jsonParsed" }
+            ]),
+            solanaRpc(rpcUrl, "getAccountInfo", [
+                deriveAssociatedTokenAccount(
+                    config.treasury_address,
+                    config.official_mint_address,
+                    config.token_program_id
+                ),
+                { commitment: "finalized", encoding: "jsonParsed" }
+            ])
+        ]);
+        const mintVerified = isOfficialCyfurMintAccount(mintAccount) &&
+            config.token_program_id === "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA" &&
+            config.token_decimals === 8;
+        const tokenInfo = treasuryTokenAccount?.value?.data?.parsed?.info;
+        const treasuryTokenAccountVerified = Boolean(
+            treasuryTokenAccount?.value &&
+            treasuryTokenAccount.value.owner === config.token_program_id &&
+            treasuryTokenAccount.value.data?.parsed?.type === "account" &&
+            tokenInfo?.mint === config.official_mint_address &&
+            tokenInfo?.owner === config.treasury_address
+        );
+        return {
+            networkVerified,
+            mintVerified,
+            treasuryTokenAccountVerified,
+            reason: null
+        };
+    } catch (error) {
+        return {
+            networkVerified: false,
+            mintVerified: false,
+            treasuryTokenAccountVerified: false,
+            reason: error?.message || "Unable to verify Solana network and token configuration."
+        };
+    }
 }
 
 module.exports = {
-    buildWithdrawalDiagnostic,
     getSupabaseWithdrawalConfig,
     getTreasuryDiagnosticSummary,
-    parseTreasurySecret,
+    verifyChainConfiguration,
+    parseTreasurySecret: parseWithdrawalSecret,
     verifyWithdrawalRpc
 };

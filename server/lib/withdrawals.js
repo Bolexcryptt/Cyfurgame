@@ -7,7 +7,42 @@ const {
     TOKEN_PROGRAM_ID
 } = require("@solana/spl-token");
 const { CYFUR_CREDITS_PER_TOKEN } = require("./wallet");
-const { isBase58, RELICGRID_CYFUR_MINT_ADDRESS, RELICGRID_TREASURY_ADDRESS } = require("./solana-deposit");
+const {
+    GENESIS_HASHES,
+    decodeBase58,
+    isBase58,
+    RELICGRID_CYFUR_MINT_ADDRESS,
+    RELICGRID_TREASURY_ADDRESS
+} = require("./solana-deposit");
+
+function parseWithdrawalSecret(secretValue) {
+    if (typeof secretValue !== "string" || !secretValue.trim()) return null;
+    const trimmed = secretValue.trim();
+    let keyBytes;
+    try {
+        const decoded = Buffer.from(trimmed, "base64");
+        if (decoded.length === 64) {
+            keyBytes = decoded;
+        }
+    } catch {
+        // Continue checking the supported secret encodings.
+    }
+    if (!keyBytes) {
+        try {
+            const parsed = JSON.parse(trimmed);
+            if (Array.isArray(parsed) && parsed.length === 64 && parsed.every((value) => Number.isInteger(value) && value >= 0 && value <= 255)) {
+                keyBytes = Buffer.from(parsed);
+            }
+        } catch {
+            // Continue checking the supported secret encodings.
+        }
+    }
+    if (!keyBytes) {
+        const decoded = decodeBase58(trimmed);
+        if (decoded?.length === 64) keyBytes = Buffer.from(decoded);
+    }
+    return keyBytes?.length === 64 ? keyBytes : null;
+}
 
 function getWithdrawalSignerFromEnvironment() {
     const secretValue = process.env.WITHDRAWAL_TREASURY_PRIVATE_KEY?.trim() || process.env.TREASURY_PRIVATE_KEY?.trim();
@@ -15,27 +50,9 @@ function getWithdrawalSignerFromEnvironment() {
         throw new Error("WITHDRAWAL_TREASURY_PRIVATE_KEY is not configured. Add the server-side treasury signer before enabling withdrawals.");
     }
 
-    let keyBytes;
-    try {
-        const decoded = Buffer.from(secretValue, "base64");
-        if (decoded.length === 64) {
-            keyBytes = decoded;
-        }
-    } catch {
-        // Allow JSON-array or base58 input to be rejected intentionally; the deployment must provide a real 64-byte secret.
-    }
-    if (!keyBytes) {
-        try {
-            const parsed = JSON.parse(secretValue);
-            if (Array.isArray(parsed) && parsed.length === 64 && parsed.every((value) => Number.isInteger(value) && value >= 0 && value <= 255)) {
-                keyBytes = Buffer.from(parsed);
-            }
-        } catch {
-            // Ignore; the deployment must set a real secret.
-        }
-    }
+    const keyBytes = parseWithdrawalSecret(secretValue);
     if (!keyBytes || keyBytes.length !== 64) {
-        throw new Error("The treasury withdrawal secret is invalid. It must be a 64-byte private key in base64 or JSON-array format.");
+        throw new Error("The treasury withdrawal secret is invalid. It must be a 64-byte private key in base64, JSON-array, or base58 format.");
     }
 
     return Keypair.fromSecretKey(keyBytes);
@@ -94,6 +111,10 @@ async function executeCyfurWithdrawal({
     if (!isBase58(treasuryAddress, 32) || !isBase58(mintAddress, 32)) {
         throw new TypeError("Treasury and mint addresses must be valid Solana public keys.");
     }
+    if (!treasurySigner?.publicKey ||
+        treasurySigner.publicKey.toBase58() !== treasuryAddress) {
+        throw new Error("The configured withdrawal signer does not match the authorized treasury address.");
+    }
     if (!Number.isInteger(tokenDecimals) || tokenDecimals < 0 || tokenDecimals > 18) {
         throw new TypeError("The configured CYFUR token decimals are invalid.");
     }
@@ -106,6 +127,10 @@ async function executeCyfurWithdrawal({
         commitment: "confirmed",
         confirmTransactionInitialTimeout: 60000
     });
+    const network = process.env.SOLANA_NETWORK;
+    if (!GENESIS_HASHES[network] || await connection.getGenesisHash() !== GENESIS_HASHES[network]) {
+        throw new Error("The Solana RPC endpoint does not match the configured treasury network.");
+    }
     const treasuryPublicKey = new PublicKey(treasuryAddress);
     const playerPublicKey = new PublicKey(playerWalletAddress);
     const mintPublicKey = new PublicKey(mintAddress);
@@ -179,5 +204,6 @@ module.exports = {
     calculateCreditsFromTokenAmountRaw,
     calculateWithdrawalTokenAmountRaw,
     executeCyfurWithdrawal,
-    getWithdrawalSignerFromEnvironment
+    getWithdrawalSignerFromEnvironment,
+    parseWithdrawalSecret
 };
