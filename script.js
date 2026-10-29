@@ -184,14 +184,61 @@ function startScene() {
     let renderRequest = 0;
     let audioContext = null;
     let audioQueueUntil = 0;
-    let lastMirrorSoundAt = -Infinity;
     let audioUnavailableReported = false;
+    let powerSourceSoundPlayed = false;
+    const fileSoundEffects = new Map([
+        ["mirror", "mirror.mp3"],
+        ["powerSource", "powersource.mp3"]
+    ].map(([effect, file]) => {
+        const audio = new Audio(new URL(file, import.meta.url));
+        audio.preload = "auto";
+        audio.load();
+        return [effect, audio];
+    }));
+    const audioUnlockHandler = () => {
+        document.removeEventListener("pointerdown", audioUnlockHandler, true);
+        document.removeEventListener("keydown", audioUnlockHandler, true);
+        const audio = fileSoundEffects.get("powerSource");
+        audio.muted = true;
+        try {
+            const playback = audio.play();
+            if (playback && typeof playback.then === "function") {
+                void playback.then(() => {
+                    audio.pause();
+                    audio.currentTime = 0;
+                    audio.muted = false;
+                }).catch((error) => {
+                    audio.muted = false;
+                    console.warn("Power-source sound could not be unlocked.", error);
+                });
+            } else {
+                audio.pause();
+                audio.currentTime = 0;
+                audio.muted = false;
+            }
+        } catch (error) {
+            audio.muted = false;
+            console.warn("Power-source sound could not be unlocked.", error);
+        }
+    };
+    document.addEventListener("pointerdown", audioUnlockHandler, true);
+    document.addEventListener("keydown", audioUnlockHandler, true);
 
     function playSoundEffect(effect) {
-        if (effect === "mirror") {
-            const now = performance.now();
-            if (now - lastMirrorSoundAt < 90) return;
-            lastMirrorSoundAt = now;
+        const fileSound = fileSoundEffects.get(effect);
+        if (fileSound) {
+            try {
+                fileSound.currentTime = 0;
+                const playback = fileSound.play();
+                if (playback && typeof playback.catch === "function") {
+                    void playback.catch((error) => {
+                        console.warn("Game sound effect could not be played.", error);
+                    });
+                }
+            } catch (error) {
+                console.warn("Game sound effect could not be played.", error);
+            }
+            return;
         }
         try {
             const AudioContextConstructor = window.AudioContext || window.webkitAudioContext;
@@ -204,10 +251,8 @@ function startScene() {
             }
             audioContext ??= new AudioContextConstructor();
             const sounds = {
-                mirror: { startFrequency: 620, endFrequency: 920, duration: 0.075, type: "triangle", volume: 0.045 },
                 laser: { startFrequency: 180, endFrequency: 740, duration: 0.18, type: "sawtooth", volume: 0.055 },
-                core: { startFrequency: 440, endFrequency: 1040, duration: 0.2, type: "sine", volume: 0.075 },
-                completion: { startFrequency: 880, endFrequency: 1320, duration: 0.22, type: "sine", volume: 0.075 }
+                core: { startFrequency: 440, endFrequency: 1040, duration: 0.2, type: "sine", volume: 0.075 }
             };
             const sound = sounds[effect];
             if (!sound) return;
@@ -1479,6 +1524,7 @@ function startScene() {
         traceResult = null;
         previewRoute = null;
         levelStartedAt = null;
+        powerSourceSoundPlayed = false;
         completionSummary.hidden = true;
         const nextLevelButton = document.getElementById("next-level");
         nextLevelButton.hidden = true;
@@ -2310,7 +2356,10 @@ function startScene() {
                         );
                     }
                     setCorePowered(true);
-                    playSoundEffect("completion");
+                    if (!powerSourceSoundPlayed) {
+                        powerSourceSoundPlayed = true;
+                        playSoundEffect("powerSource");
+                    }
                     traceButton.disabled = true;
                     traceButton.innerHTML = "<span>✓</span> CORE ONLINE";
                     coreLight.intensity = 28;
