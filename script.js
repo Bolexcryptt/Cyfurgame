@@ -31,8 +31,8 @@ try {
 
 function startScene() {
     const scene = new THREE.Scene();
-    scene.background = new THREE.Color(0x05080d);
-    scene.fog = new THREE.FogExp2(0x05080d, 0.014);
+    scene.background = new THREE.Color(0x0a101b);
+    scene.fog = new THREE.FogExp2(0x111824, 0.01);
 
     const camera = new THREE.PerspectiveCamera(37, 1, 0.1, 160);
     const mobileQuality = window.innerWidth < 620;
@@ -45,7 +45,7 @@ function startScene() {
     renderer.shadowMap.enabled = !mobileQuality;
     renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    renderer.toneMappingExposure = 1;
+    renderer.toneMappingExposure = 1.04;
     renderer.outputColorSpace = THREE.SRGBColorSpace;
     const configureQualityLight = (light) => {
         light.visible = !mobileQuality;
@@ -54,13 +54,13 @@ function startScene() {
 
     const composer = new EffectComposer(renderer);
     composer.addPass(new RenderPass(scene, camera));
-    const bloom = new UnrealBloomPass(new THREE.Vector2(1, 1), 0.12, 0.34, 1.02);
+    const bloom = new UnrealBloomPass(new THREE.Vector2(1, 1), 0.2, 0.36, 1);
     composer.addPass(bloom);
     composer.addPass(new OutputPass());
 
-    scene.add(new THREE.HemisphereLight(0xa9c5df, 0x312a29, mobileQuality ? 2 : 1.7));
+    scene.add(new THREE.HemisphereLight(0xc4d8ec, 0x483a32, mobileQuality ? 2.15 : 1.85));
 
-    const moonLight = new THREE.DirectionalLight(0xb5c6dc, 4);
+    const moonLight = new THREE.DirectionalLight(0xffe5c4, 3.4);
     moonLight.position.set(-7, 15, -4);
     moonLight.castShadow = window.innerWidth >= 620;
     moonLight.shadow.mapSize.set(1024, 1024);
@@ -70,9 +70,12 @@ function startScene() {
     moonLight.shadow.camera.bottom = -14;
     moonLight.shadow.bias = -0.00035;
     scene.add(moonLight);
-    const boardFillLight = new THREE.DirectionalLight(0x8fc6e9, mobileQuality ? 1.35 : 0.65);
+    const boardFillLight = new THREE.DirectionalLight(0xa4cdeb, mobileQuality ? 1.5 : 0.8);
     boardFillLight.position.set(5, 9, 4);
     scene.add(boardFillLight);
+    const islandRimLight = new THREE.DirectionalLight(0xd0d5d4, mobileQuality ? 2 : 1.2);
+    islandRimLight.position.set(8, -5, 12);
+    scene.add(islandRimLight);
 
     const warmLight = configureQualityLight(new THREE.PointLight(0xff7134, 17, 12, 2));
     warmLight.position.set(-3.8, 2.7, 1.7);
@@ -177,6 +180,7 @@ function startScene() {
     let firstLevelTutorial = false;
     let firstLevelTutorialStage = "observe";
     let walletLevelSessionId = null;
+    let walletLevelEntryCostCredits = null;
     let updateSourceMarker = () => {};
     let traceStartedAt = 0;
     let levelStartedAt = null;
@@ -288,10 +292,10 @@ function startScene() {
 
     const cameraState = {
         azimuth: 0.53,
-        elevation: 0.54,
+        elevation: 0.63,
         distance: 16,
         defaultAzimuth: 0.53,
-        defaultElevation: 0.54,
+        defaultElevation: 0.63,
         dragging: false,
         moved: false,
         lastX: 0,
@@ -413,32 +417,37 @@ function startScene() {
         bumpMap.needsUpdate = true;
         return makeMaterial(color, 0.96, 0.015, {
             map,
-            ...(!mobileQuality ? { bumpMap, bumpScale: 0.11 } : {}),
+            ...(!mobileQuality ? { bumpMap, bumpScale: 0.15 } : {}),
             ...extra
         });
     };
 
     const materials = {
-        platform: makeStoneMaterial(0xaaa49a, 2.8, 2.3),
-        platformSide: makeStoneMaterial(0x615e59, 2.1, 1.2),
-        underside: makeStoneMaterial(0x696c70, 2.2, 1.1),
+        platform: makeStoneMaterial(0x7b8282, 2.8, 2.3),
+        platformSide: makeStoneMaterial(0x62686a, 2.1, 1.2),
+        underside: makeStoneMaterial(0x454a4d, 2.2, 1.1),
         floor: [
-            makeStoneMaterial(0x92877b, 1.15, 1.15, { side: THREE.DoubleSide }),
-            makeStoneMaterial(0xa09485, 1.15, 1.15, { side: THREE.DoubleSide }),
-            makeStoneMaterial(0x8d9291, 1.15, 1.15, { side: THREE.DoubleSide }),
-            makeStoneMaterial(0xa28f7c, 1.15, 1.15, { side: THREE.DoubleSide }),
-            makeStoneMaterial(0x898d91, 1.15, 1.15, { side: THREE.DoubleSide }),
-            makeStoneMaterial(0x978d84, 1.15, 1.15, { side: THREE.DoubleSide })
+            makeStoneMaterial(0x747b7b, 1.15, 1.15, { side: THREE.DoubleSide }),
+            makeStoneMaterial(0x7f8583, 1.15, 1.15, { side: THREE.DoubleSide }),
+            makeStoneMaterial(0x6a7475, 1.15, 1.15, { side: THREE.DoubleSide }),
+            makeStoneMaterial(0x797d79, 1.15, 1.15, { side: THREE.DoubleSide }),
+            makeStoneMaterial(0x687171, 1.15, 1.15, { side: THREE.DoubleSide }),
+            makeStoneMaterial(0x737b79, 1.15, 1.15, { side: THREE.DoubleSide })
         ],
-        seam: new THREE.MeshBasicMaterial({ color: 0x151311 }),
+        seam: new THREE.MeshBasicMaterial({ color: 0x111719 }),
         metal: makeMaterial(0x202a34, 0.46, 0.78),
         metalEdge: makeMaterial(0x4b5560, 0.4, 0.82),
-        column: makeStoneMaterial(0x818487, 1.3, 3.4),
-        columnLight: makeStoneMaterial(0xa09a8d, 1.5, 2.2),
+        column: makeStoneMaterial(0x727978, 1.3, 3.4),
+        columnLight: makeStoneMaterial(0x90938c, 1.5, 2.2),
         stone: [
-            makeStoneMaterial(0x89837b, 0.95, 0.95),
-            makeStoneMaterial(0x9a9185, 0.95, 0.95),
-            makeStoneMaterial(0x858b8b, 0.95, 0.95)
+            makeStoneMaterial(0x767a76, 0.95, 0.95),
+            makeStoneMaterial(0x858780, 0.95, 0.95),
+            makeStoneMaterial(0x6d7473, 0.95, 0.95)
+        ],
+        floatingRock: [
+            makeMaterial(0x555b5a, 0.98, 0, { flatShading: true }),
+            makeMaterial(0x666a66, 0.98, 0, { flatShading: true }),
+            makeMaterial(0x454b4d, 0.98, 0, { flatShading: true })
         ],
         crack: new THREE.LineBasicMaterial({ color: 0x191918, transparent: true, opacity: 0.86 }),
         circuit: new THREE.MeshStandardMaterial({
@@ -544,14 +553,68 @@ function startScene() {
     };
 
     function createVoid() {
+        const skyCanvas = document.createElement("canvas");
+        skyCanvas.width = 512;
+        skyCanvas.height = 256;
+        const skyContext = skyCanvas.getContext("2d");
+        const skyGradient = skyContext.createLinearGradient(0, 0, 0, skyCanvas.height);
+        skyGradient.addColorStop(0, "#08111f");
+        skyGradient.addColorStop(0.42, "#1c2a3c");
+        skyGradient.addColorStop(0.72, "#54404a");
+        skyGradient.addColorStop(1, "#10131d");
+        skyContext.fillStyle = skyGradient;
+        skyContext.fillRect(0, 0, skyCanvas.width, skyCanvas.height);
+        const horizonHaze = skyContext.createRadialGradient(260, 183, 8, 260, 183, 220);
+        horizonHaze.addColorStop(0, "rgba(255, 178, 126, 0.2)");
+        horizonHaze.addColorStop(1, "rgba(255, 178, 126, 0)");
+        skyContext.fillStyle = horizonHaze;
+        skyContext.fillRect(0, 0, skyCanvas.width, skyCanvas.height);
+        const skyTexture = new THREE.CanvasTexture(skyCanvas);
+        skyTexture.colorSpace = THREE.SRGBColorSpace;
+        const sky = new THREE.Mesh(
+            new THREE.SphereGeometry(120, 32, 20),
+            new THREE.MeshBasicMaterial({
+                map: skyTexture,
+                side: THREE.BackSide,
+                depthWrite: false,
+                depthTest: false,
+                fog: false,
+                toneMapped: false
+            })
+        );
+        sky.renderOrder = -1;
+        scene.add(sky);
+
         const floor = new THREE.Mesh(
             new THREE.PlaneGeometry(180, 180),
-            makeMaterial(0x05080d, 1, 0.04)
+            makeMaterial(0x090e17, 1, 0)
         );
         floor.rotation.x = -Math.PI / 2;
         floor.position.y = -3.5;
         floor.receiveShadow = true;
         scene.add(floor);
+
+        const shadowCanvas = document.createElement("canvas");
+        shadowCanvas.width = shadowCanvas.height = 256;
+        const shadowContext = shadowCanvas.getContext("2d");
+        const shadowGradient = shadowContext.createRadialGradient(128, 128, 8, 128, 128, 126);
+        shadowGradient.addColorStop(0, "rgba(2, 4, 9, 0.78)");
+        shadowGradient.addColorStop(0.58, "rgba(2, 4, 9, 0.3)");
+        shadowGradient.addColorStop(1, "rgba(2, 4, 9, 0)");
+        shadowContext.fillStyle = shadowGradient;
+        shadowContext.fillRect(0, 0, 256, 256);
+        const shadow = new THREE.Mesh(
+            new THREE.PlaneGeometry(19, 13),
+            new THREE.MeshBasicMaterial({
+                map: new THREE.CanvasTexture(shadowCanvas),
+                transparent: true,
+                depthWrite: false,
+                toneMapped: false
+            })
+        );
+        shadow.rotation.x = -Math.PI / 2;
+        shadow.position.set(0, -3.47, 0);
+        scene.add(shadow);
 
         const dustPositions = [];
         let seed = 7812;
@@ -559,7 +622,7 @@ function startScene() {
             seed = (seed * 1664525 + 1013904223) >>> 0;
             return seed / 4294967296;
         };
-        for (let i = 0; i < 650; i++) {
+        for (let i = 0; i < 480; i++) {
             dustPositions.push(
                 (random() - 0.5) * 90,
                 random() * 28 - 2,
@@ -570,7 +633,7 @@ function startScene() {
         dustGeometry.setAttribute("position", new THREE.Float32BufferAttribute(dustPositions, 3));
         scene.add(new THREE.Points(
             dustGeometry,
-            new THREE.PointsMaterial({ color: 0x9baec0, size: 0.025, transparent: true, opacity: 0.52 })
+            new THREE.PointsMaterial({ color: 0xc5d4e5, size: 0.03, transparent: true, opacity: 0.38 })
         ));
     }
 
@@ -589,8 +652,9 @@ function startScene() {
 
         const lowerOutline = outline.map(([x, z]) => [x * 0.93, z * 0.93]);
         extrudedPolygon(platform, lowerOutline, 0.4, -1.9, materials.underside, 0.08);
+        createIslandKeel();
 
-        const edgeBand = makeMaterial(0x35414b, 0.46, 0.76);
+        const edgeBand = makeMaterial(0x786a58, 0.92, 0.04);
         const brokenSupports = [
             [-5.6, 0.6, 0.95, 0.44, 0.65],
             [-3.8, 3.4, 1.1, 0.48, 0.7],
@@ -619,7 +683,7 @@ function startScene() {
             const points = edge.map(([x, z]) => new THREE.Vector3(x, -0.11, z));
             const mesh = new THREE.Mesh(
                 new THREE.TubeGeometry(new THREE.LineCurve3(points[0], points[1]), 1, 0.035, 5, false),
-                new THREE.MeshStandardMaterial({ color: 0x56616a, metalness: 0.72, roughness: 0.38 })
+                edgeBand
             );
             platform.add(mesh);
         });
@@ -627,7 +691,118 @@ function startScene() {
         const underglow = configureQualityLight(new THREE.PointLight(0x274867, 20, 14, 2));
         underglow.position.set(0, -1.8, 0);
         platform.add(underglow);
+
+        const rockGeometry = new THREE.DodecahedronGeometry(1, 0);
+        const rockPositions = rockGeometry.attributes.position;
+        for (let i = 0; i < rockPositions.count; i++) {
+            const variation = 0.82 + ((i * 37 + 11) % 17) / 42;
+            rockPositions.setXYZ(
+                i,
+                rockPositions.getX(i) * variation,
+                rockPositions.getY(i) * (0.88 + ((i * 19 + 7) % 13) / 38),
+                rockPositions.getZ(i) * variation
+            );
+        }
+        rockGeometry.computeVertexNormals();
+        const floatingRocks = [
+            [-5.5, -2.25, -2.6, 1.65, 1.35, 1.5],
+            [-4.3, -2.75, 2.8, 1.45, 1.8, 1.25],
+            [-2.7, -2.3, -3.75, 1.7, 1.55, 1.4],
+            [-1.25, -2.75, 4.0, 1.35, 1.6, 1.3],
+            [0.35, -2.35, -4.05, 1.8, 1.35, 1.45],
+            [2.35, -2.8, 3.75, 1.55, 1.8, 1.4],
+            [4.1, -2.25, -3.25, 1.65, 1.45, 1.5],
+            [5.0, -2.7, 1.65, 1.45, 1.8, 1.35],
+            [-5.3, -3.15, 0.2, 1.3, 1.9, 1.25],
+            [3.2, -3.2, -0.65, 1.4, 1.85, 1.3]
+        ];
+        floatingRocks.forEach(([x, y, z, scaleX, scaleY, scaleZ], index) => {
+            const rock = new THREE.Mesh(
+                rockGeometry,
+                materials.floatingRock[index % materials.floatingRock.length]
+            );
+            rock.position.set(x, y, z);
+            rock.scale.set(scaleX, scaleY, scaleZ);
+            rock.rotation.set(index * 0.11, index * 0.71, index * -0.09);
+            rock.castShadow = true;
+            rock.receiveShadow = true;
+            platform.add(rock);
+        });
         createFracturedFloor();
+    }
+
+    function createIslandKeel() {
+        const rings = [
+            { y: -1.75, radius: 5.15 },
+            { y: -2.35, radius: 4.5 },
+            { y: -3.05, radius: 3.65 },
+            { y: -3.8, radius: 2.65 },
+            { y: -4.55, radius: 1.65 },
+            { y: -5.15, radius: 0.86 },
+            { y: -5.8, radius: 0.16 }
+        ];
+        const segments = 20;
+        const positions = [];
+        const colors = [];
+        const strata = [0xa69a87, 0x928472, 0x7f7266, 0x9c8d79, 0x7d7770, 0x687071];
+        let seed = 62041;
+        const random = () => {
+            seed = (seed * 1664525 + 1013904223) >>> 0;
+            return seed / 4294967296;
+        };
+        const points = rings.map(({ y, radius }, ringIndex) =>
+            Array.from({ length: segments }, (_, segment) => {
+                const angle = segment / segments * Math.PI * 2;
+                const irregularity = 0.88 + random() * 0.24;
+                return [
+                    Math.cos(angle) * radius * irregularity,
+                    y + (ringIndex === 0 ? 0 : (random() - 0.5) * 0.22),
+                    Math.sin(angle) * radius * irregularity
+                ];
+            })
+        );
+        const appendFace = (a, b, c, baseColor) => {
+            positions.push(...a, ...b, ...c);
+            const shade = 0.82 + random() * 0.3;
+            const color = new THREE.Color(baseColor).multiplyScalar(shade);
+            for (let vertex = 0; vertex < 3; vertex++) {
+                colors.push(color.r, color.g, color.b);
+            }
+        };
+
+        for (let ring = 0; ring < rings.length - 1; ring++) {
+            for (let segment = 0; segment < segments; segment++) {
+                const next = (segment + 1) % segments;
+                const upper = points[ring];
+                const lower = points[ring + 1];
+                const color = strata[(ring + Math.floor(random() * 2)) % strata.length];
+                appendFace(upper[segment], upper[next], lower[next], color);
+                appendFace(upper[segment], lower[next], lower[segment], color);
+            }
+        }
+
+        const tip = [0, -6.05, 0];
+        const bottomRing = points[points.length - 1];
+        for (let segment = 0; segment < segments; segment++) {
+            appendFace(bottomRing[segment], bottomRing[(segment + 1) % segments], tip, strata[5]);
+        }
+
+        const geometry = new THREE.BufferGeometry();
+        geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+        geometry.setAttribute("color", new THREE.Float32BufferAttribute(colors, 3));
+        geometry.computeVertexNormals();
+        const keel = new THREE.Mesh(geometry, new THREE.MeshStandardMaterial({
+            color: 0xffffff,
+            emissive: 0x282724,
+            emissiveIntensity: 0.48,
+            roughness: 0.98,
+            metalness: 0.01,
+            flatShading: true,
+            vertexColors: true
+        }));
+        keel.castShadow = true;
+        keel.receiveShadow = true;
+        platform.add(keel);
     }
 
     function createFracturedFloor() {
@@ -645,6 +820,7 @@ function startScene() {
             return seed / 4294967296;
         };
         const vertices = [];
+        const seamVertices = [];
 
         for (let r = 0; r <= rows; r++) {
             vertices[r] = [];
@@ -700,18 +876,14 @@ function startScene() {
                 for (let i = 0; i < plate.length; i++) {
                     const a = plate[i];
                     const b = plate[(i + 1) % plate.length];
-                    const edge = new THREE.LineCurve3(
-                        new THREE.Vector3(a[0], 0.145, a[1]),
-                        new THREE.Vector3(b[0], 0.145, b[1])
-                    );
-                    platform.add(new THREE.Mesh(
-                        new THREE.TubeGeometry(edge, 1, 0.026, 5, false),
-                        materials.seam
-                    ));
+                    seamVertices.push(a[0], 0.145, a[1], b[0], 0.145, b[1]);
                 }
             }
         }
 
+        const seamGeometry = new THREE.BufferGeometry();
+        seamGeometry.setAttribute("position", new THREE.Float32BufferAttribute(seamVertices, 3));
+        platform.add(new THREE.LineSegments(seamGeometry, materials.seam));
         createCracks();
         createLooseSlabs();
     }
@@ -741,22 +913,20 @@ function startScene() {
             [[3.62, 2.68], [3.96, 2.28], [4.43, 2.18], [4.74, 1.79]],
             [[-3.66, 3.7], [-3.28, 3.43], [-3.16, 3.02]]
         ];
+        const crackVertices = [];
         paths.forEach((path) => {
             for (let i = 0; i < path.length - 1; i++) {
                 const [x1, z1] = path[i];
                 const [x2, z2] = path[i + 1];
-                const line = new THREE.LineCurve3(
-                    new THREE.Vector3(x1, 0.195, z1),
-                    new THREE.Vector3(x2, 0.195, z2)
-                );
-                platform.add(new THREE.Mesh(
-                    new THREE.TubeGeometry(line, 1, 0.012, 4, false),
-                    materials.seam
-                ));
+                crackVertices.push(x1, 0.195, z1, x2, 0.195, z2);
             }
         });
+        const crackGeometry = new THREE.BufferGeometry();
+        crackGeometry.setAttribute("position", new THREE.Float32BufferAttribute(crackVertices, 3));
+        platform.add(new THREE.LineSegments(crackGeometry, materials.seam));
 
         const seamMat = new THREE.MeshBasicMaterial({ color: 0x252321 });
+        const fracturedSeamVertices = [];
         [
             [[-6.2, -1.0], [-5.75, -0.95], [-5.48, -0.52]],
             [[-3.7, 1.2], [-3.33, 1.02], [-3.11, 0.58]],
@@ -768,16 +938,15 @@ function startScene() {
             for (let i = 0; i < path.length - 1; i++) {
                 const [x1, z1] = path[i];
                 const [x2, z2] = path[i + 1];
-                const line = new THREE.LineCurve3(
-                    new THREE.Vector3(x1, 0.19, z1),
-                    new THREE.Vector3(x2, 0.19, z2)
-                );
-                platform.add(new THREE.Mesh(
-                    new THREE.TubeGeometry(line, 1, 0.014, 4, false),
-                    seamMat
-                ));
+                fracturedSeamVertices.push(x1, 0.19, z1, x2, 0.19, z2);
             }
         });
+        const fracturedSeamGeometry = new THREE.BufferGeometry();
+        fracturedSeamGeometry.setAttribute(
+            "position",
+            new THREE.Float32BufferAttribute(fracturedSeamVertices, 3)
+        );
+        platform.add(new THREE.LineSegments(fracturedSeamGeometry, seamMat));
     }
 
     function createGameplaySurface() {
@@ -900,7 +1069,10 @@ function startScene() {
 
     function createSquarePlacementGrid() {
         const grid = new THREE.Group();
-        const lineMaterial = makeMaterial(0x46535d, 0.82, 0.24);
+        const lineMaterial = makeMaterial(0x29343a, 0.95, 0.02, {
+            transparent: true,
+            opacity: 0.48
+        });
         const lineWidth = 0.02;
         const lineHeight = 0.012;
         const left = gridX(0) - GRID.step / 2;
@@ -944,13 +1116,16 @@ function startScene() {
             : 0.19 + 0.52 + (obstacleIndex % 2) * 0.16 + 0.06;
         group.position.set(gridX(col), obstacleTop, gridZ(row));
         const baseMaterial = makeMaterial(0x26313d, 0.38, 0.82);
-        const frameMaterial = makeMaterial(0x778995, 0.31, 0.8);
+        const frameMaterial = makeMaterial(0xa6b8b8, 0.25, 0.84, {
+            emissive: 0x173b4a,
+            emissiveIntensity: 0.18
+        });
         const glassMaterial = new THREE.MeshStandardMaterial({
-            color: 0x79e6fa,
+            color: 0xbaf5ff,
             emissive: 0x168db6,
-            emissiveIntensity: 0.65,
-            metalness: 0.56,
-            roughness: 0.17,
+            emissiveIntensity: 0.82,
+            metalness: 0.72,
+            roughness: 0.12,
             transparent: true,
             opacity: 0.88,
             side: THREE.DoubleSide
@@ -1187,7 +1362,7 @@ function startScene() {
                 new THREE.MeshBasicMaterial({
                     color: crystalColors[definition.inputColor],
                     transparent: true,
-                    opacity: 0.36,
+                    opacity: 0.46,
                     toneMapped: false
                 })
             );
@@ -1198,9 +1373,9 @@ function startScene() {
             const material = new THREE.MeshStandardMaterial({
                 color: crystalColors[definition.inputColor],
                 emissive: crystalColors[definition.inputColor],
-                emissiveIntensity: 0.34,
-                metalness: 0.08,
-                roughness: 0.24,
+                emissiveIntensity: 0.68,
+                metalness: 0.16,
+                roughness: 0.17,
                 flatShading: true,
                 vertexColors: true
             });
@@ -1260,7 +1435,7 @@ function startScene() {
     function resetCrystalStates() {
         for (const crystal of levelCrystals.values()) {
             crystal.activated = false;
-            crystal.material.emissiveIntensity = 0.46;
+            crystal.material.emissiveIntensity = 0.68;
             crystal.material.color.setHex(crystalColors[crystal.definition.inputColor]);
             crystal.ringMaterial.color.setHex(crystalColors[crystal.definition.inputColor]);
             crystal.prism.scale.setScalar(1);
@@ -1288,6 +1463,9 @@ function startScene() {
             tutorialTargetMarker.position.z = gridZ(tutorialMirror.row);
         }
         walletLevelSessionId = levelDetails?.level ? levelDetails.walletSessionId ?? null : null;
+        walletLevelEntryCostCredits = levelDetails?.level
+            ? levelDetails.entryCostCredits ?? null
+            : null;
         GRID.start = { row: level.start.row, col: level.start.col };
         GRID.target = { row: level.target.row, col: level.target.col };
         launchDirection = level.start.direction;
@@ -1351,11 +1529,140 @@ function startScene() {
         statusTitle.textContent = title;
         statusText.textContent = message;
         statusText.dataset.state = kind;
+        updateTacticalHud();
     }
 
     function setFeedback(message, kind = "") {
         statusText.textContent = message;
         statusText.dataset.state = kind;
+        updateTacticalHud();
+    }
+
+    function updateTacticalHud() {
+        const charged = [...levelCrystals.values()].filter((crystal) => crystal.activated).length;
+        const totalCrystals = activeLevel.crystals.length;
+        const mirrorCount = placedMirrors.size;
+        const mirrorTarget = activeLevel.par;
+        const crystalCount = document.getElementById("hud-crystal-count");
+        const mirrorCountLabel = document.getElementById("hud-mirror-count");
+        const crystalFill = document.getElementById("hud-crystal-fill");
+        const mirrorFill = document.getElementById("hud-mirror-fill");
+        const laserState = document.getElementById("hud-laser-state");
+        const batteryState = document.getElementById("hud-battery-state");
+        const coreIndicator = document.getElementById("hud-core-indicator");
+        const telemetryLevel = document.getElementById("hud-telemetry-level");
+        const telemetryCrystals = document.getElementById("hud-telemetry-crystals");
+        const telemetryCrystalFill = document.getElementById("hud-telemetry-crystal-fill");
+        const telemetryMirrors = document.getElementById("hud-telemetry-mirrors");
+        const telemetryMirrorFill = document.getElementById("hud-telemetry-mirror-fill");
+        const coreMirrorCount = document.getElementById("hud-core-mirror-count");
+        const systemState = document.getElementById("hud-system-state");
+        const mapLevel = document.getElementById("hud-map-level");
+        const mapGrid = document.getElementById("hud-map-grid");
+        const objectiveCrystals = document.getElementById("hud-objective-crystals");
+        const objectiveBattery = document.getElementById("hud-objective-battery");
+        if (!crystalCount || !mirrorCountLabel || !crystalFill || !mirrorFill ||
+            !laserState || !batteryState || !coreIndicator || !telemetryLevel ||
+            !telemetryCrystals || !telemetryCrystalFill || !telemetryMirrors ||
+            !telemetryMirrorFill || !coreMirrorCount || !systemState ||
+            !mapLevel || !mapGrid || !objectiveCrystals || !objectiveBattery) return;
+
+        crystalCount.textContent = `${charged} / ${totalCrystals}`;
+        mirrorCountLabel.textContent = `${mirrorCount} / ${mirrorTarget}`;
+        coreMirrorCount.textContent = `${mirrorCount} / ${mirrorTarget}`;
+        telemetryLevel.textContent = `${String(activeLevel.number).padStart(2, "0")} / 99`;
+        telemetryCrystals.textContent = `${charged} / ${totalCrystals}`;
+        telemetryMirrors.textContent = `${mirrorCount} / ${mirrorTarget}`;
+        objectiveCrystals.textContent = `${charged} / ${totalCrystals}`;
+        objectiveBattery.textContent = corePowered
+            ? "CHARGED"
+            : previewRoute?.outcome === "powered"
+                ? "ROUTE SET"
+                : "STANDBY";
+        crystalFill.style.setProperty("--meter-fill", `${totalCrystals ? charged / totalCrystals * 100 : 0}%`);
+        mirrorFill.style.setProperty("--meter-fill", `${mirrorTarget ? Math.min(mirrorCount / mirrorTarget, 1) * 100 : 0}%`);
+        telemetryCrystalFill.style.width = `${totalCrystals ? charged / totalCrystals * 100 : 0}%`;
+        telemetryMirrorFill.style.width = `${mirrorTarget ? Math.min(mirrorCount / mirrorTarget, 1) * 100 : 0}%`;
+        const crystalTrack = crystalFill.parentElement;
+        const mirrorTrack = mirrorFill.parentElement;
+        const telemetryCrystalTrack = telemetryCrystalFill.parentElement;
+        const telemetryMirrorTrack = telemetryMirrorFill.parentElement;
+        crystalTrack.setAttribute("aria-valuenow", String(charged));
+        crystalTrack.setAttribute("aria-valuemax", String(totalCrystals));
+        mirrorTrack.setAttribute("aria-valuenow", String(mirrorCount));
+        mirrorTrack.setAttribute("aria-valuemax", String(mirrorTarget));
+        telemetryCrystalTrack.setAttribute("aria-valuenow", String(charged));
+        telemetryCrystalTrack.setAttribute("aria-valuemax", String(totalCrystals));
+        telemetryMirrorTrack.setAttribute("aria-valuenow", String(mirrorCount));
+        telemetryMirrorTrack.setAttribute("aria-valuemax", String(mirrorTarget));
+        const routeState = corePowered
+            ? "ROUTE COMPLETE"
+            : tracing
+                ? "TRACING"
+                : previewRoute?.outcome === "powered"
+                    ? "ROUTE READY"
+                    : previewRoute?.outcome === "blocked"
+                        ? "BLOCKED"
+                        : "PREVIEW";
+        laserState.textContent = routeState;
+        systemState.textContent = corePowered
+            ? "ONLINE"
+            : tracing
+                ? "TRACING"
+                : previewRoute?.outcome === "powered"
+                    ? "ROUTE READY"
+                    : "STANDBY";
+        systemState.dataset.state = corePowered
+            ? "online"
+            : tracing
+                ? "active"
+                : previewRoute?.outcome === "blocked"
+                    ? "blocked"
+                    : "standby";
+        batteryState.textContent = corePowered ? "CHARGED" : "TARGET";
+        coreIndicator.dataset.state = corePowered ? "online" : tracing ? "active" : "standby";
+        mapLevel.textContent = String(activeLevel.number).padStart(2, "0");
+        mapGrid.setAttribute(
+            "aria-label",
+            `Level ${activeLevel.number} map: ${totalCrystals} crystals, ${activeLevel.obstacles.length} obstacles, battery target`
+        );
+
+        const obstacles = new Set(activeLevel.obstacles.map(({ row, col }) => gridKey(row, col)));
+        const crystals = new Map(activeLevel.crystals.map((crystal, index) => [
+            gridKey(crystal.row, crystal.col),
+            index + 1
+        ]));
+        const sourceColumn = launchDirection === 1 ? 0 : GRID.cols - 1;
+        const cells = [];
+        for (let row = 0; row < GRID.rows; row++) {
+            for (let col = 0; col < GRID.cols; col++) {
+                const key = gridKey(row, col);
+                const mirror = placedMirrors.get(key);
+                const crystalNumber = crystals.get(key);
+                const isTarget = row === GRID.target.row && col === GRID.target.col;
+                const isSourceEdge = row === GRID.start.row && col === sourceColumn;
+                let cellClass = "hud-map-cell";
+                let label = "Open tile";
+                if (isTarget) {
+                    cellClass += " is-target";
+                    label = "Battery";
+                } else if (crystalNumber) {
+                    cellClass += " is-crystal";
+                    label = `Crystal ${crystalNumber}`;
+                } else if (mirror) {
+                    cellClass += " is-mirror";
+                    label = `Mirror ${mirror.slash ? "/" : "\\\\"}`;
+                } else if (obstacles.has(key)) {
+                    cellClass += " is-obstacle";
+                    label = "Stone obstacle";
+                } else if (isSourceEdge) {
+                    cellClass += " is-source";
+                    label = "Laser source edge";
+                }
+                cells.push(`<span class="${cellClass}" title="${label}" aria-hidden="true"></span>`);
+            }
+        }
+        mapGrid.innerHTML = cells.join("");
     }
 
     function startSolveTimer() {
@@ -1377,14 +1684,19 @@ function startScene() {
         document.getElementById("completion-time").textContent = `${(elapsedMilliseconds / 1000).toFixed(1)} s`;
         document.getElementById("completion-time-thresholds").textContent =
             `3★ ≤ ${timeTargets.threeSeconds}s · 2★ ≤ ${timeTargets.twoSeconds}s`;
-        document.getElementById("completion-entry-cost").textContent = "FREE";
+        const formattedEntryCost = Number.isSafeInteger(walletLevelEntryCostCredits)
+            ? `${walletLevelEntryCostCredits.toLocaleString("en-US")} credits`
+            : "Unavailable";
+        document.getElementById("completion-entry-cost").textContent = formattedEntryCost;
+        document.querySelector("#completion-entry-cost + small").textContent =
+            "Deducted once when the server session began";
 
         const rewardLabel = document.getElementById("completion-reward-label");
         const reward = document.getElementById("completion-reward");
         const rewardNote = document.getElementById("completion-reward-note");
-        rewardLabel.textContent = "CREDIT EFFECT";
-        reward.textContent = "0 credits";
-        rewardNote.textContent = "Testing mode · no credits changed";
+        rewardLabel.textContent = "ESTIMATED REWARD";
+        reward.textContent = `${result.rewardCredits.toLocaleString("en-US")} credits`;
+        rewardNote.textContent = "Pending server validation; not yet credited";
         const nextLevelButton = document.getElementById("next-level");
         nextLevelButton.hidden = false;
         nextLevelButton.disabled = true;
@@ -1651,14 +1963,15 @@ function startScene() {
         columns.forEach(([x, z, height, radius], i) => {
             const baseY = -0.12;
             const columnGroup = new THREE.Group();
-            columnGroup.position.set(x, baseY, z);
+            columnGroup.position.set(x * 1.38, baseY, z * 1.38);
+            columnGroup.scale.setScalar(0.58);
             world.add(columnGroup);
 
-            addBox(columnGroup, [radius * 2.8, 0.34, radius * 2.8], [0, 0, 0], materials.metal);
+            addBox(columnGroup, [radius * 2.8, 0.34, radius * 2.8], [0, 0, 0], materials.stone[i % materials.stone.length]);
             addBox(columnGroup, [radius * 2.35, 0.17, radius * 2.35], [0, 0.24, 0], materials.columnLight);
 
             const shaft = new THREE.Mesh(
-                new THREE.CylinderGeometry(radius * 0.82, radius, height, 10, 1, false),
+                new THREE.CylinderGeometry(radius * 0.82, radius, height, 14, 1, false),
                 materials.column
             );
             shaft.position.y = height / 2 + 0.3;
@@ -1669,19 +1982,33 @@ function startScene() {
             for (let band = 0; band < 4; band++) {
                 const y = 0.48 + height * (band + 1) / 5;
                 const collar = new THREE.Mesh(
-                    new THREE.CylinderGeometry(radius * 0.9, radius * 0.94, 0.14, 10),
-                    band === 1 && i % 3 === 0 ? materials.columnLight : materials.metal
+                    new THREE.CylinderGeometry(radius * 0.9, radius * 0.94, 0.18, 14),
+                    band % 2 === 0 ? materials.columnLight : materials.stone[(i + band) % materials.stone.length]
                 );
                 collar.position.y = y;
                 collar.castShadow = true;
                 columnGroup.add(collar);
             }
 
+            if (i % 2 === 0) {
+                const crackCurve = new THREE.CatmullRomCurve3([
+                    new THREE.Vector3(radius * 0.58, height * 0.23, radius * 0.58),
+                    new THREE.Vector3(radius * 0.7, height * 0.29, radius * 0.48),
+                    new THREE.Vector3(radius * 0.57, height * 0.35, radius * 0.6),
+                    new THREE.Vector3(radius * 0.72, height * 0.4, radius * 0.45)
+                ]);
+                const crack = new THREE.Mesh(
+                    new THREE.TubeGeometry(crackCurve, 7, 0.012, 4, false),
+                    materials.crack
+                );
+                columnGroup.add(crack);
+            }
+
             addBox(
                 columnGroup,
                 [radius * 2.3, 0.38, radius * 2.3],
                 [0, height + 0.39, 0],
-                materials.metal
+                materials.stone[(i + 1) % materials.stone.length]
             );
             addBox(
                 columnGroup,
@@ -1689,13 +2016,22 @@ function startScene() {
                 [0, height + 0.67, 0],
                 materials.columnLight
             );
+            if (i % 3 === 1) {
+                const brokenCap = addBox(
+                    columnGroup,
+                    [radius * 1.2, 0.26, radius * 1.4],
+                    [radius * 0.24, height + 0.82, -radius * 0.12],
+                    materials.stone[(i + 2) % materials.stone.length]
+                );
+                brokenCap.rotation.z = 0.12;
+            }
 
             if (i === 0 || i === 5) {
                 addBox(
                     world,
                     [0.9, height * 0.76, 0.2],
                     [x + 0.58, height * 0.53, z + 0.22],
-                    materials.underside,
+                    materials.stone[(i + 1) % materials.stone.length],
                     { rotation: [0, -0.08, -0.035] }
                 );
             }
@@ -1708,83 +2044,46 @@ function startScene() {
             [-7.0, 0.9, 2.4, 2.2, 0.7, -0.12]
         ];
         buttresses.forEach(([x, z, h, w, d, rot], i) => {
-            addBox(world, [w, h, d], [x, h / 2 - 0.06, z], i % 2 ? materials.columnLight : materials.column, {
+            const scale = 0.62;
+            const position = [x * 1.28, h * scale / 2 - 0.06, z * 1.28];
+            addBox(world, [w * scale, h * scale, d * scale], position, i % 2 ? materials.columnLight : materials.column, {
                 rotation: [0, 0, rot]
             });
-            addBox(world, [w * 1.28, 0.34, d * 1.5], [x, 0.12, z], materials.metal);
+            addBox(
+                world,
+                [w * 1.28 * scale, 0.34 * scale, d * 1.5 * scale],
+                [position[0], 0.12, position[2]],
+                materials.stone[i % materials.stone.length]
+            );
         });
 
-        createTruss(-1);
+        createAncientLintels();
     }
 
-    function addBar(parent, a, b, thickness, material) {
-        const start = new THREE.Vector3(...a);
-        const end = new THREE.Vector3(...b);
-        const direction = new THREE.Vector3().subVectors(end, start);
-        const mesh = new THREE.Mesh(
-            new THREE.BoxGeometry(thickness, thickness, direction.length()),
-            material
-        );
-        mesh.position.copy(start).add(end).multiplyScalar(0.5);
-        mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), direction.normalize());
-        mesh.castShadow = true;
-        mesh.receiveShadow = true;
-        world.add(mesh);
-        return mesh;
-    }
-
-    function createTruss() {
-        const beamMaterial = makeMaterial(0x202a36, 0.43, 0.84);
-        const supportMaterial = makeMaterial(0x303944, 0.42, 0.82);
-        const topY = 5.7;
-        const lowY = 4.9;
-        const backZ = -7.1;
-
-        addBar(world, [-6.9, lowY, backZ], [8.2, lowY, backZ], 0.16, beamMaterial);
-        addBar(world, [-6.9, topY, backZ], [8.2, topY, backZ], 0.16, beamMaterial);
-        for (let i = 0; i <= 14; i++) {
-            const x = -6.9 + i * 1.08;
-            addBar(world, [x, lowY, backZ], [x, topY, backZ], 0.085, supportMaterial);
-            if (i < 14) {
-                const nextX = x + 1.08;
-                const low = i % 2 === 0;
-                addBar(
+    function createAncientLintels() {
+        const lintels = [
+            [-6.55, 8.0, -4.7, 2.6, 0.06],
+            [-1.58, 9.2, -5.5, 3.15, -0.035],
+            [1.27, 8.7, -5.25, 2.75, 0.045]
+        ];
+        lintels.forEach(([x, y, z, width, lean], index) => {
+            const lintel = addBox(
+                world,
+                [width, 0.54, 0.8],
+                [x, y, z],
+                materials.columnLight
+            );
+            lintel.rotation.z = lean;
+            if (index !== 1) {
+                const fallenStone = addBox(
                     world,
-                    [x, low ? lowY : topY, backZ],
-                    [nextX, low ? topY : lowY, backZ],
-                    0.075,
-                    beamMaterial
+                    [0.85, 0.58, 0.9],
+                    [x + width * 0.48, y - 0.16, z + 0.06],
+                    materials.stone[index % materials.stone.length]
                 );
+                fallenStone.rotation.z = index === 0 ? 0.22 : -0.19;
             }
-        }
-
-        const sideX = 7.25;
-        addBar(world, [sideX, 4.85, -5.6], [sideX, 4.85, 4.7], 0.15, beamMaterial);
-        addBar(world, [sideX, 5.65, -5.6], [sideX, 5.65, 4.7], 0.15, beamMaterial);
-        for (let i = 0; i <= 9; i++) {
-            const z = -5.6 + i * 1.14;
-            addBar(world, [sideX, 4.85, z], [sideX, 5.65, z], 0.078, supportMaterial);
-            if (i < 9) {
-                const nextZ = z + 1.14;
-                const low = i % 2 === 0;
-                addBar(
-                    world,
-                    [sideX, low ? 4.85 : 5.65, z],
-                    [sideX, low ? 5.65 : 4.85, nextZ],
-                    0.066,
-                    beamMaterial
-                );
-            }
-        }
-
-        // A broken service gantry sits at the near-left edge, as in the reference.
-        addBar(world, [-8.1, 0.7, 0.8], [-8.1, 0.7, 6.1], 0.26, beamMaterial);
-        addBar(world, [-8.1, 1.7, 0.8], [-8.1, 1.7, 6.1], 0.2, beamMaterial);
-        for (let i = 0; i < 5; i++) {
-            const z = 1 + i * 1.05;
-            addBar(world, [-8.1, 0.7, z], [-8.1, 1.7, z], 0.11, supportMaterial);
-            if (i < 4) addBar(world, [-8.1, i % 2 ? 0.7 : 1.7, z], [-8.1, i % 2 ? 1.7 : 0.7, z + 1.05], 0.09, beamMaterial);
-        }
+        });
     }
 
     function createPylon(x, z, color, scale = 1, type = "relay") {
@@ -1975,7 +2274,7 @@ function startScene() {
         const blueMetal = new THREE.MeshStandardMaterial({
             color: 0x4fbfe2,
             emissive: 0x087ab1,
-            emissiveIntensity: 0.42,
+            emissiveIntensity: 0.68,
             metalness: 0.72,
             roughness: 0.3
         });
@@ -2128,43 +2427,32 @@ function startScene() {
     }
 
     function addBackdropArchitecture() {
-        const wallFragments = [
-            [-9.2, -3.4, 8.8, 6.5, 0.6, -0.04],
-            [-8.5, -0.7, 6.6, 7.4, 0.64, 0.06],
-            [-7.0, -6.45, 4.2, 6.0, 0.55, 0.02],
-            [5.25, -7.5, 3.0, 6.7, 0.56, -0.06]
+        const ruinedMonoliths = [
+            [-8.2, -3.2, 4.7, 1.65, 1.05, -0.08],
+            [-8.5, 1.65, 3.35, 1.35, 0.9, 0.06],
+            [7.6, -3.7, 4.3, 1.5, 0.95, 0.07],
+            [6.8, 3.7, 3.2, 1.8, 0.85, -0.1]
         ];
-        wallFragments.forEach(([x, z, height, width, depth, lean], i) => {
+        ruinedMonoliths.forEach(([x, z, height, width, depth, lean], i) => {
             addBox(
                 world,
                 [width, height, depth],
-                [x, height / 2 - 0.25, z],
-                i % 2 ? materials.underside : materials.column,
+                [x, height / 2 - 0.05, z],
+                materials.stone[i % materials.stone.length],
                 { rotation: [0, 0, lean] }
             );
-            for (let j = 0; j < 2; j++) {
-                addBox(
-                    world,
-                    [0.15, height * 0.78, depth + 0.12],
-                    [x - width * 0.3 + j * width * 0.6, height * 0.48, z + 0.02],
-                    materials.metal
-                );
-            }
+            const fallenCap = addBox(
+                world,
+                [width * 1.18, 0.34, depth * 1.22],
+                [x - width * 0.12, height + 0.08, z],
+                materials.columnLight
+            );
+            fallenCap.rotation.z = lean * -1.6;
         });
-
-        // Recessed vertical wall bays add the industrial rhythm visible behind the pylons.
-        for (let i = 0; i < 5; i++) {
-            const x = -7.5 + i * 2.25;
-            addBox(world, [0.08, 5.6, 0.08], [x, 2.6, -6.25], materials.metalEdge);
-            addBox(world, [0.68, 0.08, 0.16], [x, 5.18, -6.18], materials.metal);
-            if (i % 2 === 0) {
-                addBox(world, [0.58, 3.1, 0.1], [x + 0.55, 3.5, -6.12], materials.underside);
-            }
-        }
     }
 
     function setupCamera() {
-        const target = new THREE.Vector3(-0.65, 0.2, -0.1);
+        const target = new THREE.Vector3(-0.65, window.innerWidth < 620 ? -0.5 : -0.3, -0.1);
         const horizontal = Math.cos(cameraState.elevation) * cameraState.distance;
         camera.position.set(
             target.x + Math.sin(cameraState.azimuth) * horizontal,
@@ -2177,7 +2465,10 @@ function startScene() {
     function resetCamera() {
         cameraState.azimuth = cameraState.defaultAzimuth;
         cameraState.elevation = cameraState.defaultElevation;
-        cameraState.distance = window.innerWidth < 620 ? 17.5 : 16;
+        const narrowFrame = canvas.clientWidth / Math.max(canvas.clientHeight, 1) < 1.25;
+        cameraState.distance = window.innerWidth < 620
+            ? (narrowFrame ? 24.5 : 21)
+            : (narrowFrame ? 25 : 22.5);
         setupCamera();
     }
 
@@ -2185,14 +2476,14 @@ function startScene() {
         const width = Math.max(1, canvas.clientWidth);
         const height = Math.max(1, canvas.clientHeight);
         const mobileQuality = width < 620;
-        const pixelRatio = Math.min(window.devicePixelRatio || 1, mobileQuality ? 1.25 : 1.5);
+        const pixelRatio = Math.min(window.devicePixelRatio || 1, mobileQuality ? 1.1 : 1.5);
         if (renderer.getPixelRatio() !== pixelRatio) renderer.setPixelRatio(pixelRatio);
         renderer.shadowMap.enabled = !mobileQuality;
         moonLight.castShadow = !mobileQuality;
         renderer.setSize(width, height, false);
         composer.setSize(width, height);
         camera.aspect = width / height;
-        camera.fov = width < 620 ? 60 : 37;
+        camera.fov = width < 620 ? 68 : 37;
         camera.updateProjectionMatrix();
         bloom.setSize(width, height);
         resetCamera();
@@ -2382,7 +2673,7 @@ function startScene() {
                             ? "2 stars"
                             : "1 star";
                     showCompletionSummary(activeLevel, elapsedMilliseconds, starResult);
-                    setStatus("Battery connected", `Level ${String(activeLevel.number).padStart(2, "0")} complete. Rating: ${starLabel}. Credit preview only; no balance changed.`, "success");
+                    setStatus("Battery connected", `Level ${String(activeLevel.number).padStart(2, "0")} complete. Rating: ${starLabel}. Credit reward pending server verification.`, "success");
                     window.dispatchEvent(new CustomEvent("fluxgrid:level-complete", {
                         detail: {
                             number: activeLevel.number,
@@ -2407,7 +2698,7 @@ function startScene() {
                                     : traceResult.outcome === "crystal_mismatch"
                                         ? "A crystal rejected the beam color. Follow the crystal color sequence."
                                 : "The beam misses the battery and exits the platform.";
-                    setStatus("Route interrupted", `${ending} Adjust the mirrors or choose the other launch side.`, "miss");
+                    setStatus("Route interrupted", `${ending} No reward is credited for a failed attempt; the entry fee remains spent. Adjust the mirrors or try again.`, "miss");
                 }
             }
         }

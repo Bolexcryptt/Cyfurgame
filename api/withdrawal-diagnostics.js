@@ -101,7 +101,8 @@ module.exports = async function withdrawalDiagnostics(request, response) {
         },
         notes: [
             "The private key itself is never returned in the response.",
-            "The deployment must match the owner-approved treasury and CYFUR mint before any real payout is enabled."
+            "The deployment must match the owner-approved treasury and CYFUR mint before any real payout is enabled.",
+            "The Supabase withdrawals_enabled flag and Vercel WITHDRAWAL_ENABLED flag must both be explicitly enabled before a payout can be reserved."
         ],
         expected: {
             treasuryAddress: RELICGRID_TREASURY_ADDRESS,

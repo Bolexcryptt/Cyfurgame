@@ -91,12 +91,12 @@ async function verifyWithdrawalRpc() {
     }
 
     const diagnosticPayload = {
-        p_player_id: "00000000-0000-0000-0000-000000000000",
-        p_wallet_address: "11111111111111111111111111111111111111111111111111111111111111111",
+        p_player_id: null,
+        p_wallet_address: null,
         p_network: "mainnet-beta",
-        p_transaction_signature: "11111111111111111111111111111111111111111111111111111111111111111",
         p_mint_address: RELICGRID_CYFUR_MINT_ADDRESS,
         p_token_program_id: "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+        p_treasury_address: RELICGRID_TREASURY_ADDRESS,
         p_amount_raw: 0,
         p_token_decimals: 8,
         p_amount_credits: 0,
@@ -105,7 +105,7 @@ async function verifyWithdrawalRpc() {
     };
 
     try {
-        const response = await fetch(`${supabaseUrl.replace(/\/+$/, "")}/rest/v1/rpc/process_verified_withdrawal`, {
+        const response = await fetch(`${supabaseUrl.replace(/\/+$/, "")}/rest/v1/rpc/reserve_wallet_withdrawal`, {
             method: "POST",
             headers: {
                 apikey: serviceRoleKey,
@@ -126,7 +126,7 @@ async function verifyWithdrawalRpc() {
         }
 
         const message = parsed?.message || parsed?.details || responseText || "The RPC call returned no diagnostic details.";
-        const hitValidationGuard = !response.ok && /invalid withdrawal payload|server authorization is required|insufficient credits|idempotency key|transaction signature/i.test(message);
+        const hitValidationGuard = !response.ok && /invalid withdrawal reservation|server authorization is required/i.test(message);
 
         return {
             available: hitValidationGuard,

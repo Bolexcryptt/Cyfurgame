@@ -14,9 +14,9 @@ The configured treasury address has one code source of truth: `RELICGRID_TREASUR
 
 The campaign and leaderboard are unchanged. Depositing does not open Phantom or sign/broadcast a transaction from the game. After the player sends the transfer externally, the server checks it at finalized commitment and credits only after the verifier and atomic ledger RPC confirm it. A missing or not-yet-finalized transaction can be retried with the same signature; duplicate credit is prevented. A failed transfer, wrong destination, wrong mint, wrong amount, missing memo, expired intent, or unfinalized transfer receives no credit.
 
-## Reversible global level lock
+## Campaign access
 
-All levels default to locked unless the server environment variable `LEVELS_LOCKED` is set to the exact string `false`. The frontend reads the runtime value from `GET /api/game-config`; the level-entry, timer-start, and completion APIs independently reject requests with HTTP 423 while locked. The browser also disables every level card and mission button, and the 3D scene refuses level-load events unless the server confirms the lock is off. To unlock later, set `LEVELS_LOCKED=false` in the Vercel environment and redeploy the API; no level data or player progress is changed. Verify the deployed setting by requesting `/api/game-config` and checking `{"levelsLocked":true}` while the lock is on.
+All levels are available by default and may be started in any order. Set the server environment variable `LEVELS_LOCKED=true` to pause the campaign; the frontend reads this state from `GET /api/game-config`, and the level-entry, timer-start, and completion APIs independently reject requests with HTTP 423 while paused. Players still need enough verified credits for each level's entry fee, and entries are still charged by the existing server-side wallet flow. The global lock changes no level data or player progress.
 
 ## Required setup
 
@@ -30,8 +30,12 @@ Apply these SQL files in order in the Supabase SQL Editor if not already applied
 6. `supabase-walletless-deposits.sql`
 7. `supabase-relicgrid-treasury.sql`
 8. `supabase-wallet-withdrawals.sql`
+9. `supabase-wallet-level-entry-safety.sql`
+10. `supabase-wallet-all-levels-access.sql`
 
-The direct-treasury migration adds the treasury address and service-only RPCs. The wallet-link tables remain for compatibility but are not required for deposits. The wallet-less migration makes pending intents sender-independent while preserving finalized verification and atomic duplicate protection. The treasury migration updates `wallet_system_config.treasury_address` to the code value and explicitly leaves deposits and paid gameplay disabled. Apply it in the Supabase SQL Editor; editing this file does not update a live database. Do not paste secrets into chat.
+The direct-treasury migration adds the treasury address and service-only RPCs. The wallet-link tables remain for compatibility but are not required for deposits. The wallet-less migration makes pending intents sender-independent while preserving finalized verification and atomic duplicate protection. The treasury migration updates `wallet_system_config.treasury_address` to the code value and explicitly leaves deposits and paid gameplay disabled. The withdrawal migration adds `withdrawals_enabled=false` and service-only reserve, submit, confirm, and release RPCs. It records negative reservation and positive release entries in the existing credit ledger; it does not change current balances, game scores, progress, or leaderboard data during migration. Apply it in the Supabase SQL Editor; editing this file does not update a live database. Existing pending/submitted withdrawal rows must be reconciled before new withdrawals; never clear them manually to free a reservation.
+
+The level-entry safety migration replaces only `start_wallet_level`. Under the existing per-player profile lock, it reuses an active session for the same level (including retries with a new request ID) without charging again, and rejects a different level while that session is active. The all-level access migration then removes only the completion-order restriction: it retains the active-session check, verified-balance check, and atomic entry debit. Neither migration changes existing balances, ledger rows, level progress, scores, or leaderboard data, enables paid gameplay, or changes treasury settings. Apply both after the wallet processing migration; code changes alone do not update a live Supabase function.
 
 Configure these Vercel **server-side** variables:
 
@@ -42,6 +46,7 @@ Configure these Vercel **server-side** variables:
 - `SOLANA_NETWORK` — `devnet` for isolated testing; `mainnet-beta` only for production review.
 - `WITHDRAWAL_TREASURY_PRIVATE_KEY` — the one server-side treasury signing key used for withdrawals. Accepted formats are a base58-encoded 64-byte Solana secret key, base64-encoded 64-byte key, or JSON array of 64 byte values. The server verifies that its public key matches the configured treasury before submitting a payout. Do not use a client-prefixed variable, commit it, log it, or send it to the browser. `TREASURY_PRIVATE_KEY` is supported only as a legacy fallback; a second key is not required.
 - `WITHDRAWAL_ENABLED` — leave unset or `false` until the signer, owner-approved mint, live Supabase row, token account and funding, and a separately authorized small test are verified.
+- `wallet_system_config.withdrawals_enabled` — remains false by default; only the owner/operator should enable it after the same review. Both this DB gate and `WITHDRAWAL_ENABLED=true` are required for an actual payout.
 - `WITHDRAWAL_DIAGNOSTIC_SECRET` — optional strong server-only secret protecting `GET /api/withdrawal-diagnostics`; required to run that deployment-only diagnostic.
 - `WALLET_DIRECT_TREASURY_READY=true` — owner/operator acknowledgment that the treasury address, ownership, monitoring, and reconciliation process are reviewed. Leave unset until confirmed.
 - `WALLET_DEPOSITS_ENABLED=true` — global deposit verification switch; leave unset until all tests and reviews pass.
@@ -51,7 +56,7 @@ Configure these Vercel **server-side** variables:
 
 Never set a variable beginning with `NEXT_PUBLIC_` for private or server-only values. Deposits are player-signed transfers to the treasury and do not use the treasury private key. Withdrawals use that single key for server-side signing. No second treasury signer is needed by the current implementation.
 
-When the campaign is unlocked, free gameplay does not call the paid-entry API, charge credits, or award wallet credits. The global `LEVELS_LOCKED` switch blocks access independently of that wallet gate. Campaign progress continues through the existing local/leaderboard completion path when play is available. Paid gameplay remains server-gated: both `WALLET_PAID_GAMEPLAY_ENABLED=true` and `wallet_system_config.paid_gameplay_enabled=true` are required by the server, and both remain off until payment and game-economy testing is complete.
+All 99 levels can be selected in any order when the global campaign pause is off. Paid gameplay remains server-gated: both `WALLET_PAID_GAMEPLAY_ENABLED=true` and `wallet_system_config.paid_gameplay_enabled=true` are required by the server. Every paid entry still requires an active server-issued session and sufficient verified credits.
 
 ## Wallet-less deposit flow
 
@@ -64,6 +69,12 @@ The credit formula remains **1 CYFUR = 10,000 credits**. Each individual transfe
 `credits = floor(raw_token_amount × 10,000 ÷ 10^token_decimals)`
 
 Fractional-credit remainders are discarded per transaction; they do not carry across deposits. Transfers that convert to zero credits are rejected. With an 8-decimal mint, 10,000 raw units (0.0001 CYFUR) equal 1 credit.
+
+## Withdrawal accounting and recovery
+
+The withdrawal API first calls `reserve_wallet_withdrawal`, which locks the player's credit account, verifies the DB withdrawal switch and conversion, records the unique request, debits the credits, and writes one `withdrawal_reserve` ledger entry atomically. Only then is a treasury transfer signed. Its locally derived transaction signature is recorded via `mark_wallet_withdrawal_submitted` before broadcast. A finalized successful transaction is recorded with `confirm_wallet_withdrawal`; the reservation is already the debit, so confirmation must not debit again. A pre-broadcast failure releases the reservation with `release_wallet_withdrawal`. A submitted transfer is released only after the backend has verified the transaction failed on-chain. Timeouts and uncertain submission keep the reservation and block another active withdrawal until reconciled. The same client request ID is reused on retries; confirmed or failed records cannot be replayed into another transfer.
+
+The former `process_verified_withdrawal` RPC is removed by the current withdrawal migration. The existing general-purpose `apply_wallet_ledger_entry` RPC keeps its original allowed entry types; withdrawal-specific entries are written only within the new service-role-only reservation and release functions.
 
 ## Test and launch checklist
 

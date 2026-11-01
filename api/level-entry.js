@@ -36,30 +36,13 @@ module.exports = async function levelEntry(request, response) {
             return sendJson(response, 400, { error: "invalid_level_number" });
         }
 
-        const completions = await selectOwn(request, "level_completions", new URLSearchParams({
-            select: "level_number",
-            player_id: `eq.${user.id}`,
-            order: "level_number.asc",
-            limit: "99"
-        }));
-        const unlockedLevel = completions.reduce(
-            (nextLevel, completion) => completion.level_number === nextLevel ? nextLevel + 1 : nextLevel,
-            1
-        );
-        if (levelNumber > unlockedLevel) {
-            return sendJson(response, 403, {
-                error: "level_locked",
-                unlockedLevel: Math.min(99, unlockedLevel)
-            });
-        }
-
         const accounts = await selectOwn(request, "wallet_credit_accounts", new URLSearchParams({
             select: "balance_credits",
             player_id: `eq.${user.id}`,
             limit: "1"
         }));
-        const balance = accounts[0]?.balance_credits;
-        if (balance === undefined || !/^\d+$/.test(String(balance))) {
+        const balance = accounts[0]?.balance_credits ?? "0";
+        if (!/^\d+$/.test(String(balance))) {
             return sendJson(response, 503, { error: "verified_balance_unavailable" });
         }
 
@@ -123,8 +106,38 @@ module.exports = async function levelEntry(request, response) {
         if (error.status === 404 && error.code === "PGRST205") {
             return sendJson(response, 503, { error: "wallet_schema_not_installed" });
         }
+        if (error.code === "22023" && /level is locked/i.test(error.message ?? "")) {
+            return sendJson(response, 503, {
+                error: "wallet_migration_required",
+                message: "Apply the all-level access migration before opening this level."
+            });
+        }
         if (error.code === "P0001") {
-            return sendJson(response, 402, { error: "insufficient_balance" });
+            try {
+                const user = await authenticate(request);
+                if (!user) return sendJson(response, 401, { error: "authentication_required" });
+                const accounts = await selectOwn(request, "wallet_credit_accounts", new URLSearchParams({
+                    select: "balance_credits",
+                    player_id: `eq.${user.id}`,
+                    limit: "1"
+                }));
+                const balance = accounts[0]?.balance_credits ?? "0";
+                return sendJson(response, 402, {
+                    error: "insufficient_balance",
+                    balanceCredits: String(balance),
+                    balanceVerified: /^\d+$/.test(String(balance)),
+                    entryCostCredits: getLevelEntryCostCredits(request.body?.levelNumber)
+                });
+            } catch (balanceError) {
+                console.error("Insufficient-balance response could not refresh the account balance.", {
+                    status: balanceError.status ?? 500,
+                    code: balanceError.code ?? "level_balance_read_failed"
+                });
+                return sendJson(response, 402, { error: "insufficient_balance" });
+            }
+        }
+        if (error.code === "55006") {
+            return sendJson(response, 409, { error: "level_session_active" });
         }
         if (error.code === "55000") {
             return sendJson(response, 503, { error: "paid_gameplay_disabled", paidGameplayEnabled: false });

@@ -1,0 +1,201 @@
+-- Apply after supabase-direct-treasury-deposits.sql.
+-- Adds a durable sender-wallet record and binds each credit to that player's
+-- currently verified wallet. This migration does not enable deposits or alter balances.
+
+do $$
+begin
+    if to_regclass('public.player_solana_wallets') is null
+       or to_regclass('public.wallet_system_config') is null
+       or to_regclass('public.wallet_deposits') is null
+       or to_regclass('public.wallet_credit_accounts') is null
+       or to_regclass('public.wallet_credit_ledger') is null
+       or to_regprocedure('public.apply_wallet_ledger_entry(uuid,text,bigint,text,uuid,text)') is null then
+        raise exception 'Required wallet tables or ledger RPC are missing. Apply the documented wallet migrations first.';
+    end if;
+    if not exists (
+        select 1 from pg_attribute
+        where attrelid = 'public.player_solana_wallets'::regclass
+          and attname in ('player_id', 'wallet_address')
+          and not attisdropped
+        having count(*) = 2
+    ) or not exists (
+        select 1 from pg_attribute
+        where attrelid = 'public.wallet_system_config'::regclass
+          and attname in (
+              'deposits_enabled', 'network', 'official_mint_address',
+              'token_program_id', 'token_decimals', 'credits_per_token',
+              'rounding_policy', 'treasury_address'
+          )
+          and not attisdropped
+        having count(*) = 8
+    ) or not exists (
+        select 1 from pg_attribute
+        where attrelid = 'public.wallet_deposits'::regclass
+          and attname in (
+              'player_id', 'network', 'transaction_signature', 'mint_address',
+              'token_program_id', 'deposit_address', 'amount_raw', 'token_decimals',
+              'finalized_slot', 'status', 'confirmed_at', 'credited_at'
+          )
+          and not attisdropped
+        having count(*) = 12
+    ) or not exists (
+        select 1 from pg_attribute
+        where attrelid = 'public.wallet_credit_accounts'::regclass
+          and attname = 'balance_credits'
+          and not attisdropped
+    ) then
+        raise exception 'Required wallet columns are missing. Apply the documented wallet migrations first.';
+    end if;
+end;
+$$;
+
+alter table public.wallet_deposits
+    add column if not exists source_wallet_address text;
+
+create or replace function public.process_verified_treasury_deposit(
+    p_player_id uuid,
+    p_source_wallet_address text,
+    p_network text,
+    p_transaction_signature text,
+    p_mint_address text,
+    p_token_program_id text,
+    p_deposit_address text,
+    p_amount_raw numeric,
+    p_token_decimals integer,
+    p_finalized_slot bigint,
+    p_credit_amount_credits bigint
+)
+returns table (balance_credits bigint, already_applied boolean)
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+    v_config public.wallet_system_config%rowtype;
+    v_deposit public.wallet_deposits%rowtype;
+    v_deposit_id uuid;
+    v_linked_wallet_address text;
+    v_expected_credits numeric;
+    v_balance bigint;
+    v_already_applied boolean;
+begin
+    if coalesce(auth.role(), '') <> 'service_role' then
+        raise exception 'Server authorization is required.' using errcode = '42501';
+    end if;
+    if p_player_id is null
+       or p_source_wallet_address is null
+       or char_length(p_source_wallet_address) not between 32 and 44
+       or p_network is null
+       or p_network not in ('devnet', 'mainnet-beta')
+       or p_transaction_signature is null
+       or char_length(p_transaction_signature) not between 80 and 100
+       or p_mint_address is null
+       or p_token_program_id is null
+       or p_deposit_address is null
+       or p_amount_raw is null or p_amount_raw <= 0 or p_amount_raw <> trunc(p_amount_raw)
+       or p_token_decimals is null or p_token_decimals not between 0 and 18
+       or p_finalized_slot is null or p_finalized_slot <= 0
+       or p_credit_amount_credits is null or p_credit_amount_credits <= 0 then
+        raise exception 'Invalid verified deposit.' using errcode = '22023';
+    end if;
+
+    select wallet_address
+    into v_linked_wallet_address
+    from public.player_solana_wallets
+    where player_id = p_player_id
+    for share;
+    if not found or v_linked_wallet_address <> p_source_wallet_address then
+        raise exception 'The transfer sender is not the player's verified wallet.' using errcode = '22023';
+    end if;
+
+    select * into v_config
+    from public.wallet_system_config
+    where id = 1
+    for share;
+    if not found
+       or not v_config.deposits_enabled
+       or v_config.network <> p_network
+       or v_config.official_mint_address <> p_mint_address
+       or v_config.token_program_id <> p_token_program_id
+       or v_config.token_decimals <> p_token_decimals
+       or v_config.treasury_address is distinct from p_deposit_address
+       or v_config.credits_per_token <> 10000
+       or v_config.rounding_policy <> 'floor' then
+        raise exception 'Deposit configuration is disabled or does not match.' using errcode = '22023';
+    end if;
+
+    v_expected_credits := floor(
+        p_amount_raw * v_config.credits_per_token
+        / power(10::numeric, v_config.token_decimals)
+    );
+    if v_expected_credits <= 0
+       or v_expected_credits > 9223372036854775807 then
+        raise exception 'Deposit credit amount is outside the supported range.' using errcode = '22003';
+    end if;
+    if v_expected_credits::bigint <> p_credit_amount_credits then
+        raise exception 'Deposit credit amount does not match the configured conversion.' using errcode = '22023';
+    end if;
+
+    insert into public.wallet_deposits (
+        player_id, network, transaction_signature, mint_address, token_program_id,
+        deposit_address, source_wallet_address, amount_raw, token_decimals,
+        finalized_slot, status, confirmed_at
+    )
+    values (
+        p_player_id, p_network, p_transaction_signature, p_mint_address, p_token_program_id,
+        p_deposit_address, p_source_wallet_address, p_amount_raw, p_token_decimals,
+        p_finalized_slot, 'confirmed', now()
+    )
+    on conflict (network, transaction_signature) do nothing
+    returning id into v_deposit_id;
+
+    if v_deposit_id is null then
+        select * into v_deposit
+        from public.wallet_deposits
+        where network = p_network
+          and transaction_signature = p_transaction_signature
+        for update;
+        if not found
+           or v_deposit.player_id <> p_player_id
+           or v_deposit.mint_address <> p_mint_address
+           or v_deposit.token_program_id <> p_token_program_id
+           or v_deposit.deposit_address <> p_deposit_address
+           or v_deposit.source_wallet_address is distinct from p_source_wallet_address
+           or v_deposit.amount_raw <> p_amount_raw
+           or v_deposit.token_decimals <> p_token_decimals
+           or v_deposit.finalized_slot <> p_finalized_slot
+           or v_deposit.status <> 'confirmed'
+           or v_deposit.credited_at is null then
+            raise exception 'Transaction signature has already been processed or does not match.' using errcode = '23505';
+        end if;
+        select a.balance_credits into v_balance
+        from public.wallet_credit_accounts as a
+        where a.player_id = p_player_id;
+        if v_balance is null then
+            raise exception 'Player credit account is missing.' using errcode = '23503';
+        end if;
+        return query select v_balance, true;
+        return;
+    end if;
+
+    select result.balance_credits, result.already_applied
+    into v_balance, v_already_applied
+    from public.apply_wallet_ledger_entry(
+        p_player_id,
+        'deposit',
+        p_credit_amount_credits,
+        'deposit:' || p_network || ':' || p_transaction_signature,
+        v_deposit_id,
+        'Finalized direct-to-treasury Solana deposit'
+    ) as result;
+
+    return query select v_balance, v_already_applied;
+end;
+$$;
+
+revoke all on function public.process_verified_treasury_deposit(
+    uuid, text, text, text, text, text, text, numeric, integer, bigint, bigint
+) from public, anon, authenticated;
+grant execute on function public.process_verified_treasury_deposit(
+    uuid, text, text, text, text, text, text, numeric, integer, bigint, bigint
+) to service_role;

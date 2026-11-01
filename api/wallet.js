@@ -9,10 +9,10 @@ const {
 } = require("../server/lib/wallet");
 const {
     deriveAssociatedTokenAccount,
+    getApprovedCyfurMintAddress,
     GENESIS_HASHES,
     isOfficialCyfurMintAccount,
     isBase58,
-    RELICGRID_CYFUR_MINT_ADDRESS,
     RELICGRID_TREASURY_ADDRESS,
     solanaRpc
 } = require("../server/lib/solana-deposit");
@@ -48,14 +48,23 @@ module.exports = async function wallet(request, response) {
             }))
         ]);
         let config = null;
+        let linkedWalletAddress = null;
         if (process.env.SUPABASE_SERVICE_ROLE_KEY?.trim()) {
-            const configs = await serviceRequest(
-                "wallet_system_config?select=deposits_enabled,paid_gameplay_enabled,network,official_mint_address,token_program_id,token_decimals,credits_per_token,rounding_policy,treasury_address&id=eq.1"
-            );
+            const [configs, linkedWallets] = await Promise.all([
+                serviceRequest(
+                    "wallet_system_config?select=deposits_enabled,paid_gameplay_enabled,network,official_mint_address,token_program_id,token_decimals,credits_per_token,rounding_policy,treasury_address&id=eq.1"
+                ),
+                serviceRequest(
+                    `player_solana_wallets?select=wallet_address&player_id=eq.${encodeURIComponent(user.id)}&limit=1`
+                )
+            ]);
             config = configs[0] ?? null;
+            if (isBase58(linkedWallets[0]?.wallet_address, 32)) {
+                linkedWalletAddress = linkedWallets[0].wallet_address;
+            }
         }
         const network = process.env.SOLANA_NETWORK;
-        const linkedWalletAddress = null;
+        const approvedMintAddress = getApprovedCyfurMintAddress();
         const approvedTreasuryAddress = RELICGRID_TREASURY_ADDRESS;
         let treasuryAddress = null;
         let treasuryTokenAccountAddress = null;
@@ -63,8 +72,10 @@ module.exports = async function wallet(request, response) {
         if (config?.treasury_address !== RELICGRID_TREASURY_ADDRESS) {
             readinessChecks.push("The configured treasury does not match the approved RelicGrid treasury address.");
         }
-        if (config?.official_mint_address !== RELICGRID_CYFUR_MINT_ADDRESS) {
-            readinessChecks.push("The configured CYFUR mint does not match the owner-verified production mint.");
+        if (!approvedMintAddress) {
+            readinessChecks.push("The owner-confirmed official CYFUR mint has not been configured on the server.");
+        } else if (config?.official_mint_address !== approvedMintAddress) {
+            readinessChecks.push("The configured CYFUR mint does not match the owner-confirmed official mint.");
         }
         if (!config ||
             !config.official_mint_address ||
@@ -74,13 +85,13 @@ module.exports = async function wallet(request, response) {
             config.rounding_policy !== "floor" ||
             config.network !== network ||
             !config?.treasury_address) {
-            readinessChecks.push("Supabase wallet configuration must match the selected Solana network and CYFUR settings.");
+            readinessChecks.push("Wallet database configuration must match the selected Solana network and CYFUR settings.");
         }
         if (!process.env.SUPABASE_SERVICE_ROLE_KEY?.trim()) {
-            readinessChecks.push("Set SUPABASE_SERVICE_ROLE_KEY in Vercel.");
+            readinessChecks.push("The server-side wallet database connection is not configured.");
         }
         if (!process.env.SOLANA_RPC_URL?.trim()) {
-            readinessChecks.push("Set SOLANA_RPC_URL in Vercel.");
+            readinessChecks.push("The server-side Solana RPC connection is not configured.");
         }
         if (process.env.SOLANA_RPC_URL?.trim() &&
             GENESIS_HASHES[network] &&
@@ -149,17 +160,17 @@ module.exports = async function wallet(request, response) {
             }
         }
         if (process.env.WALLET_DIRECT_TREASURY_READY !== "true") {
-            readinessChecks.push("Set WALLET_DIRECT_TREASURY_READY=true in Vercel.");
+            readinessChecks.push("Direct-to-treasury deposits have not passed the server readiness gate.");
         }
         if (config?.deposits_enabled !== true) {
-            readinessChecks.push("Set wallet_system_config.deposits_enabled=true in Supabase after approval.");
+            readinessChecks.push("Deposits are disabled in the wallet database configuration.");
         }
         if (process.env.WALLET_DEPOSITS_ENABLED !== "true") {
-            readinessChecks.push("Set WALLET_DEPOSITS_ENABLED=true in Vercel after approval.");
+            readinessChecks.push("The server deposit feature flag is disabled.");
         }
         if (network === "mainnet-beta" &&
             process.env.WALLET_MAINNET_DEPOSITS_ENABLED !== "true") {
-            readinessChecks.push("Set WALLET_MAINNET_DEPOSITS_ENABLED=true in Vercel after mainnet approval.");
+            readinessChecks.push("The mainnet deposit feature flag is disabled.");
         }
         const depositsEnabled = readinessChecks.length === 0;
         const accountBalance = accounts[0]?.balance_credits;
@@ -182,7 +193,7 @@ module.exports = async function wallet(request, response) {
             disabledReason: depositsEnabled ? null : "direct_treasury_setup_incomplete",
             disabledMessage: depositsEnabled
                 ? "Deposit verification is ready. Send at least 1 CYFUR to the displayed treasury address, then submit the transaction signature or explorer link. RelicGrid verifies finality before crediting."
-                : "Deposits are temporarily unavailable. Please check back later. Do not send CYFUR until the status is READY.",
+                : `${readinessChecks.join(" ")} Do not send CYFUR until the status is READY.`,
             exchangeRateCreditsPerToken: CYFUR_CREDITS_PER_TOKEN,
             treasuryAddress,
             treasuryTokenAccountAddress,

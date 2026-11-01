@@ -20,7 +20,7 @@ function safeBigInt(value) {
 
 function readWalletSystemConfig() {
     return serviceRequest(
-        "wallet_system_config?select=network,official_mint_address,token_program_id,token_decimals,treasury_address,credits_per_token,deposits_enabled&id=eq.1"
+        "wallet_system_config?select=network,official_mint_address,token_program_id,token_decimals,treasury_address,credits_per_token,deposits_enabled,withdrawals_enabled&id=eq.1"
     ).then((rows) => rows[0] ?? null);
 }
 
@@ -48,15 +48,17 @@ module.exports = async function withdrawals(request, response) {
         const balanceCredits = account?.balance_credits ? String(account.balance_credits) : "0";
         const pendingCredits = history
             .filter((entry) => ["pending", "submitted"].includes(entry.status))
-            .reduce((total, entry) => total + safeBigInt(entry.amount_credits || "0") || 0n, 0n);
-        const availableCredits = (BigInt(balanceCredits) - pendingCredits).toString();
+            .reduce((total, entry) => total + (safeBigInt(String(entry.amount_credits || "0")) ?? 0n), 0n);
+        const availableCredits = balanceCredits;
 
         if (request.method === "GET") {
             return sendJson(response, 200, {
-                withdrawalEnabled: process.env.WITHDRAWAL_ENABLED === "true",
+                withdrawalEnabled: process.env.WITHDRAWAL_ENABLED === "true" &&
+                    configs?.withdrawals_enabled === true,
                 walletAddress: linkedWallet?.wallet_address ?? null,
                 balanceCredits,
                 availableCredits,
+                pendingWithdrawalCredits: pendingCredits.toString(),
                 config: configs ? {
                     network: configs.network,
                     officialMintAddress: configs.official_mint_address,
@@ -89,10 +91,10 @@ module.exports = async function withdrawals(request, response) {
                 message: "The treasury and CYFUR mint configuration for withdrawals is not ready. The owner-approved configuration must be rechecked before any token transfer is attempted."
             });
         }
-        if (process.env.WITHDRAWAL_ENABLED !== "true") {
+        if (process.env.WITHDRAWAL_ENABLED !== "true" || configs.withdrawals_enabled !== true) {
             return sendJson(response, 503, {
                 error: "withdrawals_disabled",
-                message: "Real CYFUR withdrawals are disabled until the server-side treasury signer and owner approval are configured."
+                message: "Real CYFUR withdrawals require both the Vercel withdrawal switch and the Supabase withdrawals_enabled setting."
             });
         }
 
@@ -105,6 +107,9 @@ module.exports = async function withdrawals(request, response) {
         if (creditsBigInt <= 0n) {
             return sendJson(response, 400, { error: "invalid_amount_credits" });
         }
+        if (creditsBigInt > 9223372036854775807n) {
+            return sendJson(response, 400, { error: "amount_out_of_range" });
+        }
         if (creditsBigInt > BigInt(balanceCredits) || creditsBigInt > BigInt(availableCredits)) {
             return sendJson(response, 402, {
                 error: "insufficient_balance",
@@ -114,6 +119,9 @@ module.exports = async function withdrawals(request, response) {
         }
 
         const amountRaw = calculateWithdrawalTokenAmountRaw(amountCreditsString, Number(configs.token_decimals));
+        if (BigInt(amountRaw) > 9223372036854775807n) {
+            return sendJson(response, 400, { error: "amount_out_of_range" });
+        }
         if (action === "preview") {
             return sendJson(response, 200, {
                 amountCredits: amountCreditsString,
@@ -129,7 +137,11 @@ module.exports = async function withdrawals(request, response) {
             });
         }
 
-        const idempotencyKey = `${user.id}:${linkedWallet.wallet_address}:${amountCreditsString}:${Date.now()}`;
+        const requestId = request.body?.idempotencyKey;
+        if (typeof requestId !== "string" ||
+            !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(requestId)) {
+            return sendJson(response, 400, { error: "idempotency_key_required" });
+        }
         const signer = getWithdrawalSignerFromEnvironment();
         if (signer.publicKey.toBase58() !== configs.treasury_address) {
             return sendJson(response, 503, {
@@ -137,26 +149,61 @@ module.exports = async function withdrawals(request, response) {
                 message: "The configured server-side signer does not match the authorized treasury address. No transfer was submitted."
             });
         }
-        const pendingRecord = {
-            player_id: user.id,
-            wallet_address: linkedWallet.wallet_address,
-            amount_credits: Number(amountCreditsString),
-            amount_raw: Number(amountRaw),
-            token_decimals: Number(configs.token_decimals),
-            status: "pending",
-            idempotency_key: idempotencyKey,
-            memo: `RelicGrid withdrawal:${randomUUID()}`,
-            created_at: new Date().toISOString(),
-            updated_at: new Date().toISOString()
-        };
+        const idempotencyKey = `${user.id}:${requestId}`;
+        const memo = `RelicGrid withdrawal:${randomUUID()}`;
+        let reservation;
+        try {
+            const result = await serviceRequest("rpc/reserve_wallet_withdrawal", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    p_player_id: user.id,
+                    p_wallet_address: linkedWallet.wallet_address,
+                    p_network: configs.network,
+                    p_mint_address: configs.official_mint_address,
+                    p_token_program_id: configs.token_program_id,
+                    p_treasury_address: configs.treasury_address,
+                    p_amount_raw: amountRaw,
+                    p_token_decimals: Number(configs.token_decimals),
+                    p_amount_credits: amountCreditsString,
+                    p_idempotency_key: idempotencyKey,
+                    p_memo: memo
+                })
+            });
+            reservation = Array.isArray(result) ? result[0] : result;
+        } catch (error) {
+            const details = String(error.databaseMessage || error.details || "");
+            if (/insufficient credits/i.test(details)) {
+                return sendJson(response, 402, { error: "insufficient_balance", availableCredits });
+            }
+            if (/already pending reconciliation|idempotency key was reused/i.test(details)) {
+                return sendJson(response, 409, { error: "withdrawal_already_pending" });
+            }
+            throw error;
+        }
 
-        const insertResult = await serviceRequest("wallet_withdrawals?select=id,status,idempotency_key&on_conflict=idempotency_key", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(pendingRecord)
-        });
-        const withdrawalRecord = Array.isArray(insertResult) ? insertResult[0] : insertResult;
+        if (!reservation?.withdrawal_id) {
+            throw new Error("The withdrawal reservation RPC returned no withdrawal record.");
+        }
+        if (reservation.already_reserved) {
+            const payload = {
+                status: reservation.withdrawal_status,
+                amountCredits: amountCreditsString,
+                amountRaw,
+                signature: reservation.transaction_signature,
+                walletAddress: linkedWallet.wallet_address,
+                message: "This withdrawal request was already recorded. Its transfer will not be submitted a second time."
+            };
+            if (reservation.withdrawal_status === "confirmed") {
+                return sendJson(response, 200, payload);
+            }
+            if (reservation.withdrawal_status === "pending" || reservation.withdrawal_status === "submitted") {
+                return sendJson(response, 202, payload);
+            }
+            return sendJson(response, 409, { ...payload, error: "withdrawal_request_already_resolved" });
+        }
 
+        let submittedSignature = null;
         try {
             const execution = await executeCyfurWithdrawal({
                 rpcUrl: process.env.SOLANA_RPC_URL,
@@ -166,53 +213,86 @@ module.exports = async function withdrawals(request, response) {
                 tokenProgramId: configs.token_program_id,
                 tokenDecimals: Number(configs.token_decimals),
                 amountRaw,
-                treasurySigner: signer
+                treasurySigner: signer,
+                onSubmitted: async (signature) => {
+                    submittedSignature = signature;
+                    await serviceRequest("rpc/mark_wallet_withdrawal_submitted", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({
+                            p_withdrawal_id: reservation.withdrawal_id,
+                            p_transaction_signature: signature
+                        })
+                    });
+                }
             });
 
-            await serviceRequest(`wallet_withdrawals?id=eq.${encodeURIComponent(withdrawalRecord.id)}`, {
-                method: "PATCH",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                    status: "confirmed",
-                    transaction_signature: execution.signature,
-                    confirmed_at: new Date().toISOString(),
-                    updated_at: new Date().toISOString()
-                })
-            });
-            await serviceRequest("rpc/apply_wallet_ledger_entry", {
+            const finalized = await serviceRequest("rpc/confirm_wallet_withdrawal", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
-                    p_player_id: user.id,
-                    p_entry_type: "withdrawal",
-                    p_amount_credits: -BigInt(amountCreditsString),
-                    p_idempotency_key: `withdrawal:${withdrawalRecord.id}`,
-                    p_memo: `Withdrawal:${withdrawalRecord.id}`
+                    p_withdrawal_id: reservation.withdrawal_id,
+                    p_transaction_signature: execution.signature
                 })
             });
+            const finalResult = Array.isArray(finalized) ? finalized[0] : finalized;
+            if (!finalResult) {
+                return sendJson(response, 202, {
+                    status: "submitted",
+                    amountCredits: amountCreditsString,
+                    amountRaw,
+                    signature: execution.signature,
+                    walletAddress: linkedWallet.wallet_address,
+                    message: "The transfer finalized on Solana; database confirmation is pending reconciliation."
+                });
+            }
 
             return sendJson(response, 200, {
                 status: "confirmed",
                 amountCredits: amountCreditsString,
                 amountRaw,
                 signature: execution.signature,
-                walletAddress: linkedWallet.wallet_address
+                walletAddress: linkedWallet.wallet_address,
+                balanceCredits: String(finalResult.balance_credits)
             });
         } catch (error) {
-            await serviceRequest(`wallet_withdrawals?id=eq.${encodeURIComponent(withdrawalRecord.id)}`, {
-                method: "PATCH",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                    status: "failed",
-                    failure_reason: error?.message || "Withdrawal transfer failed.",
-                    updated_at: new Date().toISOString()
-                })
-            });
-            return sendJson(response, 502, {
-                error: "withdrawal_failed",
-                message: error?.message || "The server-side withdrawal attempt failed.",
+            const signature = submittedSignature || error.signature || null;
+            if (!signature || error.chainFailed === true) {
+                try {
+                    await serviceRequest("rpc/release_wallet_withdrawal", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({
+                            p_withdrawal_id: reservation.withdrawal_id,
+                            p_failure_reason: String(error?.message || "Withdrawal transfer failed.").slice(0, 500),
+                            p_chain_failure_verified: error.chainFailed === true,
+                            p_transaction_signature: signature
+                        })
+                    });
+                } catch (releaseError) {
+                    console.error("Withdrawal reservation could not be released.", {
+                        code: releaseError.code || "withdrawal_release_failed"
+                    });
+                    return sendJson(response, 503, {
+                        error: "withdrawal_reconciliation_required",
+                        message: "The withdrawal was not confirmed. Its balance reservation remains in place until safely reconciled."
+                    });
+                }
+                return sendJson(response, 502, {
+                    error: "withdrawal_failed",
+                    message: error?.message || "The server-side withdrawal attempt failed.",
+                    walletAddress: linkedWallet.wallet_address,
+                    status: "failed"
+                });
+            }
+
+            return sendJson(response, 202, {
+                status: "submitted",
+                amountCredits: amountCreditsString,
+                amountRaw,
+                signature,
                 walletAddress: linkedWallet.wallet_address,
-                status: "failed"
+                message: "The transaction may have been submitted. The balance remains reserved while its finalized status is reconciled; do not retry with a new request."
             });
         }
     } catch (error) {

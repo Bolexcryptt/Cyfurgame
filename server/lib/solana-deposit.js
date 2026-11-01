@@ -29,6 +29,11 @@ function isBase58(value, expectedBytes) {
     return byteLength === expectedBytes;
 }
 
+function getApprovedCyfurMintAddress() {
+    const approvedMint = process.env.WALLET_APPROVED_CYFUR_MINT_ADDRESS?.trim();
+    return isBase58(approvedMint, 32) ? approvedMint : null;
+}
+
 function deriveAssociatedTokenAccount(ownerAddress, mintAddress, tokenProgramId) {
     if (!isBase58(ownerAddress, 32) || !isBase58(mintAddress, 32) ||
         !TOKEN_PROGRAM_IDS.has(tokenProgramId)) {
@@ -277,7 +282,7 @@ async function verifyFinalizedDeposit({
         throw new Error("Configured Solana RPC endpoint is connected to a different network.");
     }
     if (network === "mainnet-beta" &&
-        (officialMint !== RELICGRID_CYFUR_MINT_ADDRESS ||
+        (officialMint !== getApprovedCyfurMintAddress() ||
             tokenProgramId !== "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA" ||
             tokenDecimals !== 8)) {
         throw new Error("Mainnet deposit configuration does not match the owner-verified CYFUR mint.");
@@ -456,6 +461,7 @@ module.exports = {
     TOKEN_PROGRAM_IDS,
     deriveAssociatedTokenAccount,
     decodeBase58,
+    getApprovedCyfurMintAddress,
     isOfficialCyfurMintAccount,
     isBase58,
     normalizeTransactionSignature,

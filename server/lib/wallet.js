@@ -150,6 +150,7 @@ async function serviceRequest(path, options = {}) {
         error.status = response.status;
         error.code = detail.code;
         error.details = detail.details;
+        error.databaseMessage = detail.message;
         throw error;
     }
     const body = await response.text();

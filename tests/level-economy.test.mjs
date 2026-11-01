@@ -661,21 +661,25 @@ test("backend level entry costs match the campaign economy for all 99 levels", (
     assert.equal(getLevelEntryCostCredits(100), null);
 });
 
-test("free gameplay testing does not request paid level entry or change wallet credits", () => {
+test("level starts require a charged server session and completion rewards remain provisional until verified", () => {
     const app = readFileSync(new URL("../app.js", import.meta.url), "utf8");
     const startIndex = app.indexOf("async function startLevel");
     const endIndex = app.indexOf("\nfunction leaveGameplay", startIndex);
     const startLevel = app.slice(startIndex, endIndex);
     assert.ok(startIndex >= 0);
     assert.ok(endIndex > startIndex);
-    assert.doesNotMatch(startLevel, /requestLevelEntry/);
-    assert.match(startLevel, /activeWalletLevelSessionId = null/);
-    assert.match(app, /entryCost\.textContent = locked \? "TEMPORARILY LOCKED" : "FREE PLAY"/);
+    assert.match(startLevel, /const entry = await requestLevelEntry\(number\)/);
+    assert.match(startLevel, /activeWalletLevelSessionId = entry\.sessionId/);
+    assert.match(startLevel, /entryCostCredits: activeLevelEntryCostCredits/);
+    assert.match(app, /getLevelEconomy\(level\.number\)\.entryCostCredits/);
+    assert.match(app, /INSUFFICIENT · NEED/);
+    assert.match(app, /No progress or credit reward was recorded/);
     assert.match(app, /if \(await refreshLevelsLockState\(\)\)/);
 
     const scene = readFileSync(new URL("../script.js", import.meta.url), "utf8");
-    assert.match(scene, /reward\.textContent = "0 credits"/);
-    assert.match(scene, /Testing mode · no credits changed/);
+    assert.match(scene, /ESTIMATED REWARD/);
+    assert.match(scene, /Pending server validation; not yet credited/);
+    assert.match(scene, /No reward is credited for a failed attempt/);
     assert.match(scene, /const mirror = placedMirrors\.get\(gridKey\(row, col\)\);[\s\S]*?else if \(isObstacle\)/);
     assert.match(scene, /crystal\.definition\.inputColor !== colorIndex % beamColors\.length/);
     assert.match(scene, /drawActiveRoute\(previewRoute, previewRoute\.segments\.length, true\)/);
@@ -718,7 +722,8 @@ test("RelicGrid branding is used in the game and hidden scenes stop rendering", 
     assert.match(scene, /powerSourceSoundPlayed = false/);
     assert.equal(existsSync(new URL("../mirror.mp3", import.meta.url)), true);
     assert.equal(existsSync(new URL("../powersource.mp3", import.meta.url)), true);
-    assert.match(html, /id="background-music" src="music\.mp3"[^>]*loop/);
+    const soundHtml = readFileSync(new URL("../index.html", import.meta.url), "utf8");
+    assert.match(soundHtml, /id="background-music" src="music\.mp3"[^>]*loop/);
     assert.doesNotMatch(scene, /backgroundMusic\.(?:pause|play|currentTime|volume)/);
     assert.match(scene, /group\.userData\.wallEmitter = wallEmitter/);
     assert.match(scene, /GRID\.start\.col = launchDirection === 1 \? -1 : GRID\.cols/);
@@ -753,18 +758,20 @@ test("RelicGrid branding is used in the game and hidden scenes stop rendering", 
     assert.match(styles, /video-action \.button \{[\s\S]*?font-size: clamp\(17px, 4vw, 20px\)/);
 });
 
-test("deposit UI does not require a connected wallet and exposes memo-confirm verification", () => {
+test("deposit UI binds shared-treasury claims to the verified sending wallet without a memo", () => {
     const html = readFileSync(new URL("../index.html", import.meta.url), "utf8");
     assert.match(html, /FUND YOUR RELICGRID ACCOUNT/);
     assert.match(html, /at least 1 CYFUR/);
     assert.match(html, /id="wallet-address">Loading verified treasury…<\/code>/);
     assert.match(html, /id="wallet-copy-address"/);
-    assert.match(html, /id="deposit-required-memo"/);
-    assert.match(html, /COPY MEMO/);
+    assert.match(html, /id="linked-wallet-address"/);
+    assert.match(html, /id="wallet-link-button"/);
+    assert.match(html, /No memo is required/);
     assert.match(html, /VERIFY PAYMENT/);
     assert.match(html, /Paste signature or Solana Explorer\/Solscan link/);
     const app = readFileSync(new URL("../app.js", import.meta.url), "utf8");
-    assert.match(app, /fetchWithTimeout\(apiUrl\("payment-intent"\)/);
+    assert.match(app, /apiUrl\("wallet-link"\)/);
+    assert.doesNotMatch(app, /apiUrl\("payment-intent"\)/);
     assert.match(app, /Unavailable: \$\{readinessMessage\}/);
     assert.match(app, /typeof result\.disabledMessage === "string"/);
     assert.doesNotMatch(app, /SOLANA_TREASURY_ADDRESS must exactly match Supabase treasury_address/);
@@ -772,15 +779,15 @@ test("deposit UI does not require a connected wallet and exposes memo-confirm ve
     assert.match(app, /Deposits are temporarily unavailable\. Please check back later\./);
     assert.doesNotMatch(html, /id="wallet-transfer-amount"|id="wallet-transfer-form"|id="wallet-preflight-button"/);
     assert.doesNotMatch(html, /CONNECT SOLANA WALLET|CONNECT LINKED WALLET/);
-    assert.match(app, /async function createCyfurDepositInstructions/);
     assert.match(app, /address\.textContent = result\.treasuryAddress \|\| "Treasury unavailable"/);
-    assert.match(app, /relicgrid\.payment-intent\.v1/);
+    assert.match(app, /result\.linkedWalletAddress/);
+    assert.doesNotMatch(app, /relicgrid\.payment-intent\.v1/);
     assert.match(app, /body: JSON\.stringify\(\{ signature: signatureOrLink \}\)/);
     assert.doesNotMatch(app, /body: JSON\.stringify\(\{ signature: signatureOrLink, paymentIntentId \}\)/);
     assert.match(app, /Deposit not detected yet\. Please wait and check again/);
 });
 
-test("deposit backend pins the approved treasury and migration keeps deposits disabled", () => {
+test("deposit backend requires owner-approved mint configuration and migration keeps deposits disabled", () => {
     const treasury = "6KTSpvxGR2xvje3BG42QvmFjg2XLnFneCCSyVXhSKvys";
     const mint = "9F4hLLngEAhepsH2HLTH6kBYmmq6dzm4GXRrcpME3uam";
     assert.equal(RELICGRID_CYFUR_MINT_ADDRESS, mint);
@@ -806,14 +813,14 @@ test("deposit backend pins the approved treasury and migration keeps deposits di
     const app = readFileSync(new URL("../app.js", import.meta.url), "utf8");
     const html = readFileSync(new URL("../index.html", import.meta.url), "utf8");
     assert.match(verifier, new RegExp(`RELICGRID_TREASURY_ADDRESS = "${treasury}"`));
-    assert.match(verifier, new RegExp(`RELICGRID_CYFUR_MINT_ADDRESS = "${mint}"`));
+    assert.match(verifier, /WALLET_APPROVED_CYFUR_MINT_ADDRESS/);
     assert.match(migration, new RegExp(`treasury_address = '${treasury}'`));
     assert.match(migration, /deposits_enabled = false/);
     assert.match(migration, /paid_gameplay_enabled = false/);
-    for (const apiFile of ["wallet.js", "payment-intent.js", "deposits.js", "deposit-transaction.js"]) {
+    for (const apiFile of ["wallet.js", "deposits.js"]) {
         const api = readFileSync(new URL(`../api/${apiFile}`, import.meta.url), "utf8");
         assert.match(api, /RELICGRID_TREASURY_ADDRESS/);
-        assert.match(api, /RELICGRID_CYFUR_MINT_ADDRESS/);
+        assert.match(api, /getApprovedCyfurMintAddress/);
         assert.doesNotMatch(api, /SOLANA_TREASURY_ADDRESS/);
     }
     const paymentIntentApi = readFileSync(new URL("../api/payment-intent.js", import.meta.url), "utf8");
@@ -950,6 +957,19 @@ test("wallet-less deposit migration allows unlinked senders without weakening at
     assert.match(migration, /public\.apply_wallet_ledger_entry/);
     assert.match(migration, /revoke all on function public\.process_verified_payment_intent/i);
     assert.match(migration, /grant execute[\s\S]*?to service_role/i);
+});
+
+test("shared-treasury attribution migration enforces verified sender ownership and idempotent credits", () => {
+    const migration = readFileSync(new URL("../supabase-shared-treasury-deposit-attribution.sql", import.meta.url), "utf8");
+    assert.match(migration, /add column if not exists source_wallet_address text/i);
+    assert.match(migration, /from public\.player_solana_wallets[\s\S]*?where player_id = p_player_id[\s\S]*?for share/i);
+    assert.match(migration, /v_linked_wallet_address <> p_source_wallet_address/);
+    assert.match(migration, /on conflict \(network, transaction_signature\) do nothing/i);
+    assert.match(migration, /public\.apply_wallet_ledger_entry/);
+    assert.match(migration, /revoke all on function public\.process_verified_treasury_deposit/i);
+    assert.match(migration, /grant execute[\s\S]*?to service_role/i);
+    assert.doesNotMatch(migration, /update public\.wallet_credit_accounts|delete from public\.wallet_credit_accounts/i);
+    assert.doesNotMatch(migration, /deposits_enabled\s*=\s*true|paid_gameplay_enabled\s*=\s*true/i);
 });
 
 test("wallet ownership proof verifies Ed25519 signatures and rejects altered messages", () => {
@@ -1575,6 +1595,7 @@ test("deposit API rejects a failed on-chain transaction before requesting ledger
         SOLANA_RPC_URL: "https://mainnet.example/rpc",
         SOLANA_NETWORK: "mainnet-beta",
         SOLANA_TREASURY_ADDRESS: "6KTSpvxGR2xvje3BG42QvmFjg2XLnFneCCSyVXhSKvys",
+        WALLET_APPROVED_CYFUR_MINT_ADDRESS: "9F4hLLngEAhepsH2HLTH6kBYmmq6dzm4GXRrcpME3uam",
         WALLET_DIRECT_TREASURY_READY: "true",
         WALLET_DEPOSITS_ENABLED: "true",
         WALLET_MAINNET_DEPOSITS_ENABLED: "true"
@@ -1604,20 +1625,9 @@ test("deposit API rejects a failed on-chain transaction before requesting ledger
                 treasury_address: environment.SOLANA_TREASURY_ADDRESS
             }]), { status: 200 });
         }
-        if (target.includes("/wallet_payment_intents?")) {
+        if (target.includes("/player_solana_wallets?")) {
             return new Response(JSON.stringify([{
-                id: paymentIntentId,
-                player_id: "test-player",
-                network: "mainnet-beta",
-                mint_address: mintAddress,
-                token_program_id: "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
-                treasury_address: environment.SOLANA_TREASURY_ADDRESS,
-                amount_raw: "100000000",
-                token_decimals: 8,
-                created_at: new Date(Date.now() - 1000).toISOString(),
-                expires_at: new Date(Date.now() + 60000).toISOString(),
-                status: "pending",
-                transaction_signature: null
+                wallet_address: "11111111111111111111111111111111"
             }]), { status: 200 });
         }
         if (target === environment.SOLANA_RPC_URL) {
@@ -1657,7 +1667,7 @@ test("deposit API rejects a failed on-chain transaction before requesting ledger
     }
 });
 
-test("deposit API credits a finalized transfer only with its authenticated player payment intent", async () => {
+test("deposit API credits a finalized shared-treasury transfer from the authenticated player's verified wallet without a memo", async () => {
     const environment = {
         SUPABASE_URL: "https://example.supabase.co",
         SUPABASE_PUBLISHABLE_KEY: "public-test-key",
@@ -1665,6 +1675,7 @@ test("deposit API credits a finalized transfer only with its authenticated playe
         SOLANA_RPC_URL: "https://mainnet.example/rpc",
         SOLANA_NETWORK: "mainnet-beta",
         SOLANA_TREASURY_ADDRESS: "6KTSpvxGR2xvje3BG42QvmFjg2XLnFneCCSyVXhSKvys",
+        WALLET_APPROVED_CYFUR_MINT_ADDRESS: "9F4hLLngEAhepsH2HLTH6kBYmmq6dzm4GXRrcpME3uam",
         WALLET_DIRECT_TREASURY_READY: "true",
         WALLET_DEPOSITS_ENABLED: "true",
         WALLET_MAINNET_DEPOSITS_ENABLED: "true"
@@ -1675,13 +1686,9 @@ test("deposit API credits a finalized transfer only with its authenticated playe
     Object.assign(process.env, environment);
     const originalFetch = globalThis.fetch;
     const signature = "1".repeat(64);
-    const paymentIntentId = "8f9ef883-520e-45ef-96ae-62e621d3b31c";
     const sourceWallet = "11111111111111111111111111111111";
     let rpcSourceWallet = null;
-    let creditedIntentId = null;
     let authenticatedPlayer = "test-player";
-    let intentStatus = "pending";
-    let intentSignature = null;
     let ledgerCallCount = 0;
     const authorization = "Bearer deposit-test-token";
     const sourceTokenAccount = "So11111111111111111111111111111111111111112";
@@ -1716,10 +1723,6 @@ test("deposit API credits a finalized transfer only with its authenticated playe
                                 tokenAmount: { amount: "100000000" }
                             }
                         }
-                    },
-                    {
-                        programId: "MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr",
-                        parsed: { type: "memo", info: `RelicGrid payment intent: ${paymentIntentId}` }
                     }
                 ]
             }
@@ -1774,23 +1777,9 @@ test("deposit API credits a finalized transfer only with its authenticated playe
                 treasury_address: environment.SOLANA_TREASURY_ADDRESS
             }]), { status: 200 });
         }
-        if (target.includes("/wallet_payment_intents?")) {
-            const intent = {
-                id: paymentIntentId,
-                player_id: "test-player",
-                network: "mainnet-beta",
-                mint_address: mintAddress,
-                token_program_id: tokenProgramId,
-                treasury_address: environment.SOLANA_TREASURY_ADDRESS,
-                amount_raw: "100000000",
-                token_decimals: 8,
-                created_at: new Date(Date.now() - 60000).toISOString(),
-                expires_at: new Date(Date.now() + 60000).toISOString(),
-                status: intentStatus,
-                transaction_signature: intentSignature
-            };
-            const ownsIntent = target.includes("&player_id=eq.test-player");
-            return new Response(JSON.stringify(ownsIntent ? [intent] : []), { status: 200 });
+        if (target.includes("/player_solana_wallets?")) {
+            const ownsWallet = target.includes("&player_id=eq.test-player");
+            return new Response(JSON.stringify(ownsWallet ? [{ wallet_address: sourceWallet }] : []), { status: 200 });
         }
         if (target === environment.SOLANA_RPC_URL) {
             const call = JSON.parse(options.body);
@@ -1811,14 +1800,11 @@ test("deposit API credits a finalized transfer only with its authenticated playe
                                 } } } } };
             return new Response(JSON.stringify({ result }), { status: 200 });
         }
-        if (target.includes("/rpc/process_verified_payment_intent")) {
+        if (target.includes("/rpc/process_verified_treasury_deposit")) {
             const alreadyApplied = ledgerCallCount > 0;
             ledgerCallCount += 1;
             rpcPayload = JSON.parse(options.body);
             rpcSourceWallet = rpcPayload.p_source_wallet_address;
-            creditedIntentId = rpcPayload.p_payment_intent_id;
-            intentStatus = "confirmed";
-            intentSignature = signature;
             return new Response(JSON.stringify([{
                 balance_credits: "250000",
                 already_applied: alreadyApplied
@@ -1842,7 +1828,7 @@ test("deposit API credits a finalized transfer only with its authenticated playe
             body: { signature: `https://solscan.io/tx/${signature}` }
         }, otherPlayerResponse);
         assert.equal(otherPlayerResponse.statusCode, 409);
-        assert.equal(otherPlayerResponse.payload.error, "payment_intent_invalid_or_claimed");
+        assert.equal(otherPlayerResponse.payload.error, "verified_sending_wallet_required");
         assert.equal(ledgerCallCount, 0);
 
         authenticatedPlayer = "test-player";
@@ -1863,7 +1849,6 @@ test("deposit API credits a finalized transfer only with its authenticated playe
         assert.equal(response.payload.credited, true);
         assert.equal(response.payload.creditAmountCredits, "10000");
         assert.equal(rpcSourceWallet, sourceWallet);
-        assert.equal(creditedIntentId, paymentIntentId);
         assert.equal(rpcPayload.p_deposit_address, environment.SOLANA_TREASURY_ADDRESS);
         assert.equal(rpcPayload.p_amount_raw, "100000000");
 
@@ -2134,7 +2119,7 @@ test("level entry API rejects insufficient balances and never enables paid gamep
     }
 });
 
-test("level entry API validates campaign unlocks before checking wallet funds", async () => {
+test("level entry API permits any campaign level while preserving wallet checks", async () => {
     const previousUrl = process.env.SUPABASE_URL;
     const previousKey = process.env.SUPABASE_PUBLISHABLE_KEY;
     const previousLevelLock = process.env.LEVELS_LOCKED;
@@ -2147,10 +2132,10 @@ test("level entry API validates campaign unlocks before checking wallet funds", 
         if (target.includes("/auth/v1/user")) {
             return new Response(JSON.stringify({ id: "test-player" }), { status: 200 });
         }
-        if (target.includes("/level_completions?")) {
-            return new Response(JSON.stringify([]), { status: 200 });
+        if (target.includes("/wallet_credit_accounts?")) {
+            return new Response(JSON.stringify([{ balance_credits: "0" }]), { status: 200 });
         }
-        throw new Error(`Locked-level check should not read wallet funds: ${target}`);
+        throw new Error(`Unexpected level-entry request: ${target}`);
     };
 
     try {
@@ -2166,9 +2151,10 @@ test("level entry API validates campaign unlocks before checking wallet funds", 
             headers: { authorization: "Bearer test-access-token" },
             body: { levelNumber: 4 }
         }, response);
-        assert.equal(response.statusCode, 403);
-        assert.equal(response.payload.error, "level_locked");
-        assert.equal(response.payload.unlockedLevel, 1);
+        assert.equal(response.statusCode, 402);
+        assert.equal(response.payload.error, "insufficient_balance");
+        assert.equal(response.payload.entryCostCredits, 125);
+        assert.equal(response.payload.balanceCredits, "0");
     } finally {
         globalThis.fetch = originalFetch;
         if (previousUrl === undefined) delete process.env.SUPABASE_URL;

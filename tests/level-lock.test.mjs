@@ -37,8 +37,8 @@ function createResponse() {
     };
 }
 
-test("the global lock defaults to locked and only exact false unlocks it", () => {
-    assert.equal(areLevelsGloballyLocked({}), true);
+test("the campaign is open by default and invalid lock values fail closed", () => {
+    assert.equal(areLevelsGloballyLocked({}), false);
     assert.equal(areLevelsGloballyLocked({ LEVELS_LOCKED: "true" }), true);
     assert.equal(areLevelsGloballyLocked({ LEVELS_LOCKED: "0" }), true);
     assert.equal(areLevelsGloballyLocked({ LEVELS_LOCKED: "False" }), true);
@@ -50,16 +50,16 @@ test("game configuration returns the runtime lock state without caching", (conte
     delete process.env.LEVELS_LOCKED;
 
     const request = { method: "GET", headers: {} };
+    const openResponse = createResponse();
+    gameConfig(request, openResponse);
+    assert.equal(openResponse.statusCode, 200);
+    assert.deepEqual(openResponse.payload, { levelsLocked: false });
+    assert.equal(openResponse.headers["Cache-Control"], "no-store");
+
+    process.env.LEVELS_LOCKED = "true";
     const lockedResponse = createResponse();
     gameConfig(request, lockedResponse);
-    assert.equal(lockedResponse.statusCode, 200);
     assert.deepEqual(lockedResponse.payload, { levelsLocked: true });
-    assert.equal(lockedResponse.headers["Cache-Control"], "no-store");
-
-    process.env.LEVELS_LOCKED = "false";
-    const unlockedResponse = createResponse();
-    gameConfig(request, unlockedResponse);
-    assert.deepEqual(unlockedResponse.payload, { levelsLocked: false });
 });
 
 test("all level-entry and gameplay APIs reject requests while the global lock is active", async (context) => {

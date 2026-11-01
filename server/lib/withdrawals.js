@@ -95,6 +95,21 @@ function calculateCreditsFromTokenAmountRaw(amountRaw, tokenDecimals) {
     return (scaledAmount / (10n ** BigInt(tokenDecimals))).toString();
 }
 
+function encodeBase58(bytes) {
+    const alphabet = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+    let value = BigInt(`0x${Buffer.from(bytes).toString("hex")}`);
+    let encoded = "";
+    while (value > 0n) {
+        encoded = alphabet[Number(value % 58n)] + encoded;
+        value /= 58n;
+    }
+    for (const byte of bytes) {
+        if (byte !== 0) break;
+        encoded = `1${encoded}`;
+    }
+    return encoded;
+}
+
 async function executeCyfurWithdrawal({
     rpcUrl,
     playerWalletAddress,
@@ -103,7 +118,8 @@ async function executeCyfurWithdrawal({
     tokenProgramId = TOKEN_PROGRAM_ID.toBase58(),
     tokenDecimals = 8,
     amountRaw,
-    treasurySigner = getWithdrawalSignerFromEnvironment()
+    treasurySigner = getWithdrawalSignerFromEnvironment(),
+    onSubmitted
 }) {
     if (!isBase58(playerWalletAddress, 32)) {
         throw new TypeError("Player wallet address must be a valid Solana public key.");
@@ -124,7 +140,7 @@ async function executeCyfurWithdrawal({
     }
 
     const connection = new Connection(rpcUrl, {
-        commitment: "confirmed",
+        commitment: "finalized",
         confirmTransactionInitialTimeout: 60000
     });
     const network = process.env.SOLANA_NETWORK;
@@ -175,24 +191,44 @@ async function executeCyfurWithdrawal({
         )
     );
 
-    const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash("confirmed");
+    const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash("finalized");
     transaction.feePayer = treasuryPublicKey;
     transaction.recentBlockhash = blockhash;
-
-    const signedTransaction = await transaction.sign(treasurySigner);
-    const signature = await connection.sendRawTransaction(signedTransaction.serialize(), {
-        skipPreflight: false,
-        maxRetries: 3
-    });
-    await connection.confirmTransaction({
-        blockhash,
-        lastValidBlockHeight,
-        signature
-    });
+    let signature = null;
+    try {
+        await transaction.sign(treasurySigner);
+        if (!transaction.signature) {
+            throw new Error("The treasury did not sign the withdrawal transaction.");
+        }
+        signature = encodeBase58(transaction.signature);
+        if (typeof onSubmitted === "function") {
+            await onSubmitted(signature);
+        }
+        await connection.sendRawTransaction(transaction.serialize(), {
+            skipPreflight: false,
+            maxRetries: 3
+        });
+        const confirmation = await connection.confirmTransaction({
+            blockhash,
+            lastValidBlockHeight,
+            signature
+        }, "finalized");
+        if (confirmation.value.err) {
+            const chainError = new Error("The submitted withdrawal transaction failed on Solana.");
+            chainError.chainFailed = true;
+            throw chainError;
+        }
+    } catch (error) {
+        if (signature) {
+            error.signature = signature;
+            error.submitted = true;
+        }
+        throw error;
+    }
 
     return {
         signature,
-        status: "confirmed",
+        status: "finalized",
         amountRaw: rawAmount.toString(),
         playerWalletAddress,
         treasuryAddress,
@@ -203,6 +239,7 @@ async function executeCyfurWithdrawal({
 module.exports = {
     calculateCreditsFromTokenAmountRaw,
     calculateWithdrawalTokenAmountRaw,
+    encodeBase58,
     executeCyfurWithdrawal,
     getWithdrawalSignerFromEnvironment,
     parseWithdrawalSecret

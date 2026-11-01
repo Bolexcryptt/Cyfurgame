@@ -183,8 +183,8 @@ declare
     v_level_session uuid;
     v_balance bigint;
     v_cost bigint;
-    v_unlocked integer;
     v_existing_session public.wallet_level_sessions%rowtype;
+    v_active_session public.wallet_level_sessions%rowtype;
 begin
     if coalesce(auth.role(), '') <> 'service_role' then
         raise exception 'Server authorization is required.' using errcode = '42501';
@@ -228,17 +228,23 @@ begin
         return;
     end if;
 
-    select least(99, coalesce(min(candidate.level_number), 100))
-    into v_unlocked
-    from generate_series(1, 99) as candidate(level_number)
-    where not exists (
-        select 1
-        from public.level_completions as completion
-        where completion.player_id = p_player_id
-          and completion.level_number = candidate.level_number
-    );
-    if p_level_number > v_unlocked then
-        raise exception 'Level is locked.' using errcode = '22023';
+    select * into v_active_session
+    from public.wallet_level_sessions
+    where player_id = p_player_id
+      and completed_at is null
+      and expires_at > now()
+    order by created_at desc
+    limit 1
+    for update;
+    if found then
+        if v_active_session.level_number <> p_level_number then
+            raise exception 'Another level session is already active.' using errcode = '55006';
+        end if;
+        select balance_credits into v_balance
+        from public.wallet_credit_accounts
+        where player_id = p_player_id;
+        return query select v_active_session.id, v_balance, v_active_session.entry_cost_credits;
+        return;
     end if;
 
     v_cost := floor(100 * power(1.08::numeric, p_level_number - 1))::bigint;
