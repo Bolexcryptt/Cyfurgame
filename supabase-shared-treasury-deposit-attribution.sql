@@ -105,7 +105,7 @@ begin
     where player_id = p_player_id
     for share;
     if not found or v_linked_wallet_address <> p_source_wallet_address then
-        raise exception 'The transfer sender is not the player's verified wallet.' using errcode = '22023';
+        raise exception 'The transfer sender is not the player''s verified wallet.' using errcode = '22023';
     end if;
 
     select * into v_config

@@ -318,4 +318,10 @@ test("the SQL accounting functions serialize entry and award rewards once per se
     assert.match(allLevelsMigration, /'game_entry', -v_cost/);
     assert.doesNotMatch(allLevelsMigration, /v_unlocked|Level is locked/i);
     assert.doesNotMatch(allLevelsMigration, /update public\.wallet_system_config|deposits_enabled\s*=/i);
+    const depositAttributionMigration = readFileSync(
+        new URL("../supabase-shared-treasury-deposit-attribution.sql", import.meta.url),
+        "utf8"
+    );
+    assert.match(depositAttributionMigration, /player''s verified wallet/);
+    assert.doesNotMatch(depositAttributionMigration, /player's verified wallet/);
 });
