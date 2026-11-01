@@ -1841,6 +1841,7 @@ button { -webkit-tap-highlight-color: transparent; }
     border-radius: 7px;
     background: #09151e;
 }
+.deposit-memo-panel[hidden] { display: none; }
 .deposit-memo-panel .wallet-field-label { grid-column: 1 / -1; }
 .deposit-memo-panel code { overflow-wrap: anywhere; color: #bcf2df; font: 11px/1.5 "Consolas", monospace; }
 .deposit-memo-panel .button { min-height: 34px; }

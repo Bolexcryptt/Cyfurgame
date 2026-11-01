@@ -192,7 +192,7 @@ module.exports = async function wallet(request, response) {
             network: network ?? null,
             disabledReason: depositsEnabled ? null : "direct_treasury_setup_incomplete",
             disabledMessage: depositsEnabled
-                ? "Deposit verification is ready. Send at least 1 CYFUR to the displayed treasury address, then submit the transaction signature or explorer link. RelicGrid verifies finality before crediting."
+                ? "Deposit verification is ready. Create deposit instructions, send the displayed amount with its unique memo, then submit the transaction link. RelicGrid verifies finality before crediting."
                 : `${readinessChecks.join(" ")} Do not send CYFUR until the status is READY.`,
             exchangeRateCreditsPerToken: CYFUR_CREDITS_PER_TOKEN,
             treasuryAddress,

@@ -1,11 +1,10 @@
--- Apply after supabase-direct-treasury-deposits.sql.
--- Adds a durable sender-wallet record and binds each credit to that player's
--- currently verified wallet. This migration does not enable deposits or alter balances.
+-- Apply after supabase-walletless-deposits.sql.
+-- Records the on-chain sender and attributes credits through a player-owned payment intent.
+-- This migration does not enable deposits or alter balances.
 
 do $$
 begin
-    if to_regclass('public.player_solana_wallets') is null
-       or to_regclass('public.wallet_system_config') is null
+    if to_regclass('public.wallet_system_config') is null
        or to_regclass('public.wallet_deposits') is null
        or to_regclass('public.wallet_credit_accounts') is null
        or to_regclass('public.wallet_credit_ledger') is null
@@ -13,12 +12,6 @@ begin
         raise exception 'Required wallet tables or ledger RPC are missing. Apply the documented wallet migrations first.';
     end if;
     if not exists (
-        select 1 from pg_attribute
-        where attrelid = 'public.player_solana_wallets'::regclass
-          and attname in ('player_id', 'wallet_address')
-          and not attisdropped
-        having count(*) = 2
-    ) or not exists (
         select 1 from pg_attribute
         where attrelid = 'public.wallet_system_config'::regclass
           and attname in (
@@ -74,7 +67,6 @@ declare
     v_config public.wallet_system_config%rowtype;
     v_deposit public.wallet_deposits%rowtype;
     v_deposit_id uuid;
-    v_linked_wallet_address text;
     v_expected_credits numeric;
     v_balance bigint;
     v_already_applied boolean;
@@ -97,15 +89,6 @@ begin
        or p_finalized_slot is null or p_finalized_slot <= 0
        or p_credit_amount_credits is null or p_credit_amount_credits <= 0 then
         raise exception 'Invalid verified deposit.' using errcode = '22023';
-    end if;
-
-    select wallet_address
-    into v_linked_wallet_address
-    from public.player_solana_wallets
-    where player_id = p_player_id
-    for share;
-    if not found or v_linked_wallet_address <> p_source_wallet_address then
-        raise exception 'The transfer sender is not the player''s verified wallet.' using errcode = '22023';
     end if;
 
     select * into v_config

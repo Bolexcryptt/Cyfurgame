@@ -204,17 +204,23 @@
                             <span id="wallet-address-copy-status" class="copy-confirmation" role="status" aria-live="polite"></span>
                         </div>
                         <ol class="deposit-steps">
-                            <li><span>01</span><div><strong>SEND CYFUR</strong><small>Use Phantom or another Solana wallet to send at least 1 CYFUR. Select the official CYFUR token on Solana.</small></div></li>
-                            <li><span>02</span><div><strong>VERIFY YOUR SENDING WALLET</strong><small>Link the wallet that sends CYFUR to your RelicGrid account. This ownership proof prevents another player from claiming your transfer.</small></div></li>
+                            <li><span>01</span><div><strong>GET PAYMENT INSTRUCTIONS</strong><small>Create a one-time amount and memo tied to your game account.</small></div></li>
+                            <li><span>02</span><div><strong>SEND CYFUR</strong><small>Use any Solana wallet. Send at least the displayed amount to the treasury and include the memo exactly.</small></div></li>
+                            <li><span>03</span><div><strong>PASTE CONFIRMATION</strong><small>Submit the transaction signature or Explorer/Solscan link. Credits are added after on-chain verification.</small></div></li>
                         </ol>
-                        <section class="deposit-memo-panel wallet-link-panel">
-                            <span class="wallet-field-label">VERIFIED SENDING WALLET</span>
-                            <code id="linked-wallet-address">No wallet linked</code>
-                            <button id="wallet-link-button" class="button button-quiet" type="button">LINK SENDING WALLET</button>
+                        <button id="deposit-create-intent" class="button button-primary" type="button" disabled>CREATE DEPOSIT INSTRUCTIONS</button>
+                        <section id="deposit-intent-panel" class="deposit-memo-panel" hidden>
+                            <span class="wallet-field-label">SEND THIS AMOUNT</span>
+                            <strong id="deposit-intent-amount"></strong>
+                            <span class="wallet-field-label">INCLUDE THIS MEMO EXACTLY</span>
+                            <code id="deposit-intent-memo"></code>
+                            <button id="deposit-copy-memo" class="button button-quiet" type="button">COPY MEMO</button>
+                            <span id="deposit-memo-copy-status" class="copy-confirmation" role="status" aria-live="polite"></span>
+                            <small id="deposit-intent-expiry"></small>
                         </section>
-                        <p id="deposit-wallet-requirement" class="wallet-api-status" role="status" aria-live="polite">A verified sending wallet is required to attribute a shared-treasury transfer. No memo is required.</p>
+                        <p id="deposit-wallet-requirement" class="wallet-api-status" role="status" aria-live="polite">Create deposit instructions first. Do not send CYFUR while deposit verification is unavailable.</p>
                         <form id="deposit-signature-form" class="deposit-signature-form">
-                            <label class="wallet-field-label" for="deposit-signature">03 · SUBMIT PAYMENT CONFIRMATION</label>
+                            <label class="wallet-field-label" for="deposit-signature">SUBMIT PAYMENT CONFIRMATION</label>
                             <input id="deposit-signature" name="signature" type="text" inputmode="url" autocomplete="off" spellcheck="false" maxlength="300" placeholder="Paste signature or Solana Explorer/Solscan link" required disabled>
                             <button id="deposit-verify-button" class="button button-primary" type="submit" disabled>VERIFY PAYMENT <span>→</span></button>
                         </form>

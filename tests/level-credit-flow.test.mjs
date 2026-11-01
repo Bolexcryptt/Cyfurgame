@@ -322,6 +322,6 @@ test("the SQL accounting functions serialize entry and award rewards once per se
         new URL("../supabase-shared-treasury-deposit-attribution.sql", import.meta.url),
         "utf8"
     );
-    assert.match(depositAttributionMigration, /player''s verified wallet/);
     assert.doesNotMatch(depositAttributionMigration, /player's verified wallet/);
+    assert.match(depositAttributionMigration, /p_source_wallet_address text/);
 });
