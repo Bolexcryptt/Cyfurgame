@@ -4514,7 +4514,9 @@ body {
 .wallet-field-label,
 .wallet-card .eyebrow { color: #88b5bf; }
 .wallet-api-status[data-state="error"] { color: #ffb18a; }
+.wallet-api-status[data-state="setup"] { color: #f1d48a; }
 .wallet-api-status[data-state="ready"] { color: #9ce8ca; }
+.deposit-status-badge[data-state="setup"] { border-color: #e5c87865; background: #332d1b; color: #f1d78d; }
 .wallet-history-heading { border-color: rgba(88, 202, 215, .18); }
 .wallet-history-item { border-radius: 2px; background: rgba(7, 18, 27, .9); }
 

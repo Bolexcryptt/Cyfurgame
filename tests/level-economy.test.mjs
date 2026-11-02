@@ -917,7 +917,7 @@ test("deposit UI creates an account-bound payment memo before accepting a transa
     assert.match(html, /Paste signature or Solana Explorer\/Solscan link/);
     const app = readFileSync(new URL("../app.js", import.meta.url), "utf8");
     assert.match(app, /apiUrl\("payment-intent"\)/);
-    assert.match(app, /Unavailable: \$\{readinessMessage\}/);
+    assert.match(app, /walletRequirement\.textContent = readinessMessage/);
     assert.match(app, /typeof result\.disabledMessage === "string"/);
     assert.doesNotMatch(app, /SOLANA_TREASURY_ADDRESS must exactly match Supabase treasury_address/);
     assert.doesNotMatch(app, /wallet_system_config\.deposits_enabled/);
@@ -971,7 +971,12 @@ test("deposit backend requires owner-approved mint configuration and migration k
     assert.doesNotMatch(app, new RegExp(treasury));
     assert.doesNotMatch(html, new RegExp(treasury));
     assert.match(paymentIntentApi, /readinessChecks/);
-    assert.match(app, /disabled: "NOT READY"/);
+    assert.match(app, /setup: "CHECK SETUP"/);
+    assert.doesNotMatch(html, /id="deposit-create-intent"[^>]+disabled/);
+    assert.doesNotMatch(html, /id="deposit-signature"[^>]+disabled/);
+    assert.doesNotMatch(html, /id="deposit-verify-button"[^>]+disabled/);
+    assert.match(app, /createIntentButton\.disabled = false/);
+    assert.match(app, /signatureSubmit\.disabled = false/);
     assert.match(app, /If it passes, credits are applied after a 5-second security delay/);
 });
 

@@ -700,10 +700,11 @@ function setWalletMessage(message, state = "") {
     const stateLabels = {
         verifying: "VERIFYING",
         pending: "PENDING",
+        setup: "CHECK SETUP",
         confirmed: "CONFIRMED",
         rejected: "REJECTED",
         error: "ERROR",
-        disabled: "NOT READY",
+        disabled: "CHECK SETUP",
         ready: "READY"
     };
     if (badge && stateLabels[state]) {
@@ -1069,14 +1070,14 @@ async function refreshWallet() {
     balanceRefreshButton.textContent = "CHECKING BALANCE…";
     copyButton.disabled = true;
     address.textContent = "Loading verified treasury…";
-    status.textContent = "NOT READY";
-    status.dataset.state = "disabled";
+    status.textContent = "CHECKING";
+    status.dataset.state = "pending";
     balance.textContent = "Unavailable";
     document.getElementById("wallet-balance-state").textContent = "CREDITS · NOT VERIFIED";
     walletRequirement.textContent = "Checking deposit readiness…";
-    createIntentButton.disabled = true;
-    signatureInput.disabled = true;
-    signatureSubmit.disabled = true;
+    createIntentButton.disabled = false;
+    signatureInput.disabled = false;
+    signatureSubmit.disabled = false;
     renderWalletHistory(null);
 
     try {
@@ -1123,7 +1124,7 @@ async function refreshWallet() {
             if (response.status >= 500) {
                 throw new Error("Deposit readiness could not be verified. Please try again later.");
             }
-            throw new Error(result.error || `Wallet request failed (${response.status}).`);
+            throw new Error(result.message || result.error || `Wallet request failed (${response.status}).`);
         }
 
         address.textContent = result.treasuryAddress || "Treasury unavailable";
@@ -1139,9 +1140,9 @@ async function refreshWallet() {
             Number.isInteger(result.tokenDecimals) &&
             Boolean(result.treasuryTokenAccountAddress);
         const depositReady = depositConfigurationReady;
-        createIntentButton.disabled = !depositReady;
-        signatureInput.disabled = !depositReady;
-        signatureSubmit.disabled = !depositReady;
+        createIntentButton.disabled = false;
+        signatureInput.disabled = false;
+        signatureSubmit.disabled = false;
         balance.textContent = result.balanceCredits === null
             ? "Unavailable"
             : formatCredits(result.balanceCredits);
@@ -1149,7 +1150,7 @@ async function refreshWallet() {
             result.balanceVerified === true ? "CREDITS · BACKEND VERIFIED" : "CREDITS · NOT VERIFIED";
         status.textContent = result.depositsEnabled === true
             ? `READY${result.network ? ` · ${result.network.toUpperCase()}` : ""}`
-            : "NOT READY";
+            : "CHECK SETUP";
         renderWalletHistory(result.deposits);
         if (depositReady) {
             walletRequirement.textContent = currentDepositIntent
@@ -1161,8 +1162,8 @@ async function refreshWallet() {
                 result.disabledMessage.trim()
                 ? result.disabledMessage
                 : "Deposit readiness could not be verified. Please check back later.";
-            walletRequirement.textContent = `Unavailable: ${readinessMessage}`;
-            setWalletMessage(readinessMessage, "disabled");
+            walletRequirement.textContent = readinessMessage;
+            setWalletMessage(readinessMessage, "setup");
         }
         await refreshWithdrawalStatus();
     } catch (error) {
@@ -2202,7 +2203,12 @@ document.getElementById("deposit-create-intent").addEventListener("click", async
         });
         const result = await response.json().catch(() => ({}));
         if (!response.ok) {
-            throw new Error(result.message || result.error || `Deposit instructions failed (${response.status}).`);
+            const readinessDetails = Array.isArray(result.readinessChecks)
+                ? ` ${result.readinessChecks.join(" ")}`
+                : "";
+            throw new Error(
+                `${result.message || result.error || `Deposit instructions failed (${response.status}).`}${readinessDetails}`
+            );
         }
         if (typeof result.intentId !== "string" ||
             typeof result.amountRaw !== "string" || !/^[1-9]\d*$/.test(result.amountRaw) ||
@@ -2229,7 +2235,7 @@ document.getElementById("deposit-create-intent").addEventListener("click", async
         setWalletMessage(error.message, "error");
     } finally {
         button.textContent = "CREATE DEPOSIT INSTRUCTIONS";
-        button.disabled = walletStatusSnapshot?.depositsEnabled !== true;
+        button.disabled = false;
     }
 });
 document.getElementById("deposit-copy-memo").addEventListener("click", async () => {
@@ -2263,7 +2269,7 @@ document.getElementById("deposit-signature-form").addEventListener("submit", asy
             error.status >= 400 && error.status < 500 ? "rejected" : "error"
         );
     } finally {
-        button.disabled = walletStatusSnapshot?.depositsEnabled !== true;
+        button.disabled = false;
         button.textContent = "VERIFY PAYMENT →";
     }
 });

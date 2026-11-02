@@ -204,7 +204,7 @@
                             <li><span>02</span><div><strong>SEND CYFUR</strong><small>Use any Solana wallet. Send at least the displayed amount to the treasury and include the memo exactly.</small></div></li>
                             <li><span>03</span><div><strong>PASTE CONFIRMATION</strong><small>Submit the transaction signature or Explorer/Solscan link. Credits are added after on-chain verification.</small></div></li>
                         </ol>
-                        <button id="deposit-create-intent" class="button button-primary" type="button" disabled>CREATE DEPOSIT INSTRUCTIONS</button>
+                        <button id="deposit-create-intent" class="button button-primary" type="button">CREATE DEPOSIT INSTRUCTIONS</button>
                         <section id="deposit-intent-panel" class="deposit-memo-panel" hidden>
                             <span class="wallet-field-label">SEND THIS AMOUNT</span>
                             <strong id="deposit-intent-amount"></strong>
@@ -217,11 +217,11 @@
                         <p id="deposit-wallet-requirement" class="wallet-api-status" role="status" aria-live="polite">Create deposit instructions first. Do not send CYFUR while deposit verification is unavailable.</p>
                         <form id="deposit-signature-form" class="deposit-signature-form">
                             <label class="wallet-field-label" for="deposit-signature">SUBMIT PAYMENT CONFIRMATION</label>
-                            <input id="deposit-signature" name="signature" type="text" inputmode="url" autocomplete="off" spellcheck="false" maxlength="300" placeholder="Paste signature or Solana Explorer/Solscan link" required disabled>
-                            <button id="deposit-verify-button" class="button button-primary" type="submit" disabled>VERIFY PAYMENT <span>→</span></button>
+                            <input id="deposit-signature" name="signature" type="text" inputmode="url" autocomplete="off" spellcheck="false" maxlength="300" placeholder="Paste signature or Solana Explorer/Solscan link" required>
+                            <button id="deposit-verify-button" class="button button-primary" type="submit">VERIFY PAYMENT <span>→</span></button>
                         </form>
                         <div class="deposit-status-panel">
-                            <span id="wallet-status-value" class="deposit-status-badge" data-state="disabled">NOT READY</span>
+                            <span id="wallet-status-value" class="deposit-status-badge" data-state="pending">CHECKING</span>
                             <p id="wallet-api-status" tabindex="-1" role="status" aria-live="polite">Checking deposit readiness. Do not send CYFUR until the status is READY.</p>
                             <small>Credits are awarded only after RelicGrid verifies a successful finalized payment on Solana. A signature or screenshot alone is never proof of payment.</small>
                         </div>
