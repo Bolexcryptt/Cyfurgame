@@ -9,6 +9,7 @@ const {
 } = require("../server/lib/wallet");
 const {
     deriveAssociatedTokenAccount,
+    getApprovedCyfurMintAddress,
     GENESIS_HASHES,
     isOfficialCyfurMintAccount,
     isBase58,
@@ -47,7 +48,13 @@ module.exports = async function paymentIntent(request, response) {
             });
         }
         const network = process.env.SOLANA_NETWORK;
+        const approvedMintAddress = getApprovedCyfurMintAddress();
         const readinessChecks = [];
+        if (!approvedMintAddress ||
+            (network === "mainnet-beta" &&
+                approvedMintAddress !== RELICGRID_CYFUR_MINT_ADDRESS)) {
+            readinessChecks.push("WALLET_APPROVED_CYFUR_MINT_ADDRESS does not match the supported mint for this network.");
+        }
         if (process.env.WALLET_DIRECT_TREASURY_READY !== "true") {
             readinessChecks.push("WALLET_DIRECT_TREASURY_READY must be true.");
         }
@@ -74,7 +81,9 @@ module.exports = async function paymentIntent(request, response) {
         const config = configs[0];
         if (!config || config.deposits_enabled !== true || config.network !== network ||
             !isBase58(config.official_mint_address, 32) ||
-            config.official_mint_address !== RELICGRID_CYFUR_MINT_ADDRESS ||
+            config.official_mint_address !== approvedMintAddress ||
+            (network === "mainnet-beta" &&
+                config.official_mint_address !== RELICGRID_CYFUR_MINT_ADDRESS) ||
             !TOKEN_PROGRAM_IDS.has(config.token_program_id) ||
             !Number.isInteger(config.token_decimals) ||
             String(config.credits_per_token) !== "10000" ||
@@ -112,9 +121,14 @@ module.exports = async function paymentIntent(request, response) {
         if (genesisHash !== GENESIS_HASHES[network] ||
             (treasuryAccount?.value &&
                 treasuryAccount.value.owner !== "11111111111111111111111111111111") ||
-            !isOfficialCyfurMintAccount(mintAccount) ||
-            config.token_program_id !== "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA" ||
-            config.token_decimals !== 8 ||
+            (network === "mainnet-beta"
+                ? !isOfficialCyfurMintAccount(mintAccount) ||
+                    config.token_program_id !== "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA" ||
+                    config.token_decimals !== 8
+                : !mintAccount?.value ||
+                    mintAccount.value.owner !== config.token_program_id ||
+                    mintAccount.value.data?.parsed?.type !== "mint" ||
+                    mintAccount.value.data?.parsed?.info?.decimals !== config.token_decimals) ||
             !treasuryTokenAccountInfo?.value ||
             treasuryTokenAccountInfo.value.owner !== config.token_program_id ||
             treasuryTokenAccountInfo.value.data?.parsed?.type !== "account" ||
@@ -122,7 +136,7 @@ module.exports = async function paymentIntent(request, response) {
             treasuryTokenInfo?.owner !== config.treasury_address) {
             return sendJson(response, 503, {
                 error: "wallet_configuration_incomplete",
-                message: "Finalized Solana mainnet account checks for the CYFUR mint and treasury associated token account did not pass."
+                message: "Finalized Solana account checks for the selected network, CYFUR mint, and treasury associated token account did not pass."
             });
         }
         if (request.body?.action === "validate") {

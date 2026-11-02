@@ -13,6 +13,7 @@ const {
     GENESIS_HASHES,
     isOfficialCyfurMintAccount,
     isBase58,
+    RELICGRID_CYFUR_MINT_ADDRESS,
     RELICGRID_TREASURY_ADDRESS,
     solanaRpc
 } = require("../server/lib/solana-deposit");
@@ -69,13 +70,35 @@ module.exports = async function wallet(request, response) {
         let treasuryAddress = null;
         let treasuryTokenAccountAddress = null;
         const readinessChecks = [];
+        const addReadinessCheck = (code, message) => readinessChecks.push({ code, message });
+        if (!GENESIS_HASHES[network]) {
+            addReadinessCheck(
+                "solana_network_unsupported",
+                "The selected Solana network is not supported."
+            );
+        }
         if (config?.treasury_address !== RELICGRID_TREASURY_ADDRESS) {
-            readinessChecks.push("The configured treasury does not match the approved RelicGrid treasury address.");
+            addReadinessCheck(
+                "database_treasury_mismatch",
+                "The configured treasury does not match the approved RelicGrid treasury address."
+            );
         }
         if (!approvedMintAddress) {
-            readinessChecks.push("The owner-confirmed official CYFUR mint has not been configured on the server.");
+            addReadinessCheck(
+                "approved_mint_unconfigured",
+                "The owner-confirmed official CYFUR mint has not been configured on the server."
+            );
+        } else if (network === "mainnet-beta" &&
+            approvedMintAddress !== RELICGRID_CYFUR_MINT_ADDRESS) {
+            addReadinessCheck(
+                "approved_mint_not_application_mint",
+                "The approved mainnet mint does not match the CYFUR mint supported by this application."
+            );
         } else if (config?.official_mint_address !== approvedMintAddress) {
-            readinessChecks.push("The configured CYFUR mint does not match the owner-confirmed official mint.");
+            addReadinessCheck(
+                "database_mint_mismatch",
+                "The configured CYFUR mint does not match the owner-confirmed official mint."
+            );
         }
         if (!config ||
             !config.official_mint_address ||
@@ -85,35 +108,62 @@ module.exports = async function wallet(request, response) {
             config.rounding_policy !== "floor" ||
             config.network !== network ||
             !config?.treasury_address) {
-            readinessChecks.push("Wallet database configuration must match the selected Solana network and CYFUR settings.");
+            addReadinessCheck(
+                "database_wallet_configuration_incomplete",
+                "Wallet database configuration must match the selected Solana network and CYFUR settings."
+            );
         }
         if (!process.env.SUPABASE_SERVICE_ROLE_KEY?.trim()) {
-            readinessChecks.push("The server-side wallet database connection is not configured.");
+            addReadinessCheck(
+                "service_database_key_missing",
+                "The server-side wallet database connection is not configured."
+            );
         }
         if (!process.env.SOLANA_RPC_URL?.trim()) {
-            readinessChecks.push("The server-side Solana RPC connection is not configured.");
+            addReadinessCheck(
+                "solana_rpc_url_missing",
+                "The server-side Solana RPC connection is not configured."
+            );
         }
         if (process.env.SOLANA_RPC_URL?.trim() &&
             GENESIS_HASHES[network] &&
             config?.network === network &&
             isBase58(approvedTreasuryAddress, 32) &&
             config?.treasury_address === approvedTreasuryAddress) {
-            const [genesisHash, treasuryAccount, mintAccount] = await Promise.all([
-                solanaRpc(process.env.SOLANA_RPC_URL, "getGenesisHash", []),
-                solanaRpc(process.env.SOLANA_RPC_URL, "getAccountInfo", [approvedTreasuryAddress, {
-                    commitment: "finalized",
-                    encoding: "base64"
-                }]),
-                solanaRpc(process.env.SOLANA_RPC_URL, "getAccountInfo", [config.official_mint_address, {
-                    commitment: "finalized",
-                    encoding: "jsonParsed"
-                }])
-            ]);
+            let genesisHash;
+            let treasuryAccount;
+            let mintAccount;
+            try {
+                [genesisHash, treasuryAccount, mintAccount] = await Promise.all([
+                    solanaRpc(process.env.SOLANA_RPC_URL, "getGenesisHash", []),
+                    solanaRpc(process.env.SOLANA_RPC_URL, "getAccountInfo", [approvedTreasuryAddress, {
+                        commitment: "finalized",
+                        encoding: "base64"
+                    }]),
+                    solanaRpc(process.env.SOLANA_RPC_URL, "getAccountInfo", [config.official_mint_address, {
+                        commitment: "finalized",
+                        encoding: "jsonParsed"
+                    }])
+                ]);
+            } catch (error) {
+                console.error("Wallet deposit readiness Solana check failed.", {
+                    network,
+                    code: error.code ?? "solana_readiness_rpc_failed",
+                    rpcCode: Number.isInteger(error.rpcCode) ? error.rpcCode : null
+                });
+                throw error;
+            }
             if (genesisHash !== GENESIS_HASHES[network]) {
-                readinessChecks.push("SOLANA_RPC_URL is connected to a different Solana network.");
+                addReadinessCheck(
+                    "solana_rpc_network_mismatch",
+                    "SOLANA_RPC_URL is connected to a different Solana network."
+                );
             } else if (treasuryAccount?.value &&
                 treasuryAccount.value.owner !== "11111111111111111111111111111111") {
-                readinessChecks.push("The configured treasury address is not a System Program-owned wallet authority; token accounts are not valid treasury wallets.");
+                addReadinessCheck(
+                    "treasury_authority_invalid",
+                    "The configured treasury address is not a System Program-owned wallet authority; token accounts are not valid treasury wallets."
+                );
             } else if (config.network === "mainnet-beta"
                 ? !isOfficialCyfurMintAccount(mintAccount) ||
                     config.token_program_id !== "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA" ||
@@ -122,7 +172,10 @@ module.exports = async function wallet(request, response) {
                     mintAccount.value.owner !== config.token_program_id ||
                     mintAccount.value.data?.parsed?.type !== "mint" ||
                     mintAccount.value.data?.parsed?.info?.decimals !== config.token_decimals) {
-                readinessChecks.push("The configured CYFUR mint metadata, token program, decimals, or revoked authorities do not match finalized Solana mainnet account data.");
+                addReadinessCheck(
+                    "mint_account_verification_failed",
+                    "The configured CYFUR mint metadata, token program, decimals, or revoked authorities do not match finalized Solana account data."
+                );
             } else {
                 try {
                     treasuryTokenAccountAddress = deriveAssociatedTokenAccount(
@@ -144,14 +197,20 @@ module.exports = async function wallet(request, response) {
                         treasuryTokenAccount.value.data?.parsed?.type !== "account" ||
                         tokenInfo?.mint !== config.official_mint_address ||
                         tokenInfo?.owner !== approvedTreasuryAddress) {
-                        readinessChecks.push("The treasury CYFUR associated token account is missing or does not match the configured authority and mint.");
+                        addReadinessCheck(
+                            "treasury_token_account_invalid",
+                            "The treasury CYFUR associated token account is missing or does not match the configured authority and mint."
+                        );
                         treasuryTokenAccountAddress = null;
                     } else {
                         treasuryAddress = approvedTreasuryAddress;
                     }
                 } catch (error) {
                     if (error instanceof TypeError) {
-                        readinessChecks.push("The configured treasury address cannot own a standard associated token account.");
+                        addReadinessCheck(
+                            "treasury_token_account_derivation_failed",
+                            "The configured treasury address cannot own a standard associated token account."
+                        );
                         treasuryTokenAccountAddress = null;
                     } else {
                         throw error;
@@ -160,19 +219,37 @@ module.exports = async function wallet(request, response) {
             }
         }
         if (process.env.WALLET_DIRECT_TREASURY_READY !== "true") {
-            readinessChecks.push("Direct-to-treasury deposits have not passed the server readiness gate.");
+            addReadinessCheck(
+                "direct_treasury_acknowledgement_missing",
+                "Direct-to-treasury deposits have not passed the server readiness gate."
+            );
         }
         if (config?.deposits_enabled !== true) {
-            readinessChecks.push("Deposits are disabled in the wallet database configuration.");
+            addReadinessCheck(
+                "database_deposits_disabled",
+                "Deposits are disabled in the wallet database configuration."
+            );
         }
         if (process.env.WALLET_DEPOSITS_ENABLED !== "true") {
-            readinessChecks.push("The server deposit feature flag is disabled.");
+            addReadinessCheck(
+                "server_deposits_flag_disabled",
+                "The server deposit feature flag is disabled."
+            );
         }
         if (network === "mainnet-beta" &&
             process.env.WALLET_MAINNET_DEPOSITS_ENABLED !== "true") {
-            readinessChecks.push("The mainnet deposit feature flag is disabled.");
+            addReadinessCheck(
+                "server_mainnet_deposits_flag_disabled",
+                "The mainnet deposit feature flag is disabled."
+            );
         }
         const depositsEnabled = readinessChecks.length === 0;
+        if (!depositsEnabled) {
+            console.warn("Wallet deposit readiness checks failed.", {
+                network: network ?? null,
+                failedChecks: readinessChecks.map(({ code }) => code)
+            });
+        }
         const accountBalance = accounts[0]?.balance_credits;
         const lastLedgerBalance = ledgerEntries[0]?.balance_after_credits;
         const storedBalance = accountBalance ??
@@ -193,7 +270,7 @@ module.exports = async function wallet(request, response) {
             disabledReason: depositsEnabled ? null : "direct_treasury_setup_incomplete",
             disabledMessage: depositsEnabled
                 ? "Deposit verification is ready. Create deposit instructions, send the displayed amount with its unique memo, then submit the transaction link. RelicGrid verifies finality before crediting."
-                : `${readinessChecks.join(" ")} Do not send CYFUR until the status is READY.`,
+                : `${readinessChecks.map(({ message }) => message).join(" ")} Do not send CYFUR until the status is READY.`,
             exchangeRateCreditsPerToken: CYFUR_CREDITS_PER_TOKEN,
             treasuryAddress,
             treasuryTokenAccountAddress,

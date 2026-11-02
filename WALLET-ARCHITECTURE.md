@@ -45,6 +45,7 @@ Configure these Vercel **server-side** variables:
 - `SUPABASE_SERVICE_ROLE_KEY` — secret service-role key, used only by API routes for trusted reads and RPCs.
 - `SOLANA_RPC_URL` — trusted HTTPS Solana RPC endpoint.
 - `SOLANA_NETWORK` — `devnet` for isolated testing; `mainnet-beta` only for production review.
+- `WALLET_APPROVED_CYFUR_MINT_ADDRESS` — server-only approved mint. On mainnet it must equal the application’s fixed CYFUR mint; on devnet it must match the test mint in `wallet_system_config`.
 - `WITHDRAWAL_TREASURY_PRIVATE_KEY` — the one server-side treasury signing key used for withdrawals. Accepted formats are a base58-encoded 64-byte Solana secret key, base64-encoded 64-byte key, or JSON array of 64 byte values. The server verifies that its public key matches the configured treasury before submitting a payout. Do not use a client-prefixed variable, commit it, log it, or send it to the browser. `TREASURY_PRIVATE_KEY` is supported only as a legacy fallback; a second key is not required.
 - `WITHDRAWAL_ENABLED` — leave unset or `false` until the signer, owner-approved mint, live Supabase row, token account and funding, and a separately authorized small test are verified.
 - `wallet_system_config.withdrawals_enabled` — remains false by default; only the owner/operator should enable it after the same review. Both this DB gate and `WITHDRAWAL_ENABLED=true` are required for an actual payout.
@@ -52,6 +53,8 @@ Configure these Vercel **server-side** variables:
 - `WALLET_DIRECT_TREASURY_READY=true` — owner/operator acknowledgment that the treasury address, ownership, monitoring, and reconciliation process are reviewed. Leave unset until confirmed.
 - `WALLET_DEPOSITS_ENABLED=true` — global deposit verification switch; leave unset until all tests and reviews pass.
 - `WALLET_MAINNET_DEPOSITS_ENABLED=true` — additional production-only switch; leave unset unless the mainnet launch is explicitly approved.
+
+The authenticated `GET /api/wallet` readiness response gives a user-facing reason when any required gate is missing. Vercel function logs record only non-secret readiness check IDs (for example, `server_deposits_flag_disabled` or `treasury_token_account_invalid`) and the Solana network. RPC failures are logged separately with the operation and safe error code; RPC URLs, credentials, and private keys are never logged. Check the Production environment specifically and redeploy after changing variables.
 - `GAME_FRONTEND_ORIGIN` — exact HTTPS browser origin allowed to call the API cross-origin (for example, the GitHub Pages origin); never use a wildcard.
 - `GAME_API_BASE_URL` — frontend build-time/public config in `supabase-config.js`, set to the deployed HTTPS API origin when the game and API use different origins. Leave empty only when `/api` is served from the same origin.
 
