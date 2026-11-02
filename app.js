@@ -703,7 +703,7 @@ function setWalletMessage(message, state = "") {
         confirmed: "CONFIRMED",
         rejected: "REJECTED",
         error: "ERROR",
-        disabled: "DISABLED",
+        disabled: "NOT READY",
         ready: "READY"
     };
     if (badge && stateLabels[state]) {
@@ -1069,7 +1069,7 @@ async function refreshWallet() {
     balanceRefreshButton.textContent = "CHECKING BALANCE…";
     copyButton.disabled = true;
     address.textContent = "Loading verified treasury…";
-    status.textContent = "DISABLED";
+    status.textContent = "NOT READY";
     status.dataset.state = "disabled";
     balance.textContent = "Unavailable";
     document.getElementById("wallet-balance-state").textContent = "CREDITS · NOT VERIFIED";
@@ -1082,7 +1082,7 @@ async function refreshWallet() {
     try {
         if (!supabaseConfigured || !supabase) {
             walletRequirement.textContent = "Unavailable: Supabase is not configured.";
-            setWalletMessage("Supabase is not configured; wallet data is unavailable and deposits remain disabled.", "error");
+            setWalletMessage("Supabase is not configured; wallet data and deposit readiness are unavailable.", "error");
             return;
         }
         const { data, error } = await supabase.auth.getSession();
@@ -1090,7 +1090,7 @@ async function refreshWallet() {
         const accessToken = data.session?.access_token;
         if (!accessToken) {
             walletRequirement.textContent = "Unavailable: sign in to your RelicGrid account first.";
-            setWalletMessage("Sign in to view wallet data. Deposits remain disabled.", "error");
+            setWalletMessage("Sign in to view wallet data and deposit readiness.", "error");
             return;
         }
 
@@ -1102,12 +1102,12 @@ async function refreshWallet() {
         if (!response.ok) {
             if (result.error === "wallet_schema_not_installed") {
                 walletRequirement.textContent = "Wallet database setup is incomplete.";
-                setWalletMessage("Deposits are temporarily unavailable. Please check back later.", "disabled");
+                setWalletMessage("Wallet database setup is incomplete. Deposit readiness cannot be verified.", "error");
                 return;
             }
             if (result.error === "wallet_api_not_configured") {
                 walletRequirement.textContent = "Wallet server configuration is incomplete.";
-                setWalletMessage("Deposits are temporarily unavailable. Please check back later.", "disabled");
+                setWalletMessage("Wallet server configuration is incomplete. Deposit readiness cannot be verified.", "error");
                 return;
             }
             if (result.error === "authentication_required") {
@@ -1117,11 +1117,11 @@ async function refreshWallet() {
             }
             if (response.status === 404 || response.status === 501) {
                 walletRequirement.textContent = "Deposit service is unavailable.";
-                setWalletMessage("Deposits are temporarily unavailable. Please check back later.", "disabled");
+                setWalletMessage("Deposit readiness service is unavailable. Try refreshing the wallet status.", "error");
                 return;
             }
             if (response.status >= 500) {
-                throw new Error("Deposits are temporarily unavailable. Please try again later.");
+                throw new Error("Deposit readiness could not be verified. Please try again later.");
             }
             throw new Error(result.error || `Wallet request failed (${response.status}).`);
         }
@@ -1149,7 +1149,7 @@ async function refreshWallet() {
             result.balanceVerified === true ? "CREDITS · BACKEND VERIFIED" : "CREDITS · NOT VERIFIED";
         status.textContent = result.depositsEnabled === true
             ? `READY${result.network ? ` · ${result.network.toUpperCase()}` : ""}`
-            : "DISABLED";
+            : "NOT READY";
         renderWalletHistory(result.deposits);
         if (depositReady) {
             walletRequirement.textContent = currentDepositIntent
@@ -1160,7 +1160,7 @@ async function refreshWallet() {
             const readinessMessage = typeof result.disabledMessage === "string" &&
                 result.disabledMessage.trim()
                 ? result.disabledMessage
-                : "Deposits are temporarily unavailable. Please check back later.";
+                : "Deposit readiness could not be verified. Please check back later.";
             walletRequirement.textContent = `Unavailable: ${readinessMessage}`;
             setWalletMessage(readinessMessage, "disabled");
         }
@@ -1168,7 +1168,7 @@ async function refreshWallet() {
     } catch (error) {
         console.error("Wallet data could not be refreshed.", error);
         walletRequirement.textContent = "Deposit status could not be loaded.";
-        setWalletMessage("Deposits are temporarily unavailable. Please try again later.", "disabled");
+        setWalletMessage("Deposit readiness could not be verified. Please try again later.", "error");
     } finally {
         refreshButton.disabled = false;
         refreshButton.textContent = "REFRESH";
@@ -1555,7 +1555,7 @@ async function connectSolanaWallet() {
         if (!linkResponse.ok || linkResult.linked !== true) {
             throw new Error(linkResult.message || linkResult.error || `Wallet verification failed (${linkResponse.status}).`);
         }
-        setWalletMessage("Solana wallet ownership is verified and linked. Deposits remain disabled until the treasury and backend checks are ready.", "disabled");
+        setWalletMessage("Solana wallet ownership is linked. Wallet linking is not required for shared-treasury deposits.", "ready");
         await refreshWallet();
     } catch (error) {
         console.error("Solana wallet could not be linked.", error);
@@ -1619,7 +1619,12 @@ async function verifyDepositSignature(signatureOrLink) {
             direct_treasury_not_ready: result.message,
             wallet_configuration_incomplete: result.message
         };
-        throw new Error(`Rejected: ${messages[result.error] || result.message || result.error || `Deposit verification failed (${response.status}).`}`);
+        const verificationError = new Error(
+            `Rejected: ${messages[result.error] || result.message || result.error || `Deposit verification failed (${response.status}).`}`
+        );
+        verificationError.code = result.error;
+        verificationError.status = response.status;
+        throw verificationError;
     }
     if (result.status !== "confirmed" || !/^\d+$/.test(String(result.creditAmountCredits)) ||
         !/^\d+$/.test(String(result.balanceCredits))) {
@@ -2245,12 +2250,18 @@ document.getElementById("deposit-signature-form").addEventListener("submit", asy
     if (!signatureOrLink) return;
     button.disabled = true;
     button.textContent = "VERIFYING…";
-    setWalletMessage("Verifying your CYFUR transaction on Solana…", "verifying");
+    setWalletMessage(
+        "Pending: independently checking the finalized Solana transaction. If it passes, credits are applied after a 5-second security delay.",
+        "pending"
+    );
     try {
         await verifyDepositSignature(signatureOrLink);
     } catch (error) {
         console.error("Deposit signature verification failed.", error);
-        setWalletMessage(error.message, "error");
+        setWalletMessage(
+            error.message,
+            error.status >= 400 && error.status < 500 ? "rejected" : "error"
+        );
     } finally {
         button.disabled = walletStatusSnapshot?.depositsEnabled !== true;
         button.textContent = "VERIFY PAYMENT →";

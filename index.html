@@ -221,8 +221,8 @@
                             <button id="deposit-verify-button" class="button button-primary" type="submit" disabled>VERIFY PAYMENT <span>→</span></button>
                         </form>
                         <div class="deposit-status-panel">
-                            <span id="wallet-status-value" class="deposit-status-badge" data-state="disabled">DISABLED</span>
-                            <p id="wallet-api-status" tabindex="-1" role="status" aria-live="polite">Deposit verification is currently unavailable. Do not send CYFUR until the treasury is verified and deposits are enabled.</p>
+                            <span id="wallet-status-value" class="deposit-status-badge" data-state="disabled">NOT READY</span>
+                            <p id="wallet-api-status" tabindex="-1" role="status" aria-live="polite">Checking deposit readiness. Do not send CYFUR until the status is READY.</p>
                             <small>Credits are awarded only after RelicGrid verifies a successful finalized payment on Solana. A signature or screenshot alone is never proof of payment.</small>
                         </div>
                         <p id="deposit-transaction-result" class="wallet-api-status" hidden><a id="deposit-transaction-link" href="#" target="_blank" rel="noopener noreferrer">View transaction on Solana Explorer</a></p>

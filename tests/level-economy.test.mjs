@@ -24,7 +24,16 @@ import {
     startPhantomMobileConnect,
     waitForPhantomProvider
 } from "../wallet-provider.mjs";
-import { calculateSolveTimeMilliseconds, claimLevelCompletion, CYFUR_CREDITS_PER_TOKEN, evaluateLevelStars, getLevelEconomy, getLevelStarTimeTargets, levels } from "../levels.js";
+import {
+    calculateSolveTimeMilliseconds,
+    claimLevelCompletion,
+    CYFUR_CREDITS_PER_TOKEN,
+    evaluateLevelStars,
+    getLevelEconomy,
+    getLevelStarTimeTargets,
+    levels,
+    traceLaserRoute
+} from "../levels.js";
 
 const require = createRequire(import.meta.url);
 const nacl = require("tweetnacl");
@@ -797,8 +806,14 @@ test("all levels can start in practice while paid rewards require a server sessi
     assert.match(scene, /ESTIMATED REWARD/);
     assert.match(scene, /Pending server validation; not yet credited/);
     assert.match(scene, /No reward is credited for a failed attempt/);
-    assert.match(scene, /const mirror = placedMirrors\.get\(gridKey\(row, col\)\);[\s\S]*?else if \(isObstacle\)/);
-    assert.match(scene, /crystal\.definition\.inputColor !== colorIndex % beamColors\.length/);
+    assert.match(scene, /traceLaserRoute\(activeLevel, mirrorOrientations, launchDirection\)/);
+    const mirrorPlacement = scene.slice(
+        scene.indexOf("function placeOrRotateMirror"),
+        scene.indexOf("function toggleLaunchDirection")
+    );
+    assert.match(mirrorPlacement, /existing\.slash = !existing\.slash/);
+    assert.match(mirrorPlacement, /orientMirror\(existing\)/);
+    assert.match(mirrorPlacement, /previewRoute = traceLight\(\)/);
     assert.match(scene, /drawActiveRoute\(previewRoute, previewRoute\.segments\.length, true\)/);
     assert.doesNotMatch(
         scene.slice(scene.indexOf("function placeOrRotateMirror"), scene.indexOf("function toggleLaunchDirection")),
@@ -812,8 +827,8 @@ test("RelicGrid branding is used in the game and hidden scenes stop rendering", 
     assert.doesNotMatch(html, /FluxGrid/i);
 
     const scene = readFileSync(new URL("../script.js", import.meta.url), "utf8");
-    assert.match(scene, /antialias: true/);
-    assert.match(scene, /mobileQuality \? 1\.25 : 1\.5/);
+    assert.match(scene, /antialias: !mobileQuality/);
+    assert.match(scene, /mobileQuality \? 1 : 1\.5/);
     assert.match(scene, /configureQualityLight/);
     assert.match(scene, /new THREE\.Sprite\(new THREE\.SpriteMaterial/);
     assert.match(scene, /crystalHits\.forEach/);
@@ -821,7 +836,7 @@ test("RelicGrid branding is used in the game and hidden scenes stop rendering", 
     assert.match(scene, /cancelAnimationFrame\(renderRequest\)/);
     assert.match(scene, /const CORE_SCALE = 0\.36/);
     assert.match(scene, /const CORE_CONTACT_HEIGHT = CORE_SCALE \* \(CORE_HOLOGRAM_Y \+ CORE_PULSE_Y\)/);
-    assert.match(scene, /new THREE\.Vector3\(gridX\(col\), CORE_CONTACT_HEIGHT, gridZ\(row\)\)/);
+    assert.match(scene, /segment\.to\.row === GRID\.target\.row && segment\.to\.col === GRID\.target\.col[\s\S]*?CORE_CONTACT_HEIGHT/);
     assert.match(scene, /hologram\.position\.set\(x, CORE_HOLOGRAM_Y, z\)/);
     assert.match(scene, /corePulse\.position\.y = CORE_PULSE_Y/);
     assert.match(scene, /gridX\(GRID\.target\.col\) - 1\.35 \* CORE_SCALE/);
@@ -839,6 +854,16 @@ test("RelicGrid branding is used in the game and hidden scenes stop rendering", 
     assert.match(scene, /powerSourceSoundPlayed = false/);
     assert.equal(existsSync(new URL("../mirror.mp3", import.meta.url)), true);
     assert.equal(existsSync(new URL("../powersource.mp3", import.meta.url)), true);
+    for (const texture of [
+        "rock-color.jpg",
+        "rock-normal.jpg",
+        "rock-roughness.jpg",
+        "stone-color.jpg",
+        "stone-normal.jpg",
+        "stone-roughness.jpg"
+    ]) {
+        assert.equal(existsSync(new URL(`../assets/pbr/${texture}`, import.meta.url)), true);
+    }
     const soundHtml = readFileSync(new URL("../index.html", import.meta.url), "utf8");
     assert.match(soundHtml, /id="background-music" src="music\.mp3"[^>]*loop/);
     assert.equal(existsSync(new URL("../music.mp3", import.meta.url)), true);
@@ -896,7 +921,7 @@ test("deposit UI creates an account-bound payment memo before accepting a transa
     assert.match(app, /typeof result\.disabledMessage === "string"/);
     assert.doesNotMatch(app, /SOLANA_TREASURY_ADDRESS must exactly match Supabase treasury_address/);
     assert.doesNotMatch(app, /wallet_system_config\.deposits_enabled/);
-    assert.match(app, /Deposits are temporarily unavailable\. Please check back later\./);
+    assert.match(app, /Deposit readiness could not be verified\. Please check back later\./);
     assert.doesNotMatch(html, /id="wallet-transfer-amount"|id="wallet-transfer-form"|id="wallet-preflight-button"/);
     assert.match(app, /address\.textContent = result\.treasuryAddress \|\| "Treasury unavailable"/);
     assert.match(app, /body: JSON\.stringify\(\{ signature: signatureOrLink \}\)/);
@@ -945,7 +970,9 @@ test("deposit backend requires owner-approved mint configuration and migration k
     assert.match(paymentIntentApi, /WALLET_MAINNET_DEPOSITS_ENABLED must be true for mainnet/);
     assert.doesNotMatch(app, new RegExp(treasury));
     assert.doesNotMatch(html, new RegExp(treasury));
-    assert.doesNotMatch(paymentIntentApi, /readinessChecks,/);
+    assert.match(paymentIntentApi, /readinessChecks/);
+    assert.match(app, /disabled: "NOT READY"/);
+    assert.match(app, /If it passes, credits are applied after a 5-second security delay/);
 });
 
 test("wallet API returns verified zero for a player with no credit account or ledger entries", async () => {
@@ -1797,6 +1824,15 @@ test("deposit API credits a finalized shared-treasury transfer using the authent
     );
     Object.assign(process.env, environment);
     const originalFetch = globalThis.fetch;
+    const originalSetTimeout = globalThis.setTimeout;
+    const creditDelayCalls = [];
+    globalThis.setTimeout = (callback, delay, ...args) => {
+        if (delay === 5_000) {
+            creditDelayCalls.push(delay);
+            return originalSetTimeout(callback, 0, ...args);
+        }
+        return originalSetTimeout(callback, delay, ...args);
+    };
     const signature = "1".repeat(64);
     const paymentIntentId = "8f9ef883-520e-45ef-96ae-62e621d3b31c";
     const sourceWallet = "11111111111111111111111111111111";
@@ -1998,8 +2034,10 @@ test("deposit API credits a finalized shared-treasury transfer using the authent
         assert.equal(duplicateResponse.payload.alreadyProcessed, true);
         assert.equal(duplicateResponse.payload.credited, false);
         assert.equal(ledgerCallCount, 2);
+        assert.deepEqual(creditDelayCalls, [5_000, 5_000]);
     } finally {
         globalThis.fetch = originalFetch;
+        globalThis.setTimeout = originalSetTimeout;
         for (const [name, value] of Object.entries(previousEnvironment)) {
             if (value === undefined) delete process.env[name];
             else process.env[name] = value;
@@ -3154,14 +3192,6 @@ test("a level completion event can only be claimed once per level", () => {
 
 test("all 99 generated layouts are unique, valid, and solvable through every ordered crystal", () => {
     const signatures = new Set();
-    const deltas = [
-        { row: -1, col: 0 },
-        { row: 0, col: 1 },
-        { row: 1, col: 0 },
-        { row: 0, col: -1 }
-    ];
-    const slashReflection = [1, 0, 3, 2];
-    const backslashReflection = [3, 2, 1, 0];
     const scene = readFileSync(new URL("../script.js", import.meta.url), "utf8");
 
     assert.equal(levels.length, 99);
@@ -3234,45 +3264,92 @@ test("all 99 generated layouts are unique, valid, and solvable through every ord
         assert.ok(2 * 1.82 * coreScale < 1.4, `Level ${level.number} core spills into adjacent cells.`);
         assert.ok(Math.abs((1.42 + 0.09) * coreScale - 0.5436) < 1e-12);
 
-        let row = level.start.row;
-        let col = level.start.col;
-        let direction = level.start.direction;
-        let colorIndex = 0;
-        let nextCrystal = 0;
-        const visited = new Set();
-        let connected = false;
-        for (let step = 0; step < 6 * 8 * 2; step++) {
-            const state = `${row},${col},${direction}`;
-            assert.equal(visited.has(state), false, `Level ${level.number} solution loops.`);
-            visited.add(state);
-            row += deltas[direction].row;
-            col += deltas[direction].col;
-            assert.ok(row >= 0 && row < 6 && col >= 0 && col < 8, `Level ${level.number} solution exits the board.`);
-            if (obstacles.has(`${row},${col}`)) {
-                assert.fail(`Level ${level.number} solution intersects an obstacle.`);
-            }
-            if (row === level.target.row && col === level.target.col) {
-                connected = true;
-                break;
-            }
-            const orientation = mirrors.get(`${row},${col}`);
-            if (orientation === "/") direction = slashReflection[direction];
-            else if (orientation === "\\") direction = backslashReflection[direction];
-            if (orientation) colorIndex++;
-            const crystal = crystals.get(`${row},${col}`);
-            if (crystal) {
-                assert.equal(crystal.inputColor, colorIndex % 3, `Level ${level.number} crystal has the wrong input color.`);
-                assert.equal(crystal.outputColor, (crystal.inputColor + 1) % 3);
-                colorIndex = crystal.outputColor;
-                nextCrystal++;
-            }
-        }
-        assert.equal(connected, true, `Level ${level.number} solution does not connect to its battery.`);
-        assert.equal(nextCrystal, level.crystals.length, `Level ${level.number} solution must activate every crystal.`);
+        const trace = traceLaserRoute(level, mirrors);
+        assert.equal(trace.outcome, "powered", `Level ${level.number} solution does not power the battery.`);
+        assert.equal(trace.finalCell.row, level.target.row);
+        assert.equal(trace.finalCell.col, level.target.col);
+        assert.equal(trace.reflections, level.par);
+        assert.deepEqual(
+            trace.crystalHits.map(({ index }) => index),
+            level.crystals.map((_, crystalIndex) => crystalIndex),
+            `Level ${level.number} does not activate every crystal in order.`
+        );
+        assert.ok(
+            trace.crystalHits.every(({ segmentIndex }, crystalIndex) =>
+                segmentIndex < trace.segments.length - (crystalIndex === trace.crystalHits.length - 1 ? 1 : 0)
+            ),
+            `Level ${level.number} stops propagating immediately after a crystal.`
+        );
     }
     assert.equal(signatures.size, 99);
     assert.ok(levels[8].crystals.length >= 3);
     assert.ok(levels[9].crystals.length >= 4);
     assert.ok(levels[8].obstacles.length >= 6);
     assert.ok(levels[9].obstacles.length >= 6);
+});
+
+test("laser trace continues through ordered crystals and rejects invalid routes", () => {
+    const level = levels[9];
+    const solutionMirrors = new Map(
+        level.solutionMirrors.map(({ row, col, orientation }) => [`${row},${col}`, orientation])
+    );
+    const validRoute = traceLaserRoute(level, solutionMirrors);
+    assert.equal(validRoute.outcome, "powered");
+    assert.ok(level.crystals.length > 1);
+    assert.ok(validRoute.crystalHits[0].segmentIndex + 1 < validRoute.segments.length);
+    assert.equal(validRoute.crystalHits.length, level.crystals.length);
+
+    const underpoweredRoute = traceLaserRoute(
+        { ...level, par: level.par + 1 },
+        solutionMirrors
+    );
+    assert.equal(underpoweredRoute.finalCell.row, level.target.row);
+    assert.equal(underpoweredRoute.finalCell.col, level.target.col);
+    assert.equal(underpoweredRoute.crystalHits.length, level.crystals.length);
+    assert.equal(underpoweredRoute.outcome, "underpowered");
+
+    const reversedObjectives = traceLaserRoute(
+        { ...level, crystals: [...level.crystals].reverse() },
+        solutionMirrors
+    );
+    assert.equal(reversedObjectives.outcome, "crystal_order_mismatch");
+    assert.equal(reversedObjectives.crystalHits.length, 0);
+
+    const wrongColorLevel = {
+        ...level,
+        crystals: level.crystals.map((crystal, index) => index === 0
+            ? { ...crystal, inputColor: (crystal.inputColor + 1) % 3 }
+            : crystal)
+    };
+    const wrongColorRoute = traceLaserRoute(wrongColorLevel, solutionMirrors);
+    assert.equal(wrongColorRoute.outcome, "crystal_mismatch");
+    assert.equal(wrongColorRoute.crystalHits.length, 0);
+
+    const routeCells = new Set(level.route.map(({ row, col }) => `${row},${col}`));
+    const obstacleCells = new Set(level.obstacles.map(({ row, col }) => `${row},${col}`));
+    let offRouteCell = null;
+    for (let row = 0; row < 6 && !offRouteCell; row++) {
+        for (let col = 0; col < 8; col++) {
+            const key = `${row},${col}`;
+            if (!routeCells.has(key) && !obstacleCells.has(key)) {
+                offRouteCell = { row, col, inputColor: 0, outputColor: 1 };
+                break;
+            }
+        }
+    }
+    assert.ok(offRouteCell, "Expected an available off-route tile for the missed-crystal fixture.");
+    const missedCrystalRoute = traceLaserRoute(
+        { ...level, crystals: [offRouteCell] },
+        solutionMirrors
+    );
+    assert.equal(missedCrystalRoute.outcome, "crystal_missed");
+    assert.equal(missedCrystalRoute.crystalHits.length, 0);
+
+    const rotatedMirrors = new Map(solutionMirrors);
+    const firstMirror = level.solutionMirrors[0];
+    const firstMirrorKey = `${firstMirror.row},${firstMirror.col}`;
+    rotatedMirrors.set(firstMirrorKey, firstMirror.orientation === "/" ? "\\" : "/");
+    const rotatedRoute = traceLaserRoute(level, rotatedMirrors);
+    assert.notEqual(rotatedRoute.outcome, "powered");
+    assert.notDeepEqual(rotatedRoute.segments, validRoute.segments);
 });

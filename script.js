@@ -3,7 +3,12 @@ import { EffectComposer } from "three/addons/postprocessing/EffectComposer.js";
 import { RenderPass } from "three/addons/postprocessing/RenderPass.js";
 import { UnrealBloomPass } from "three/addons/postprocessing/UnrealBloomPass.js";
 import { OutputPass } from "three/addons/postprocessing/OutputPass.js";
-import { levels, calculateSolveTimeMilliseconds, evaluateLevelStars } from "./levels.js";
+import {
+    levels,
+    calculateSolveTimeMilliseconds,
+    evaluateLevelStars,
+    traceLaserRoute
+} from "./levels.js";
 
 const canvas = document.getElementById("scene-canvas");
 const errorPanel = document.getElementById("load-error");
@@ -30,21 +35,21 @@ try {
 
 function startScene() {
     const scene = new THREE.Scene();
-    scene.background = new THREE.Color(0x0a101b);
-    scene.fog = new THREE.FogExp2(0x111824, 0.01);
+    scene.background = new THREE.Color(0x090d14);
+    scene.fog = new THREE.FogExp2(0x171b23, 0.009);
 
     const camera = new THREE.PerspectiveCamera(37, 1, 0.1, 160);
     const mobileQuality = window.innerWidth < 620;
     const renderer = new THREE.WebGLRenderer({
         canvas,
-        antialias: true,
+        antialias: !mobileQuality,
         powerPreference: "high-performance"
     });
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, mobileQuality ? 1.25 : 1.5));
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, mobileQuality ? 1 : 1.5));
     renderer.shadowMap.enabled = !mobileQuality;
     renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    renderer.toneMappingExposure = 1.04;
+    renderer.toneMappingExposure = 0.78;
     renderer.outputColorSpace = THREE.SRGBColorSpace;
     const configureQualityLight = (light) => {
         light.visible = !mobileQuality;
@@ -57,9 +62,9 @@ function startScene() {
     composer.addPass(bloom);
     composer.addPass(new OutputPass());
 
-    scene.add(new THREE.HemisphereLight(0xc4d8ec, 0x483a32, mobileQuality ? 2.15 : 1.85));
+    scene.add(new THREE.HemisphereLight(0xa6b6c8, 0x302a25, mobileQuality ? 1.15 : 0.95));
 
-    const moonLight = new THREE.DirectionalLight(0xffe5c4, 3.4);
+    const moonLight = new THREE.DirectionalLight(0xffdfbd, 2.25);
     moonLight.position.set(-7, 15, -4);
     moonLight.castShadow = window.innerWidth >= 620;
     moonLight.shadow.mapSize.set(1024, 1024);
@@ -69,10 +74,10 @@ function startScene() {
     moonLight.shadow.camera.bottom = -14;
     moonLight.shadow.bias = -0.00035;
     scene.add(moonLight);
-    const boardFillLight = new THREE.DirectionalLight(0xa4cdeb, mobileQuality ? 1.5 : 0.8);
+    const boardFillLight = new THREE.DirectionalLight(0x8eabc5, mobileQuality ? 0.62 : 0.48);
     boardFillLight.position.set(5, 9, 4);
     scene.add(boardFillLight);
-    const islandRimLight = new THREE.DirectionalLight(0xd0d5d4, mobileQuality ? 2 : 1.2);
+    const islandRimLight = new THREE.DirectionalLight(0xb7c1c6, mobileQuality ? 0.72 : 0.58);
     islandRimLight.position.set(8, -5, 12);
     scene.add(islandRimLight);
 
@@ -305,6 +310,29 @@ function startScene() {
     const makeMaterial = (color, roughness = 0.8, metalness = 0.1, extra = {}) =>
         new THREE.MeshStandardMaterial({ color, roughness, metalness, ...extra });
 
+    function createContactShadowMap() {
+        const canvas = document.createElement("canvas");
+        canvas.width = canvas.height = 128;
+        const context = canvas.getContext("2d");
+        const gradient = context.createRadialGradient(64, 64, 4, 64, 64, 62);
+        gradient.addColorStop(0, "rgba(4, 5, 7, 0.82)");
+        gradient.addColorStop(0.45, "rgba(4, 5, 7, 0.48)");
+        gradient.addColorStop(1, "rgba(4, 6, 9, 0)");
+        context.fillStyle = gradient;
+        context.fillRect(0, 0, 128, 128);
+        return new THREE.CanvasTexture(canvas);
+    }
+
+    const contactShadowMap = createContactShadowMap();
+    const contactShadowMaterial = new THREE.MeshBasicMaterial({
+        map: contactShadowMap,
+        color: 0xffffff,
+        transparent: true,
+        opacity: 0.64,
+        depthWrite: false,
+        toneMapped: false
+    });
+
     function createStoneMaps() {
         const size = 512;
         const colorCanvas = document.createElement("canvas");
@@ -413,39 +441,41 @@ function startScene() {
         const bumpMap = stoneMaps.heightMap.clone();
         bumpMap.repeat.set(repeatX, repeatY);
         bumpMap.needsUpdate = true;
-        return makeMaterial(color, 0.96, 0.015, {
+        const material = makeMaterial(color, 0.96, 0.015, {
             map,
             ...(!mobileQuality ? { bumpMap, bumpScale: 0.15 } : {}),
             ...extra
         });
+        material.userData.pbrRepeat = { x: repeatX, y: repeatY };
+        return material;
     };
 
     const materials = {
-        platform: makeStoneMaterial(0x7b8282, 2.8, 2.3),
-        platformSide: makeStoneMaterial(0x62686a, 2.1, 1.2),
-        underside: makeStoneMaterial(0x454a4d, 2.2, 1.1),
+        platform: makeStoneMaterial(0x62615b, 2.8, 2.3),
+        platformSide: makeStoneMaterial(0x50504d, 2.1, 1.2),
+        underside: makeStoneMaterial(0x41403c, 2.2, 1.1),
         floor: [
-            makeStoneMaterial(0x747b7b, 1.15, 1.15, { side: THREE.DoubleSide }),
-            makeStoneMaterial(0x7f8583, 1.15, 1.15, { side: THREE.DoubleSide }),
-            makeStoneMaterial(0x6a7475, 1.15, 1.15, { side: THREE.DoubleSide }),
-            makeStoneMaterial(0x797d79, 1.15, 1.15, { side: THREE.DoubleSide }),
-            makeStoneMaterial(0x687171, 1.15, 1.15, { side: THREE.DoubleSide }),
-            makeStoneMaterial(0x737b79, 1.15, 1.15, { side: THREE.DoubleSide })
+            makeStoneMaterial(0x66645c, 1.15, 1.15, { side: THREE.DoubleSide }),
+            makeStoneMaterial(0x706b61, 1.15, 1.15, { side: THREE.DoubleSide }),
+            makeStoneMaterial(0x5d5d58, 1.15, 1.15, { side: THREE.DoubleSide }),
+            makeStoneMaterial(0x68665d, 1.15, 1.15, { side: THREE.DoubleSide }),
+            makeStoneMaterial(0x595c58, 1.15, 1.15, { side: THREE.DoubleSide }),
+            makeStoneMaterial(0x62645c, 1.15, 1.15, { side: THREE.DoubleSide })
         ],
         seam: new THREE.MeshBasicMaterial({ color: 0x111719 }),
         metal: makeMaterial(0x202a34, 0.46, 0.78),
         metalEdge: makeMaterial(0x4b5560, 0.4, 0.82),
-        column: makeStoneMaterial(0x727978, 1.3, 3.4),
-        columnLight: makeStoneMaterial(0x90938c, 1.5, 2.2),
+        column: makeStoneMaterial(0x62615b, 1.3, 3.4),
+        columnLight: makeStoneMaterial(0x777268, 1.5, 2.2),
         stone: [
-            makeStoneMaterial(0x767a76, 0.95, 0.95),
-            makeStoneMaterial(0x858780, 0.95, 0.95),
-            makeStoneMaterial(0x6d7473, 0.95, 0.95)
+            makeStoneMaterial(0x625e55, 0.95, 0.95),
+            makeStoneMaterial(0x70695e, 0.95, 0.95),
+            makeStoneMaterial(0x585a54, 0.95, 0.95)
         ],
         floatingRock: [
-            makeMaterial(0x555b5a, 0.98, 0, { flatShading: true }),
-            makeMaterial(0x666a66, 0.98, 0, { flatShading: true }),
-            makeMaterial(0x454b4d, 0.98, 0, { flatShading: true })
+            makeStoneMaterial(0x777065, 2.2, 2.2, { flatShading: true }),
+            makeStoneMaterial(0x857a6b, 2.2, 2.2, { flatShading: true }),
+            makeStoneMaterial(0x625f58, 2.2, 2.2, { flatShading: true })
         ],
         crack: new THREE.LineBasicMaterial({ color: 0x191918, transparent: true, opacity: 0.86 }),
         circuit: new THREE.MeshStandardMaterial({
@@ -456,6 +486,100 @@ function startScene() {
             roughness: 0.35
         })
     };
+
+    const pbrMaterialTargets = {
+        stone: new Set([
+            materials.platform,
+            materials.platformSide,
+            ...materials.floor,
+            materials.column,
+            materials.columnLight,
+            ...materials.stone
+        ]),
+        rock: new Set([
+            materials.underside,
+            ...materials.floatingRock
+        ])
+    };
+    const pbrMaps = { stone: null, rock: null };
+    const textureLoader = new THREE.TextureLoader();
+
+    function loadPbrTexture(filename, colorSpace) {
+        const url = new URL(`./assets/pbr/${filename}`, import.meta.url).href;
+        return new Promise((resolve) => {
+            textureLoader.load(
+                url,
+                (texture) => {
+                    texture.colorSpace = colorSpace;
+                    texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
+                    texture.anisotropy = Math.min(
+                        renderer.capabilities.getMaxAnisotropy(),
+                        mobileQuality ? 2 : 4
+                    );
+                    resolve(texture);
+                },
+                undefined,
+                (error) => {
+                    console.error(`Unable to load the ${filename} scene texture.`, error);
+                    resolve(null);
+                }
+            );
+        });
+    }
+
+    async function loadPbrSet(prefix) {
+        const [map, normalMap, roughnessMap] = await Promise.all([
+            loadPbrTexture(`${prefix}-color.jpg`, THREE.SRGBColorSpace),
+            loadPbrTexture(`${prefix}-normal.jpg`, THREE.NoColorSpace),
+            loadPbrTexture(`${prefix}-roughness.jpg`, THREE.NoColorSpace)
+        ]);
+        if (!map || !normalMap || !roughnessMap) {
+            [map, normalMap, roughnessMap].forEach((texture) => texture?.dispose());
+            return null;
+        }
+        map.repeat.set(1.35, 1.35);
+        normalMap.repeat.copy(map.repeat);
+        roughnessMap.repeat.copy(map.repeat);
+        return { map, normalMap, roughnessMap };
+    }
+
+    function applyPbrMaps(targets, maps) {
+        if (!maps) return;
+        for (const material of targets) {
+            for (const property of ["map", "normalMap", "roughnessMap", "bumpMap"]) {
+                const oldTexture = material[property];
+                if (oldTexture && oldTexture !== stoneMaps.colorMap && oldTexture !== stoneMaps.heightMap) {
+                    oldTexture.dispose();
+                }
+                const texture = maps[property]?.clone() ?? null;
+                if (texture) {
+                    texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
+                    texture.repeat.set(
+                        material.userData.pbrRepeat?.x ?? 1.35,
+                        material.userData.pbrRepeat?.y ?? 1.35
+                    );
+                    texture.needsUpdate = true;
+                }
+                material[property] = texture;
+            }
+            material.normalScale?.set(0.7, 0.7);
+            material.needsUpdate = true;
+        }
+    }
+
+    function registerPbrMaterial(material, materialType) {
+        pbrMaterialTargets[materialType].add(material);
+        if (pbrMaps[materialType]) {
+            applyPbrMaps(new Set([material]), pbrMaps[materialType]);
+        }
+    }
+
+    void Promise.all([loadPbrSet("stone"), loadPbrSet("rock")]).then(([stone, rock]) => {
+        pbrMaps.stone = stone;
+        pbrMaps.rock = rock;
+        applyPbrMaps(pbrMaterialTargets.stone, stone);
+        applyPbrMaps(pbrMaterialTargets.rock, rock);
+    });
 
     const addBox = (parent, size, position, material, options = {}) => {
         const mesh = new THREE.Mesh(new THREE.BoxGeometry(...size), material);
@@ -478,6 +602,18 @@ function startScene() {
         parent.add(mesh);
         return mesh;
     };
+
+    function addContactShadow(parent, width, depth, y = 0.006) {
+        const shadow = new THREE.Mesh(
+            new THREE.PlaneGeometry(width, depth),
+            contactShadowMaterial.clone()
+        );
+        shadow.rotation.x = -Math.PI / 2;
+        shadow.position.y = y;
+        shadow.renderOrder = 1;
+        parent.add(shadow);
+        return shadow;
+    }
 
     function createFacetedCrystalGeometry(radius, height, segments = 6) {
         const rings = [
@@ -556,17 +692,48 @@ function startScene() {
         skyCanvas.height = 256;
         const skyContext = skyCanvas.getContext("2d");
         const skyGradient = skyContext.createLinearGradient(0, 0, 0, skyCanvas.height);
-        skyGradient.addColorStop(0, "#08111f");
-        skyGradient.addColorStop(0.42, "#1c2a3c");
-        skyGradient.addColorStop(0.72, "#54404a");
-        skyGradient.addColorStop(1, "#10131d");
+        skyGradient.addColorStop(0, "#080d17");
+        skyGradient.addColorStop(0.42, "#1b2635");
+        skyGradient.addColorStop(0.72, "#57443f");
+        skyGradient.addColorStop(1, "#17171b");
         skyContext.fillStyle = skyGradient;
         skyContext.fillRect(0, 0, skyCanvas.width, skyCanvas.height);
-        const horizonHaze = skyContext.createRadialGradient(260, 183, 8, 260, 183, 220);
-        horizonHaze.addColorStop(0, "rgba(255, 178, 126, 0.2)");
+        const horizonHaze = skyContext.createRadialGradient(260, 184, 8, 260, 184, 220);
+        horizonHaze.addColorStop(0, "rgba(231, 153, 111, 0.26)");
         horizonHaze.addColorStop(1, "rgba(255, 178, 126, 0)");
         skyContext.fillStyle = horizonHaze;
         skyContext.fillRect(0, 0, skyCanvas.width, skyCanvas.height);
+        [
+            [90, 90, 105, "rgba(135, 161, 185, 0.09)"],
+            [310, 117, 130, "rgba(230, 177, 142, 0.08)"],
+            [450, 76, 80, "rgba(137, 159, 182, 0.07)"]
+        ].forEach(([x, y, radius, color]) => {
+            const cloud = skyContext.createRadialGradient(x, y, 4, x, y, radius);
+            cloud.addColorStop(0, color);
+            cloud.addColorStop(1, "rgba(0, 0, 0, 0)");
+            skyContext.fillStyle = cloud;
+            skyContext.fillRect(x - radius, y - radius, radius * 2, radius * 2);
+        });
+        skyContext.fillStyle = "#171b23";
+        skyContext.beginPath();
+        skyContext.moveTo(0, 193);
+        skyContext.lineTo(45, 154);
+        skyContext.lineTo(76, 180);
+        skyContext.lineTo(130, 145);
+        skyContext.lineTo(171, 183);
+        skyContext.lineTo(218, 156);
+        skyContext.lineTo(265, 186);
+        skyContext.lineTo(314, 149);
+        skyContext.lineTo(362, 180);
+        skyContext.lineTo(414, 151);
+        skyContext.lineTo(467, 183);
+        skyContext.lineTo(512, 157);
+        skyContext.lineTo(512, 256);
+        skyContext.lineTo(0, 256);
+        skyContext.closePath();
+        skyContext.fill();
+        skyContext.fillStyle = "rgba(24, 24, 29, 0.72)";
+        skyContext.fillRect(0, 195, skyCanvas.width, 61);
         const skyTexture = new THREE.CanvasTexture(skyCanvas);
         skyTexture.colorSpace = THREE.SRGBColorSpace;
         const sky = new THREE.Mesh(
@@ -591,6 +758,43 @@ function startScene() {
         floor.position.y = -3.5;
         floor.receiveShadow = true;
         scene.add(floor);
+
+        const beamCanvas = document.createElement("canvas");
+        beamCanvas.width = 128;
+        beamCanvas.height = 512;
+        const beamContext = beamCanvas.getContext("2d");
+        const beamImage = beamContext.createImageData(beamCanvas.width, beamCanvas.height);
+        for (let y = 0; y < beamCanvas.height; y++) {
+            const vertical = 0.16 * Math.pow(1 - y / beamCanvas.height, 0.75);
+            for (let x = 0; x < beamCanvas.width; x++) {
+                const horizontal = Math.exp(-Math.pow((x / beamCanvas.width - 0.5) / 0.2, 2));
+                const offset = (y * beamCanvas.width + x) * 4;
+                beamImage.data[offset] = 220;
+                beamImage.data[offset + 1] = 226;
+                beamImage.data[offset + 2] = 235;
+                beamImage.data[offset + 3] = Math.round(vertical * horizontal * 255);
+            }
+        }
+        beamContext.putImageData(beamImage, 0, 0);
+        const beamTexture = new THREE.CanvasTexture(beamCanvas);
+        const beamMaterial = new THREE.MeshBasicMaterial({
+            map: beamTexture,
+            color: 0x9caec2,
+            transparent: true,
+            depthWrite: false,
+            toneMapped: false,
+            side: THREE.DoubleSide
+        });
+        [
+            { x: -5.3, y: 4.7, z: -7.8, width: 3.2, rotation: 0.35 },
+            { x: 1.8, y: 4.9, z: -8.5, width: 2.6, rotation: 0.68 }
+        ].forEach(({ x, y, z, width, rotation }) => {
+            const beam = new THREE.Mesh(new THREE.PlaneGeometry(width, 11), beamMaterial);
+            beam.position.set(x, y, z);
+            beam.rotation.y = rotation;
+            beam.renderOrder = 0;
+            scene.add(beam);
+        });
 
         const shadowCanvas = document.createElement("canvas");
         shadowCanvas.width = shadowCanvas.height = 256;
@@ -690,15 +894,20 @@ function startScene() {
         underglow.position.set(0, -1.8, 0);
         platform.add(underglow);
 
-        const rockGeometry = new THREE.DodecahedronGeometry(1, 0);
+        const rockGeometry = new THREE.IcosahedronGeometry(1, 2);
         const rockPositions = rockGeometry.attributes.position;
         for (let i = 0; i < rockPositions.count; i++) {
-            const variation = 0.82 + ((i * 37 + 11) % 17) / 42;
+            const x = rockPositions.getX(i);
+            const y = rockPositions.getY(i);
+            const z = rockPositions.getZ(i);
+            const variation = 0.84 +
+                Math.sin(x * 13.7 + z * 8.3 + y * 5.1) * 0.1 +
+                Math.cos(z * 17.1 - y * 9.2) * 0.07;
             rockPositions.setXYZ(
                 i,
-                rockPositions.getX(i) * variation,
-                rockPositions.getY(i) * (0.88 + ((i * 19 + 7) % 13) / 38),
-                rockPositions.getZ(i) * variation
+                x * variation,
+                y * (0.9 + Math.sin(x * 11.3 + z * 4.7) * 0.12),
+                z * variation
             );
         }
         rockGeometry.computeVertexNormals();
@@ -732,17 +941,25 @@ function startScene() {
     function createIslandKeel() {
         const rings = [
             { y: -1.75, radius: 5.15 },
-            { y: -2.35, radius: 4.5 },
-            { y: -3.05, radius: 3.65 },
-            { y: -3.8, radius: 2.65 },
-            { y: -4.55, radius: 1.65 },
-            { y: -5.15, radius: 0.86 },
-            { y: -5.8, radius: 0.16 }
+            { y: -2.08, radius: 4.72 },
+            { y: -2.42, radius: 4.48 },
+            { y: -2.56, radius: 3.96 },
+            { y: -3.08, radius: 3.74 },
+            { y: -3.22, radius: 3.22 },
+            { y: -3.76, radius: 2.96 },
+            { y: -3.94, radius: 2.5 },
+            { y: -4.45, radius: 2.14 },
+            { y: -4.62, radius: 1.72 },
+            { y: -5.12, radius: 1.25 },
+            { y: -5.38, radius: 0.83 },
+            { y: -5.82, radius: 0.38 },
+            { y: -6.05, radius: 0.12 }
         ];
-        const segments = 20;
+        const segments = 48;
         const positions = [];
         const colors = [];
-        const strata = [0xa69a87, 0x928472, 0x7f7266, 0x9c8d79, 0x7d7770, 0x687071];
+        const uvs = [];
+        const strata = [0xa69a87, 0x928472, 0x74685e, 0x9c8d79, 0x81776d, 0x687071];
         let seed = 62041;
         const random = () => {
             seed = (seed * 1664525 + 1013904223) >>> 0;
@@ -751,16 +968,27 @@ function startScene() {
         const points = rings.map(({ y, radius }, ringIndex) =>
             Array.from({ length: segments }, (_, segment) => {
                 const angle = segment / segments * Math.PI * 2;
-                const irregularity = 0.88 + random() * 0.24;
+                const irregularity = 0.79 + random() * 0.42;
                 return [
                     Math.cos(angle) * radius * irregularity,
-                    y + (ringIndex === 0 ? 0 : (random() - 0.5) * 0.22),
+                    y + (ringIndex === 0 ? 0 : (random() - 0.5) * 0.34),
                     Math.sin(angle) * radius * irregularity
                 ];
             })
         );
         const appendFace = (a, b, c, baseColor) => {
             positions.push(...a, ...b, ...c);
+            const faceUvs = [a, b, c].map(([x, y, z]) => [
+                Math.atan2(z, x) / (Math.PI * 2) + 0.5,
+                (y + 6.05) / 4.3
+            ]);
+            const uValues = faceUvs.map(([u]) => u);
+            if (Math.max(...uValues) - Math.min(...uValues) > 0.5) {
+                for (const uv of faceUvs) {
+                    if (uv[0] < 0.5) uv[0] += 1;
+                }
+            }
+            for (const [u, v] of faceUvs) uvs.push(u, v);
             const shade = 0.82 + random() * 0.3;
             const color = new THREE.Color(baseColor).multiplyScalar(shade);
             for (let vertex = 0; vertex < 3; vertex++) {
@@ -788,8 +1016,9 @@ function startScene() {
         const geometry = new THREE.BufferGeometry();
         geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
         geometry.setAttribute("color", new THREE.Float32BufferAttribute(colors, 3));
+        geometry.setAttribute("uv", new THREE.Float32BufferAttribute(uvs, 2));
         geometry.computeVertexNormals();
-        const keel = new THREE.Mesh(geometry, new THREE.MeshStandardMaterial({
+        const keelMaterial = new THREE.MeshStandardMaterial({
             color: 0xffffff,
             emissive: 0x282724,
             emissiveIntensity: 0.48,
@@ -797,7 +1026,9 @@ function startScene() {
             metalness: 0.01,
             flatShading: true,
             vertexColors: true
-        }));
+        });
+        registerPbrMaterial(keelMaterial, "rock");
+        const keel = new THREE.Mesh(geometry, keelMaterial);
         keel.castShadow = true;
         keel.receiveShadow = true;
         platform.add(keel);
@@ -842,11 +1073,28 @@ function startScene() {
                     vertices[r][c], vertices[r][c + 1],
                     vertices[r + 1][c + 1], vertices[r + 1][c]
                 ];
-                const shrink = 0.035 + random() * 0.025;
-                const plate = quad.map(([x, z]) => [
+                const shrink = 0.07 + random() * 0.035;
+                const corners = quad.map(([x, z]) => [
                     cx + (x - cx) * (1 - shrink),
                     cz + (z - cz) * (1 - shrink)
                 ]);
+                const plate = [];
+                corners.forEach((corner, index) => {
+                    const previous = corners[(index + corners.length - 1) % corners.length];
+                    const next = corners[(index + 1) % corners.length];
+                    const cutIn = 0.12 + random() * 0.12;
+                    const cutOut = 0.12 + random() * 0.12;
+                    plate.push(
+                        [
+                            corner[0] + (previous[0] - corner[0]) * cutIn,
+                            corner[1] + (previous[1] - corner[1]) * cutIn
+                        ],
+                        [
+                            corner[0] + (next[0] - corner[0]) * cutOut,
+                            corner[1] + (next[1] - corner[1]) * cutOut
+                        ]
+                    );
+                });
                 const floorMaterial = materials.floor[Math.floor(random() * materials.floor.length)];
                 const tile = extrudedPolygon(
                     platform,
@@ -854,27 +1102,14 @@ function startScene() {
                     0.16 + random() * 0.045,
                     -0.06,
                     floorMaterial,
-                    0.025
+                    0.045
                 );
-                tile.position.y += (random() - 0.5) * 0.07;
-
-                const topShape = new THREE.Shape();
-                topShape.moveTo(plate[0][0], -plate[0][1]);
-                for (let i = 1; i < plate.length; i++) topShape.lineTo(plate[i][0], -plate[i][1]);
-                topShape.closePath();
-                const topFace = new THREE.Mesh(
-                    new THREE.ShapeGeometry(topShape),
-                    floorMaterial.clone()
-                );
-                topFace.geometry.rotateX(-Math.PI / 2);
-                topFace.position.y = 0.145 + (random() - 0.5) * 0.018;
-                topFace.receiveShadow = true;
-                platform.add(topFace);
+                tile.position.y += (random() - 0.5) * 0.1;
 
                 for (let i = 0; i < plate.length; i++) {
                     const a = plate[i];
                     const b = plate[(i + 1) % plate.length];
-                    seamVertices.push(a[0], 0.145, a[1], b[0], 0.145, b[1]);
+                    seamVertices.push(a[0], 0.15, a[1], b[0], 0.15, b[1]);
                 }
             }
         }
@@ -1067,17 +1302,17 @@ function startScene() {
 
     function createSquarePlacementGrid() {
         const grid = new THREE.Group();
-        const lineMaterial = makeMaterial(0x29343a, 0.95, 0.02, {
+        const lineMaterial = makeMaterial(0x39352f, 0.98, 0, {
             transparent: true,
-            opacity: 0.48
+            opacity: 0.2
         });
-        const lineWidth = 0.02;
-        const lineHeight = 0.012;
+        const lineWidth = 0.009;
+        const lineHeight = 0.006;
         const left = gridX(0) - GRID.step / 2;
         const right = gridX(GRID.cols - 1) + GRID.step / 2;
         const back = gridZ(0) - GRID.step / 2;
         const front = gridZ(GRID.rows - 1) + GRID.step / 2;
-        const y = 0.205;
+        const y = 0.19;
 
         for (let col = 0; col <= GRID.cols; col++) {
             const x = left + col * GRID.step;
@@ -1113,6 +1348,7 @@ function startScene() {
             ? 0.2
             : 0.19 + 0.52 + (obstacleIndex % 2) * 0.16 + 0.06;
         group.position.set(gridX(col), obstacleTop, gridZ(row));
+        addContactShadow(group, 1.05, 0.82, 0.006);
         const baseMaterial = makeMaterial(0x26313d, 0.38, 0.82);
         const frameMaterial = makeMaterial(0xa6b8b8, 0.25, 0.84, {
             emissive: 0x173b4a,
@@ -1172,101 +1408,40 @@ function startScene() {
         }
     }
 
-    const directions = [
-        { row: -1, col: 0 },
-        { row: 0, col: 1 },
-        { row: 1, col: 0 },
-        { row: 0, col: -1 }
-    ];
-    const slashReflection = [1, 0, 3, 2];
-    const backslashReflection = [3, 2, 1, 0];
     const beamColors = [colors.pink, colors.amber, colors.blue];
     const crystalColors = [0xff77e6, 0xffaa43, 0x43baff];
 
     function traceLight() {
-        let row = GRID.start.row;
-        let col = GRID.start.col;
-        let direction = launchDirection;
-        let colorIndex = 0;
-        const segments = [];
-        const crystalHits = [];
-        const visited = new Set();
-        const activatedCrystals = new Set();
-        let outcome = "edge";
-        let reflections = 0;
-        let finalCell = { row, col };
-        let from = new THREE.Vector3(
-            gridX(GRID.start.col) + launchDirection * 0.37,
-            0.82,
-            gridZ(GRID.start.row)
+        const mirrorOrientations = new Map(
+            [...placedMirrors].map(([key, mirror]) => [key, mirror.slash ? "/" : "\\"])
         );
-
-        for (let step = 0; step < GRID.rows * GRID.cols * 2; step++) {
-            const state = `${row},${col},${direction}`;
-            if (visited.has(state)) {
-                outcome = "loop";
-                break;
-            }
-            visited.add(state);
-
-            const nextRow = row + directions[direction].row;
-            const nextCol = col + directions[direction].col;
-            if (nextRow < 0 || nextRow >= GRID.rows || nextCol < 0 || nextCol >= GRID.cols) {
-                outcome = "edge";
-                finalCell = { row, col };
-                const directionVector = directions[direction];
-                const exit = from.clone().add(new THREE.Vector3(
-                    directionVector.col,
-                    0,
-                    directionVector.row
-                ).multiplyScalar(GRID.step * 0.68));
-                segments.push({ from: from.clone(), to: exit, color: beamColors[colorIndex % beamColors.length] });
-                break;
-            }
-
-            row = nextRow;
-            col = nextCol;
-            finalCell = { row, col };
-            const isTarget = row === GRID.target.row && col === GRID.target.col;
-            const mirror = placedMirrors.get(gridKey(row, col));
-            const isObstacle = activeLevel.obstacles.some((cell) => cell.row === row && cell.col === col);
-            const to = isTarget
-                ? new THREE.Vector3(gridX(col), CORE_CONTACT_HEIGHT, gridZ(row))
-                : new THREE.Vector3(gridX(col), 0.72, gridZ(row));
-            segments.push({ from: from.clone(), to, color: beamColors[colorIndex % beamColors.length] });
-            from = to.clone();
-
-            if (isTarget) {
-                outcome = activatedCrystals.size === levelCrystals.size ? "powered" : "crystal_missed";
-                break;
-            }
-            if (mirror) {
-                direction = mirror.slash
-                    ? slashReflection[direction]
-                    : backslashReflection[direction];
-                reflections++;
-                colorIndex++;
-            } else if (isObstacle) {
-                outcome = "blocked";
-                break;
-            }
-            const crystal = levelCrystals.get(gridKey(row, col));
-            if (crystal) {
-                if (crystal.definition.index !== activatedCrystals.size ||
-                    crystal.definition.inputColor !== colorIndex % beamColors.length) {
-                    outcome = "crystal_mismatch";
-                    break;
-                }
-                activatedCrystals.add(gridKey(row, col));
-                crystalHits.push({ cellKey: gridKey(row, col), segmentIndex: segments.length - 1 });
-                colorIndex = crystal.definition.outputColor;
-            }
-        }
-
-        if (outcome === "powered" && reflections < activeLevel.par) {
-            outcome = "underpowered";
-        }
-        return { outcome, finalCell, segments, reflections, crystalHits };
+        const route = traceLaserRoute(activeLevel, mirrorOrientations, launchDirection);
+        const segments = route.segments.map((segment) => {
+            const from = segment.from.col < 0 || segment.from.col >= GRID.cols
+                ? new THREE.Vector3(
+                    gridX(segment.from.col) + (launchDirection === 1 ? 0.37 : -0.37),
+                    0.82,
+                    gridZ(segment.from.row)
+                )
+                : new THREE.Vector3(gridX(segment.from.col), 0.72, gridZ(segment.from.row));
+            const directionRow = segment.to.row - segment.from.row;
+            const directionCol = segment.to.col - segment.from.col;
+            const to = segment.exitsBoard
+                ? from.clone().add(new THREE.Vector3(directionCol, 0, directionRow).multiplyScalar(GRID.step * 0.68))
+                : new THREE.Vector3(
+                    gridX(segment.to.col),
+                    segment.to.row === GRID.target.row && segment.to.col === GRID.target.col
+                        ? CORE_CONTACT_HEIGHT
+                        : 0.72,
+                    gridZ(segment.to.row)
+                );
+            return {
+                from,
+                to,
+                color: beamColors[segment.colorIndex % beamColors.length]
+            };
+        });
+        return { ...route, segments };
     }
 
     function addActiveSegment(segment, index, visibleCount, preview = false) {
@@ -1336,6 +1511,7 @@ function startScene() {
             block.position.set(gridX(col), 0.19, gridZ(row));
             levelObjectGroup.add(block);
             const width = index % 3 === 0 ? 0.92 : 0.76;
+            addContactShadow(block, width * 1.5, width * 1.35, 0.006);
             addBox(
                 block,
                 [width, 0.48 + (index % 2) * 0.16, width * 0.82],
@@ -1354,6 +1530,7 @@ function startScene() {
             const crystalGroup = new THREE.Group();
             crystalGroup.position.set(gridX(definition.col), 0.2, gridZ(definition.row));
             levelObjectGroup.add(crystalGroup);
+            addContactShadow(crystalGroup, 0.95, 0.95, 0.006);
 
             const ring = new THREE.Mesh(
                 new THREE.TorusGeometry(0.29, 0.012, 5, 24),
@@ -1760,6 +1937,8 @@ function startScene() {
             );
         } else if (previewRoute.outcome === "crystal_mismatch") {
             setFeedback("A crystal received the wrong beam color. Re-route through the crystals in sequence.", "miss");
+        } else if (previewRoute.outcome === "crystal_order_mismatch") {
+            setFeedback("The beam reached a crystal out of order. Route through the next numbered crystal.", "miss");
         } else if (previewRoute.outcome === "blocked") {
             setFeedback("Stone blocks the beam. Redirect it with a mirror before the obstruction.", "miss");
         } else {
@@ -1949,10 +2128,33 @@ function startScene() {
             addBox(columnGroup, [radius * 2.8, 0.34, radius * 2.8], [0, 0, 0], materials.stone[i % materials.stone.length]);
             addBox(columnGroup, [radius * 2.35, 0.17, radius * 2.35], [0, 0.24, 0], materials.columnLight);
 
-            const shaft = new THREE.Mesh(
-                new THREE.CylinderGeometry(radius * 0.82, radius, height, 14, 1, false),
-                materials.column
+            const shaftGeometry = new THREE.CylinderGeometry(
+                radius * 0.82,
+                radius,
+                height,
+                24,
+                16,
+                false
             );
+            const shaftPositions = shaftGeometry.attributes.position;
+            for (let vertex = 0; vertex < shaftPositions.count; vertex++) {
+                const x = shaftPositions.getX(vertex);
+                const y = shaftPositions.getY(vertex);
+                const z = shaftPositions.getZ(vertex);
+                const angle = Math.atan2(z, x);
+                const heightRatio = y / height + 0.5;
+                const flute = Math.cos(angle * 8 + i * 0.31) * 0.035;
+                const weathering = Math.sin(angle * 3 + heightRatio * 6 + i) * 0.012;
+                const radialScale = 1 + flute + weathering;
+                shaftPositions.setXYZ(
+                    vertex,
+                    x * radialScale,
+                    y + Math.sin(angle * 5 + heightRatio * 11) * 0.012,
+                    z * radialScale
+                );
+            }
+            shaftGeometry.computeVertexNormals();
+            const shaft = new THREE.Mesh(shaftGeometry, materials.column);
             shaft.position.y = height / 2 + 0.3;
             shaft.castShadow = true;
             shaft.receiveShadow = true;
@@ -2671,6 +2873,8 @@ function startScene() {
                                     ? "The battery was reached, but not every crystal was charged."
                                     : traceResult.outcome === "crystal_mismatch"
                                         ? "A crystal rejected the beam color. Follow the crystal color sequence."
+                                        : traceResult.outcome === "crystal_order_mismatch"
+                                            ? "The beam reached a crystal out of sequence."
                                 : "The beam misses the battery and exits the platform.";
                     setStatus("Route interrupted", `${ending} No reward is credited for a failed attempt; the entry fee remains spent. Adjust the mirrors or try again.`, "miss");
                 }

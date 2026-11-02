@@ -44,7 +44,8 @@ module.exports = async function paymentIntent(request, response) {
         if (missing.length) {
             return sendJson(response, 503, {
                 error: "payment_intent_not_configured",
-                message: `Payment intents are disabled. Configure server-only ${missing.join(", ")}.`
+                message: "Deposit readiness cannot be verified because required server configuration is missing.",
+                readinessChecks: missing.map((name) => `${name} is missing.`)
             });
         }
         const network = process.env.SOLANA_NETWORK;
@@ -71,7 +72,8 @@ module.exports = async function paymentIntent(request, response) {
         if (readinessChecks.length > 0) {
             return sendJson(response, 503, {
                 error: "deposits_disabled",
-                message: "Deposits are temporarily unavailable. Please check back later. Do not send CYFUR."
+                message: "Deposits are not READY. Review the server-side deposit readiness checks before sending CYFUR.",
+                readinessChecks
             });
         }
 

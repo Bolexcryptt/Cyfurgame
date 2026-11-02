@@ -36,6 +36,98 @@ const DIRECTIONS = [
 ];
 const SLASH = [1, 0, 3, 2];
 const BACKSLASH = [3, 2, 1, 0];
+const BEAM_COLOR_COUNT = 3;
+
+export function traceLaserRoute(level, mirrors, launchDirection) {
+    const resolvedDirection = launchDirection ?? level?.start?.direction;
+    if (!level?.start || !level?.target ||
+        !Array.isArray(level.crystals) || !Array.isArray(level.obstacles) ||
+        !(mirrors instanceof Map) || ![1, 3].includes(resolvedDirection)) {
+        throw new TypeError("A valid level, mirror map, and launch direction are required.");
+    }
+
+    let row = level.start.row;
+    let col = resolvedDirection === 1 ? -1 : COLS;
+    let direction = resolvedDirection;
+    let colorIndex = 0;
+    let reflections = 0;
+    let outcome = "edge";
+    let finalCell = { row, col };
+    const segments = [];
+    const crystalHits = [];
+    const visited = new Set();
+    const crystalsByCell = new Map(level.crystals.map((crystal, index) => [
+        `${crystal.row},${crystal.col}`,
+        { ...crystal, index }
+    ]));
+    const obstacles = new Set(level.obstacles.map(({ row: obstacleRow, col: obstacleCol }) =>
+        `${obstacleRow},${obstacleCol}`
+    ));
+
+    for (let step = 0; step < ROWS * COLS * 2; step++) {
+        const state = `${row},${col},${direction}`;
+        if (visited.has(state)) {
+            outcome = "loop";
+            break;
+        }
+        visited.add(state);
+
+        const from = { row, col };
+        const nextRow = row + DIRECTIONS[direction].row;
+        const nextCol = col + DIRECTIONS[direction].col;
+        if (nextRow < 0 || nextRow >= ROWS || nextCol < 0 || nextCol >= COLS) {
+            outcome = "edge";
+            finalCell = { row, col };
+            segments.push({
+                from: { row, col },
+                to: { row: nextRow, col: nextCol },
+                colorIndex,
+                exitsBoard: true
+            });
+            break;
+        }
+
+        row = nextRow;
+        col = nextCol;
+        finalCell = { row, col };
+        segments.push({ from, to: { row, col }, colorIndex });
+        if (row === level.target.row && col === level.target.col) {
+            outcome = crystalHits.length === level.crystals.length ? "powered" : "crystal_missed";
+            break;
+        }
+
+        const orientation = mirrors.get(`${row},${col}`);
+        if (orientation === "/" || orientation === "\\") {
+            direction = orientation === "/" ? SLASH[direction] : BACKSLASH[direction];
+            reflections++;
+            colorIndex++;
+        } else if (obstacles.has(`${row},${col}`)) {
+            outcome = "blocked";
+            break;
+        }
+
+        const crystal = crystalsByCell.get(`${row},${col}`);
+        if (crystal) {
+            if (crystal.index !== crystalHits.length) {
+                outcome = "crystal_order_mismatch";
+                break;
+            }
+            if (crystal.inputColor !== colorIndex % BEAM_COLOR_COUNT) {
+                outcome = "crystal_mismatch";
+                break;
+            }
+            crystalHits.push({
+                cellKey: `${row},${col}`,
+                index: crystal.index,
+                segmentIndex: segments.length - 1
+            });
+            colorIndex = crystal.outputColor;
+        }
+    }
+
+    if (outcome === "powered" && reflections < level.par) outcome = "underpowered";
+    return { outcome, finalCell, segments, reflections, crystalHits };
+}
 
 function randomFor(seed) {
     let value = seed >>> 0;

@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>CYFUR · 99-level visual QA</title>
+    <style>
+        :root { color-scheme: dark; font: 14px/1.5 "Segoe UI", sans-serif; background: #070d14; color: #e4f2f5; }
+        * { box-sizing: border-box; }
+        body { max-width: 1500px; margin: auto; padding: 28px; }
+        h1 { margin: 0; color: #c9fbff; font-size: clamp(24px, 4vw, 38px); }
+        p { color: #9eb4bf; }
+        .summary { padding: 14px 18px; border: 1px solid #55dbe644; background: #0c1923; }
+        .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 14px; margin-top: 20px; }
+        figure { min-width: 0; margin: 0; overflow: hidden; border: 1px solid #55dbe633; background: #0a131c; }
+        img { display: block; width: 100%; aspect-ratio: 16 / 10; object-fit: cover; background: #101923; }
+        figcaption { display: flex; justify-content: space-between; gap: 12px; padding: 9px 11px; color: #9db8c1; font: 11px Consolas, monospace; }
+        figcaption strong { color: #d7f9fa; }
+        .missing { color: #ffba82; }
+    </style>
+</head>
+<body>
+    <h1>CYFUR · 99-level visual QA</h1>
+    <p>Local renderer captures. Each tile is loaded from the actual level fixture in the Three.js gameplay scene; wallet and Supabase flows are not used.</p>
+    <div class="summary" id="summary">Checking local capture files…</div>
+    <main class="grid" id="gallery"></main>
+    <script>
+        const gallery = document.querySelector("#gallery");
+        let captured = 0;
+        for (let number = 1; number <= 99; number++) {
+            const name = `level-${String(number).padStart(3, "0")}.png`;
+            const figure = document.createElement("figure");
+            const image = document.createElement("img");
+            image.loading = "lazy";
+            image.alt = `Level ${String(number).padStart(2, "0")} gameplay scene`;
+            image.src = `visual-qa-screenshots/${name}`;
+            image.addEventListener("load", () => { captured++; update(); }, { once: true });
+            image.addEventListener("error", () => { figure.classList.add("missing"); }, { once: true });
+            const caption = document.createElement("figcaption");
+            caption.innerHTML = `<strong>LEVEL ${String(number).padStart(2, "0")}</strong><span>${name}</span>`;
+            figure.append(image, caption);
+            gallery.append(figure);
+        }
+        function update() {
+            document.querySelector("#summary").textContent =
+                `${captured} / 99 screenshots available. Missing images are not considered inspected.`;
+        }
+        update();
+    </script>
+</body>
+</html>
