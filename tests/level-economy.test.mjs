@@ -605,7 +605,10 @@ test("wallet API publishes the same exchange rate and keeps deposits disabled", 
     process.env.SUPABASE_URL = "https://example.supabase.co";
     process.env.SUPABASE_PUBLISHABLE_KEY = "public-test-key";
     const originalFetch = globalThis.fetch;
+    const originalWarn = console.warn;
     const requestedUrls = [];
+    const readinessLogs = [];
+    console.warn = (message, details) => readinessLogs.push({ message, details });
     globalThis.fetch = async (url) => {
         const target = String(url);
         requestedUrls.push(target);
@@ -636,6 +639,13 @@ test("wallet API publishes the same exchange rate and keeps deposits disabled", 
         assert.equal(response.payload.paidGameplayEnabled, false);
         assert.equal(response.payload.fundingStatus, "disabled");
         assert.equal(response.payload.disabledReason, "direct_treasury_setup_incomplete");
+        assert.deepEqual(
+            readinessLogs.map(({ message }) => message),
+            ["Wallet deposit readiness checks failed."]
+        );
+        assert.ok(readinessLogs[0].details.failedChecks.includes("service_database_key_missing"));
+        assert.ok(readinessLogs[0].details.failedChecks.includes("server_deposits_flag_disabled"));
+        assert.ok(readinessLogs[0].details.failedChecks.includes("approved_mint_unconfigured"));
         assert.equal(response.payload.treasuryAddress, null);
         assert.equal(response.payload.linkedWalletAddress, null);
         assert.equal(requestedUrls.some((target) => target.includes("player_solana_wallets")), false);
@@ -644,6 +654,113 @@ test("wallet API publishes the same exchange rate and keeps deposits disabled", 
         assert.match(response.payload.disabledMessage, /Do not send CYFUR/);
         assert.equal(response.payload.balanceCredits, "250");
         assert.equal(response.payload.balanceVerified, true);
+    } finally {
+        globalThis.fetch = originalFetch;
+        console.warn = originalWarn;
+        for (const [name, value] of Object.entries(previousEnvironment)) {
+            if (value === undefined) delete process.env[name];
+            else process.env[name] = value;
+        }
+    }
+});
+
+test("wallet API reports mainnet deposits ready only when every readiness check passes", async () => {
+    const environment = {
+        SUPABASE_URL: "https://example.supabase.co",
+        SUPABASE_PUBLISHABLE_KEY: "public-test-key",
+        SUPABASE_SERVICE_ROLE_KEY: "server-only-test-key",
+        SOLANA_NETWORK: "mainnet-beta",
+        SOLANA_RPC_URL: "https://mainnet.example/rpc",
+        WALLET_APPROVED_CYFUR_MINT_ADDRESS: RELICGRID_CYFUR_MINT_ADDRESS,
+        WALLET_DIRECT_TREASURY_READY: "true",
+        WALLET_DEPOSITS_ENABLED: "true",
+        WALLET_MAINNET_DEPOSITS_ENABLED: "true"
+    };
+    const previousEnvironment = Object.fromEntries(
+        Object.keys(environment).map((name) => [name, process.env[name]])
+    );
+    Object.assign(process.env, environment);
+    const originalFetch = globalThis.fetch;
+    const mintAddress = RELICGRID_CYFUR_MINT_ADDRESS;
+    const treasuryAddress = RELICGRID_TREASURY_ADDRESS;
+    const tokenProgramId = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
+    const treasuryTokenAccount = deriveAssociatedTokenAccount(
+        treasuryAddress,
+        mintAddress,
+        tokenProgramId
+    );
+    globalThis.fetch = async (url, options = {}) => {
+        const target = String(url);
+        if (target.endsWith("/auth/v1/user")) {
+            return new Response(JSON.stringify({ id: "test-player" }), { status: 200 });
+        }
+        if (target.includes("/wallet_credit_accounts?")) {
+            return new Response(JSON.stringify([{ balance_credits: "0" }]), { status: 200 });
+        }
+        if (target.includes("/wallet_deposits?") ||
+            target.includes("/wallet_credit_ledger?")) {
+            return new Response(JSON.stringify([]), { status: 200 });
+        }
+        if (target.includes("/wallet_system_config?")) {
+            return new Response(JSON.stringify([{
+                deposits_enabled: true,
+                paid_gameplay_enabled: false,
+                network: "mainnet-beta",
+                official_mint_address: mintAddress,
+                token_program_id: tokenProgramId,
+                token_decimals: 8,
+                credits_per_token: "10000",
+                rounding_policy: "floor",
+                treasury_address: treasuryAddress
+            }]), { status: 200 });
+        }
+        if (target.includes("/player_solana_wallets?")) {
+            return new Response(JSON.stringify([]), { status: 200 });
+        }
+        if (target === environment.SOLANA_RPC_URL) {
+            const call = JSON.parse(options.body);
+            const result = call.method === "getGenesisHash"
+                ? "5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d"
+                : call.params[0] === treasuryAddress
+                    ? { value: { owner: "11111111111111111111111111111111" } }
+                    : call.params[0] === mintAddress
+                        ? { value: { owner: tokenProgramId, data: { parsed: { type: "mint", info: {
+                            decimals: 8,
+                            mintAuthority: null,
+                            freezeAuthority: null
+                        } } } } }
+                        : call.params[0] === treasuryTokenAccount
+                            ? { value: { owner: tokenProgramId, data: { parsed: { type: "account", info: {
+                                mint: mintAddress,
+                                owner: treasuryAddress
+                            } } } } }
+                            : { value: null };
+            return new Response(JSON.stringify({ result }), { status: 200 });
+        }
+        throw new Error(`Unexpected wallet readiness request: ${target}`);
+    };
+
+    try {
+        const endpoint = require("../api/wallet.js");
+        const response = {
+            statusCode: 200,
+            status(code) { this.statusCode = code; return this; },
+            setHeader() {},
+            json(payload) { this.payload = payload; }
+        };
+        await endpoint({
+            method: "GET",
+            headers: { authorization: "Bearer test-token" }
+        }, response);
+        assert.equal(response.statusCode, 200);
+        assert.equal(response.payload.depositsEnabled, true);
+        assert.equal(response.payload.fundingStatus, "ready");
+        assert.equal(response.payload.disabledReason, null);
+        assert.equal(response.payload.treasuryAddress, treasuryAddress);
+        assert.equal(response.payload.treasuryTokenAccountAddress, treasuryTokenAccount);
+        assert.equal(response.payload.officialMintAddress, mintAddress);
+        assert.equal(response.payload.tokenDecimals, 8);
+        assert.equal(response.payload.paidGameplayEnabled, false);
     } finally {
         globalThis.fetch = originalFetch;
         for (const [name, value] of Object.entries(previousEnvironment)) {
@@ -1906,6 +2023,7 @@ test("payment-intent API creates an authenticated intent without a linked wallet
         SUPABASE_SERVICE_ROLE_KEY: "service-test-key",
         SOLANA_RPC_URL: "https://mainnet.example/rpc",
         SOLANA_NETWORK: "mainnet-beta",
+        WALLET_APPROVED_CYFUR_MINT_ADDRESS: "9F4hLLngEAhepsH2HLTH6kBYmmq6dzm4GXRrcpME3uam",
         WALLET_DIRECT_TREASURY_READY: "true",
         WALLET_DEPOSITS_ENABLED: "true",
         WALLET_MAINNET_DEPOSITS_ENABLED: "true"
@@ -1920,9 +2038,11 @@ test("payment-intent API creates an authenticated intent without a linked wallet
     const requests = [];
     let persistedIntent = null;
     const mintAddress = "9F4hLLngEAhepsH2HLTH6kBYmmq6dzm4GXRrcpME3uam";
+    let configuredNetwork = "mainnet-beta";
     let configuredMintAddress = mintAddress;
+    let configuredTokenDecimals = 8;
     const tokenProgramId = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
-    const treasuryTokenAccount = deriveAssociatedTokenAccount(
+    let treasuryTokenAccount = deriveAssociatedTokenAccount(
         RELICGRID_TREASURY_ADDRESS,
         mintAddress,
         tokenProgramId
@@ -1936,10 +2056,10 @@ test("payment-intent API creates an authenticated intent without a linked wallet
         if (target.includes("/wallet_system_config?")) {
             return new Response(JSON.stringify([{
                 deposits_enabled: true,
-                network: "mainnet-beta",
+                network: configuredNetwork,
                 official_mint_address: configuredMintAddress,
                 token_program_id: tokenProgramId,
-                token_decimals: 8,
+                token_decimals: configuredTokenDecimals,
                 credits_per_token: "10000",
                 rounding_policy: "floor",
                 treasury_address: RELICGRID_TREASURY_ADDRESS
@@ -1948,16 +2068,18 @@ test("payment-intent API creates an authenticated intent without a linked wallet
         if (target === environment.SOLANA_RPC_URL) {
             const call = JSON.parse(options.body);
             const result = call.method === "getGenesisHash"
-                ? "5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d"
+                ? configuredNetwork === "mainnet-beta"
+                    ? "5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d"
+                    : "EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG"
                 : call.params[0] === RELICGRID_TREASURY_ADDRESS
                     ? { value: { owner: "11111111111111111111111111111111" } }
-                    : call.params[0] === mintAddress
+                    : call.params[0] === configuredMintAddress
                         ? { value: { owner: tokenProgramId, data: { parsed: { type: "mint", info: {
-                            decimals: 8,
+                            decimals: configuredTokenDecimals,
                             mintAuthority: null,
                             freezeAuthority: null
                         } } } } }
-                        : { value: { owner: tokenProgramId, data: { parsed: { type: "account", info: { mint: mintAddress, owner: RELICGRID_TREASURY_ADDRESS } } } } };
+                        : { value: { owner: tokenProgramId, data: { parsed: { type: "account", info: { mint: configuredMintAddress, owner: RELICGRID_TREASURY_ADDRESS } } } } };
             return new Response(JSON.stringify({ result }), { status: 200 });
         }
         if (target.includes("/wallet_payment_intents?") && options.method === "DELETE") {
@@ -1979,6 +2101,24 @@ test("payment-intent API creates an authenticated intent without a linked wallet
 
     try {
         const endpoint = require("../api/payment-intent.js");
+        process.env.WALLET_APPROVED_CYFUR_MINT_ADDRESS =
+            "So11111111111111111111111111111111111111112";
+        const unapprovedMintResponse = {
+            statusCode: 200,
+            status(code) { this.statusCode = code; return this; },
+            setHeader() {},
+            json(payload) { this.payload = payload; }
+        };
+        await endpoint({
+            method: "POST",
+            headers: { authorization: "Bearer test-token" },
+            body: {}
+        }, unapprovedMintResponse);
+        assert.equal(unapprovedMintResponse.statusCode, 503);
+        assert.equal(unapprovedMintResponse.payload.error, "deposits_disabled");
+        assert.equal(persistedIntent, null);
+        process.env.WALLET_APPROVED_CYFUR_MINT_ADDRESS = mintAddress;
+
         configuredMintAddress = "So11111111111111111111111111111111111111112";
         const wrongMintResponse = {
             statusCode: 200,
@@ -2061,6 +2201,32 @@ test("payment-intent API creates an authenticated intent without a linked wallet
         const expiredIntent = await validateIntent();
         assert.equal(expiredIntent.statusCode, 409);
         assert.equal(expiredIntent.payload.error, "payment_intent_invalid_or_expired");
+
+        configuredNetwork = "devnet";
+        configuredMintAddress = "So11111111111111111111111111111111111111112";
+        configuredTokenDecimals = 6;
+        treasuryTokenAccount = deriveAssociatedTokenAccount(
+            RELICGRID_TREASURY_ADDRESS,
+            configuredMintAddress,
+            tokenProgramId
+        );
+        process.env.SOLANA_NETWORK = configuredNetwork;
+        process.env.WALLET_APPROVED_CYFUR_MINT_ADDRESS = configuredMintAddress;
+        const devnetResponse = {
+            statusCode: 200,
+            status(code) { this.statusCode = code; return this; },
+            setHeader() {},
+            json(payload) { this.payload = payload; }
+        };
+        await endpoint({
+            method: "POST",
+            headers: { authorization: "Bearer test-token" },
+            body: {}
+        }, devnetResponse);
+        assert.equal(devnetResponse.statusCode, 201, JSON.stringify(devnetResponse.payload));
+        assert.equal(devnetResponse.payload.network, "devnet");
+        assert.equal(devnetResponse.payload.mintAddress, configuredMintAddress);
+        assert.equal(devnetResponse.payload.tokenDecimals, 6);
     } finally {
         globalThis.fetch = originalFetch;
         for (const [name, value] of Object.entries(previousEnvironment)) {
