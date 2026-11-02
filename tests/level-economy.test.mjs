@@ -661,7 +661,7 @@ test("backend level entry costs match the campaign economy for all 99 levels", (
     assert.equal(getLevelEntryCostCredits(100), null);
 });
 
-test("level starts require a charged server session and completion rewards remain provisional until verified", () => {
+test("all levels can start in practice while paid rewards require a server session", () => {
     const app = readFileSync(new URL("../app.js", import.meta.url), "utf8");
     const startIndex = app.indexOf("async function startLevel");
     const endIndex = app.indexOf("\nfunction leaveGameplay", startIndex);
@@ -672,9 +672,9 @@ test("level starts require a charged server session and completion rewards remai
     assert.match(startLevel, /activeWalletLevelSessionId = entry\.sessionId/);
     assert.match(startLevel, /entryCostCredits: activeLevelEntryCostCredits/);
     assert.match(app, /getLevelEconomy\(level\.number\)\.entryCostCredits/);
-    assert.match(app, /INSUFFICIENT · NEED/);
-    assert.match(app, /No progress or credit reward was recorded/);
-    assert.match(app, /if \(await refreshLevelsLockState\(\)\)/);
+    assert.match(app, /FREE PRACTICE · NEED/);
+    assert.match(app, /entry\.practice/);
+    assert.match(app, /Practice complete\. No credits, leaderboard points, or saved progress were awarded/);
 
     const scene = readFileSync(new URL("../script.js", import.meta.url), "utf8");
     assert.match(scene, /ESTIMATED REWARD/);
@@ -724,11 +724,15 @@ test("RelicGrid branding is used in the game and hidden scenes stop rendering", 
     assert.equal(existsSync(new URL("../powersource.mp3", import.meta.url)), true);
     const soundHtml = readFileSync(new URL("../index.html", import.meta.url), "utf8");
     assert.match(soundHtml, /id="background-music" src="music\.mp3"[^>]*loop/);
+    assert.equal(existsSync(new URL("../music.mp3", import.meta.url)), true);
     assert.doesNotMatch(scene, /backgroundMusic\.(?:pause|play|currentTime|volume)/);
+    const app = readFileSync(new URL("../app.js", import.meta.url), "utf8");
+    const startLevel = app.slice(app.indexOf("async function startLevel"), app.indexOf("\nfunction leaveGameplay"));
+    assert.ok(startLevel.indexOf("startMusic()") < startLevel.indexOf("await requestLevelEntry"));
+    assert.match(app, /Tap anywhere in the game to enable music/);
     assert.match(scene, /group\.userData\.wallEmitter = wallEmitter/);
     assert.match(scene, /GRID\.start\.col = launchDirection === 1 \? -1 : GRID\.cols/);
     assert.match(scene, /activationRingMaterials\.forEach/);
-    const app = readFileSync(new URL("../app.js", import.meta.url), "utf8");
     assert.match(app, /next-level[\s\S]*?startLevel\(number, true\)/);
     assert.match(app, /function playLevelTransition\(nextLevel\)/);
     assert.match(app, /10 \+ Math\.floor\(Math\.random\(\) \* 6\)/);
@@ -874,28 +878,23 @@ test("wallet API returns verified zero for a player with no credit account or le
     }
 });
 
-test("all campaign levels render locked by default and the in-game field guide is available", () => {
+test("all campaign levels remain selectable and the in-game field guide is available", () => {
     const app = readFileSync(new URL("../app.js", import.meta.url), "utf8");
     const levelPicker = app.slice(app.indexOf("function renderLevels"), app.indexOf("\nfunction renderHome"));
     const startLevel = app.slice(app.indexOf("async function startLevel"), app.indexOf("\nfunction leaveGameplay"));
-    assert.match(levelPicker, /className = locked\s*\?/);
-    assert.match(levelPicker, /button\.disabled = locked/);
-    assert.match(levelPicker, /badge\.textContent = locked \? "LOCKED"/);
-    assert.match(startLevel, /await refreshLevelsLockState\(\)/);
-    assert.match(startLevel, /showScreen\("home-screen"\)/);
+    assert.match(levelPicker, /button\.disabled = false/);
+    assert.match(levelPicker, /FREE PRACTICE/);
 
     const html = readFileSync(new URL("../index.html", import.meta.url), "utf8");
-    assert.match(html, /id="continue-game"[^>]+disabled/);
-    assert.match(html, /CAMPAIGN TEMPORARILY LOCKED/);
+    assert.doesNotMatch(html, /id="continue-game"[^>]+disabled/);
+    assert.doesNotMatch(html, /CAMPAIGN TEMPORARILY LOCKED/);
     assert.match(html, /id="game-guide-toggle"/);
     assert.match(html, /id="game-guide"/);
     assert.match(html, /Charge crystals in order/);
     assert.match(html, /LIVE TUTORIAL/);
     assert.match(app, /game-guide-close/);
     const scene = readFileSync(new URL("../script.js", import.meta.url), "utf8");
-    assert.match(scene, /async function isGlobalLevelLockActive\(\)/);
-    assert.match(scene, /config\.levelsLocked !== false/);
-    assert.match(scene, /Level load rejected because the server campaign lock is active/);
+    assert.match(scene, /window\.addEventListener\("fluxgrid:load-level", \(event\) => \{\s*loadLevel\(event\.detail\)/);
     assert.match(scene, /tutorialTargetMarker/);
     assert.match(scene, /drawActiveRoute\(previewRoute, previewRoute\.segments\.length, true\)/);
     assert.match(scene, /firstLevelTutorialStage = "complete"/);

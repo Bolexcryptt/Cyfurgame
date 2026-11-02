@@ -37,15 +37,15 @@ function createResponse() {
     };
 }
 
-test("the campaign is open by default and invalid lock values fail closed", () => {
+test("the campaign remains open even when a stale pause variable is configured", () => {
     assert.equal(areLevelsGloballyLocked({}), false);
-    assert.equal(areLevelsGloballyLocked({ LEVELS_LOCKED: "true" }), true);
-    assert.equal(areLevelsGloballyLocked({ LEVELS_LOCKED: "0" }), true);
-    assert.equal(areLevelsGloballyLocked({ LEVELS_LOCKED: "False" }), true);
+    assert.equal(areLevelsGloballyLocked({ LEVELS_LOCKED: "true" }), false);
+    assert.equal(areLevelsGloballyLocked({ LEVELS_LOCKED: "0" }), false);
+    assert.equal(areLevelsGloballyLocked({ LEVELS_LOCKED: "False" }), false);
     assert.equal(areLevelsGloballyLocked({ LEVELS_LOCKED: "false" }), false);
 });
 
-test("game configuration returns the runtime lock state without caching", (context) => {
+test("game configuration always reports the campaign open without caching", (context) => {
     context.after(restoreEnvironment);
     delete process.env.LEVELS_LOCKED;
 
@@ -59,21 +59,18 @@ test("game configuration returns the runtime lock state without caching", (conte
     process.env.LEVELS_LOCKED = "true";
     const lockedResponse = createResponse();
     gameConfig(request, lockedResponse);
-    assert.deepEqual(lockedResponse.payload, { levelsLocked: true });
+    assert.deepEqual(lockedResponse.payload, { levelsLocked: false });
 });
 
-test("all level-entry and gameplay APIs reject requests while the global lock is active", async (context) => {
+test("level-entry and gameplay APIs ignore a stale global lock setting", async (context) => {
     context.after(restoreEnvironment);
     process.env.LEVELS_LOCKED = "true";
 
     for (const handler of handlers) {
         const response = createResponse();
         await handler({ method: "POST", headers: {}, body: {} }, response);
-        assert.equal(response.statusCode, 423);
-        assert.deepEqual(response.payload, {
-            error: "levels_locked",
-            levelsLocked: true
-        });
+        assert.notEqual(response.statusCode, 423);
+        assert.notEqual(response.payload?.error, "levels_locked");
     }
 });
 

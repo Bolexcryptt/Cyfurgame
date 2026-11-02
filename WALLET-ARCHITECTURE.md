@@ -16,7 +16,7 @@ The campaign and leaderboard are unchanged. Depositing does not open Phantom or 
 
 ## Campaign access
 
-All levels are available by default and may be started in any order. Set the server environment variable `LEVELS_LOCKED=true` to pause the campaign; the frontend reads this state from `GET /api/game-config`, and the level-entry, timer-start, and completion APIs independently reject requests with HTTP 423 while paused. Players still need enough verified credits for each level's entry fee, and entries are still charged by the existing server-side wallet flow. The global lock changes no level data or player progress.
+All 99 levels can be selected in any order. Free practice is available even when authentication, wallet APIs, paid gameplay, or entry credits are unavailable; practice does not charge credits or save leaderboard progress/rewards. When paid gameplay is enabled and a player has enough verified credits, the server may still authorize a paid entry and record its verified completion. The obsolete `LEVELS_LOCKED` environment variable is ignored so a stale deployment setting cannot lock the game.
 
 ## Required setup
 

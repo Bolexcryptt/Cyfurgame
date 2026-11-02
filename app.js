@@ -117,7 +117,6 @@ let backendReady;
 let walletStatusSnapshot = null;
 let currentDepositIntent = null;
 let solanaWeb3ModulePromise = null;
-let levelsGloballyLocked = true;
 let activeLevelEntryCostCredits = null;
 
 function savePlayer() {
@@ -262,18 +261,37 @@ function stopMusic() {
     backgroundMusic.pause();
     backgroundMusic.currentTime = 0;
     musicStarted = false;
+    if (musicRetryHandler) {
+        document.removeEventListener("pointerdown", musicRetryHandler, true);
+        document.removeEventListener("keydown", musicRetryHandler, true);
+        musicRetryHandler = null;
+    }
 }
+
+let musicRetryHandler = null;
 
 function startMusic() {
     if (musicStarted && !backgroundMusic.paused) return;
     musicStarted = true;
+    backgroundMusic.muted = false;
     const playback = backgroundMusic.play();
     if (playback && typeof playback.catch === "function") {
         playback.catch((error) => {
             console.warn("Background music could not start.", error);
             musicStarted = false;
             const status = document.getElementById("game-status");
-            if (status) status.textContent = "Music is unavailable in this browser; the puzzle is still playable.";
+            if (status) status.textContent = "Tap anywhere in the game to enable music.";
+            if (!musicRetryHandler) {
+                musicRetryHandler = () => {
+                    if (document.getElementById("play-screen").hidden) return;
+                    document.removeEventListener("pointerdown", musicRetryHandler, true);
+                    document.removeEventListener("keydown", musicRetryHandler, true);
+                    musicRetryHandler = null;
+                    startMusic();
+                };
+                document.addEventListener("pointerdown", musicRetryHandler, true);
+                document.addEventListener("keydown", musicRetryHandler, true);
+            }
         });
     }
 }
@@ -304,19 +322,16 @@ function renderProfile() {
     nextTelemetry.parentElement.setAttribute("aria-valuenow", String(Math.round(nextProgress)));
     document.getElementById("hero-current-sector").textContent =
         `LEVEL ${String(continueLevel).padStart(2, "0")}`;
-    document.getElementById("hero-sector-access").textContent = levelsGloballyLocked
-        ? "CAMPAIGN PAUSED"
-        : "ALL SECTORS AVAILABLE";
+    document.getElementById("hero-sector-access").textContent = "ALL SECTORS AVAILABLE";
     const campaignMap = document.getElementById("campaign-map-grid");
     const campaignMapCells = document.createDocumentFragment();
     for (const level of levels) {
         const cell = document.createElement("span");
         const completedLevel = player.completedLevels.includes(level.number);
         const currentLevel = level.number === continueLevel && !completedLevel;
-        const lockedLevel = levelsGloballyLocked;
-        cell.className = `campaign-map-cell${completedLevel ? " is-cleared" : ""}${currentLevel ? " is-current" : ""}${lockedLevel ? " is-locked" : ""}`;
+        cell.className = `campaign-map-cell${completedLevel ? " is-cleared" : ""}${currentLevel ? " is-current" : ""}`;
         cell.title = `Sector ${String(level.number).padStart(2, "0")}: ${
-            completedLevel ? "cleared" : currentLevel ? "next sector" : lockedLevel ? "locked" : "available"
+            completedLevel ? "cleared" : currentLevel ? "next sector" : "available"
         }`;
         cell.setAttribute("aria-hidden", "true");
         campaignMapCells.append(cell);
@@ -469,58 +484,6 @@ function statCard(label, value) {
     return card;
 }
 
-function applyLevelsLockState(locked, statusMessage = "") {
-    const changed = levelsGloballyLocked !== locked;
-    levelsGloballyLocked = locked;
-    const continueButton = document.getElementById("continue-game");
-    const lockBanner = document.getElementById("levels-lock-banner");
-    const sectionDescription = document.getElementById("level-section-description");
-    const nextLevelButton = document.getElementById("next-level");
-
-    continueButton.disabled = locked;
-    lockBanner.hidden = !locked;
-    sectionDescription.textContent = locked
-        ? "All 99 sectors are temporarily locked. Your campaign progress and saved records remain unchanged."
-        : "Choose any sector and track campaign progress as you go.";
-    if (nextLevelButton) nextLevelButton.disabled = locked || Number(nextLevelButton.dataset.nextLevel) > 99;
-
-    if (locked) {
-        setLevelEntryMessage(statusMessage ||
-            "All 99 levels are temporarily locked. Your saved progress remains intact.", "disabled");
-    } else {
-        setLevelEntryMessage("Campaign access is open. Your saved progress remains intact.", "ready");
-    }
-
-    if (changed) {
-        if (document.getElementById("level-list")) renderLevels();
-        renderProfile();
-    }
-
-    if (locked && !document.getElementById("play-screen").hidden) {
-        activeWalletLevelSessionId = null;
-        pendingLevel = null;
-        stopMusic();
-        showScreen("home-screen");
-    }
-}
-
-async function refreshLevelsLockState() {
-    try {
-        const response = await fetch(apiUrl("game-config"), { cache: "no-store" });
-        if (!response.ok) throw new Error(`Campaign lock status unavailable (${response.status}).`);
-        const config = await response.json();
-        if (typeof config.levelsLocked !== "boolean") {
-            throw new Error("Campaign lock status returned an invalid response.");
-        }
-        applyLevelsLockState(config.levelsLocked);
-        return config.levelsLocked;
-    } catch (error) {
-        console.error("Campaign lock status could not be verified; levels remain locked.", error);
-        applyLevelsLockState(true, "Campaign availability could not be verified. All 99 levels remain locked.");
-        return true;
-    }
-}
-
 function renderLevels() {
     const list = document.getElementById("level-list");
     const fragment = document.createDocumentFragment();
@@ -528,7 +491,6 @@ function renderLevels() {
     for (const level of levels) {
         const completed = player.completedLevels.includes(level.number);
         const current = level.number === continueLevel && !completed;
-        const locked = levelsGloballyLocked;
         const item = document.createElement("li");
         const button = document.createElement("button");
         button.style.setProperty("--card-index", String((level.number - 1) % 12));
@@ -549,32 +511,30 @@ function renderLevels() {
             /^\d+$/.test(String(walletStatusSnapshot.balanceCredits))
             ? BigInt(walletStatusSnapshot.balanceCredits)
             : null;
-        const insufficientCredits = verifiedBalance !== null &&
+        const insufficientCredits = walletStatusSnapshot?.paidGameplayEnabled === true &&
+            verifiedBalance !== null &&
             verifiedBalance < BigInt(entryCostCredits);
-        button.className = locked
-            ? "level-card is-locked is-temporarily-locked"
-            : `${insufficientCredits ? "is-locked is-insufficient" : "is-unlocked"}${completed ? " is-complete" : ""}${current ? " is-current" : ""}`;
-        button.disabled = locked || insufficientCredits;
+        button.className =
+            `${insufficientCredits ? "is-insufficient" : "is-unlocked"}${completed ? " is-complete" : ""}${current ? " is-current" : ""}`;
+        button.disabled = false;
         const entryCost = document.createElement("small");
         entryCost.className = "level-cost";
-        entryCost.textContent = locked
-            ? `TEMPORARILY LOCKED · ${formatCredits(entryCostCredits)} CREDIT ENTRY`
-            : insufficientCredits
-                ? `INSUFFICIENT · NEED ${formatCredits(entryCostCredits)} · HAVE ${formatCredits(verifiedBalance.toString())}`
-            : `${formatCredits(entryCostCredits)} CREDIT ENTRY`;
+        entryCost.textContent = insufficientCredits
+            ? `FREE PRACTICE · NEED ${formatCredits(entryCostCredits)} · HAVE ${formatCredits(verifiedBalance.toString())}`
+            : walletStatusSnapshot?.paidGameplayEnabled === true
+                ? `${formatCredits(entryCostCredits)} CREDIT ENTRY · PRACTICE AVAILABLE`
+                : `FREE PRACTICE · ${formatCredits(entryCostCredits)} CREDIT ENTRY NOT ACTIVE`;
         detail.append(title, meta);
         const badge = document.createElement("span");
         badge.className = "level-state";
-        badge.textContent = locked ? "LOCKED" : insufficientCredits ? "NEED CREDITS" : completed ? "CLEARED" : current ? "NEXT UP" : "PLAY";
+        badge.textContent = insufficientCredits ? "PRACTICE" : completed ? "CLEARED" : current ? "NEXT UP" : "PLAY";
         const cost = document.createElement("span");
         cost.className = "level-entry-cost";
         cost.append(entryCost);
         button.append(number, detail, cost, badge);
-        button.setAttribute("aria-label", locked
-            ? `Level ${level.number}, temporarily locked`
-            : insufficientCredits
-                ? `Level ${level.number} requires ${formatCredits(entryCostCredits)} credits; verified balance ${formatCredits(verifiedBalance.toString())}`
-                : `Play level ${level.number}, ${formatCredits(entryCostCredits)} credit entry${completed ? ", completed" : ""}`);
+        button.setAttribute("aria-label", insufficientCredits
+            ? `Practice level ${level.number}; paid entry requires ${formatCredits(entryCostCredits)} credits, verified balance ${formatCredits(verifiedBalance.toString())}`
+            : `Play level ${level.number}${walletStatusSnapshot?.paidGameplayEnabled === true ? `, ${formatCredits(entryCostCredits)} credit entry or free practice` : " in free practice"}`);
         button.addEventListener("click", () => void startLevel(level.number));
         item.append(button);
         fragment.append(item);
@@ -607,9 +567,22 @@ function setLevelEntryMessage(message, state = "disabled") {
 
 async function requestLevelEntry(levelNumber) {
         if (levelEntryRequestInProgress) return null;
+        const practiceEntry = (reason) => {
+            setLevelEntryMessage(
+                `Level ${levelNumber} started in free practice. ${reason} No credits were charged; progress and rewards will not be saved.`,
+                "ready"
+            );
+            return {
+                practice: true,
+                sessionId: null,
+                balanceCredits: walletStatusSnapshot?.balanceVerified
+                    ? String(walletStatusSnapshot.balanceCredits)
+                    : "0",
+                entryCostCredits: null
+            };
+        };
         if (!supabaseConfigured || !supabase) {
-            setLevelEntryMessage("Cannot start a paid mission: player authentication and wallet verification are unavailable.", "error");
-            return null;
+            return practiceEntry("Wallet verification is unavailable.");
         }
 
         levelEntryRequestInProgress = true;
@@ -619,8 +592,7 @@ async function requestLevelEntry(levelNumber) {
             if (error) throw error;
             const accessToken = data.session?.access_token;
             if (!accessToken) {
-                setLevelEntryMessage("Sign in before starting a paid mission. No credits were checked or charged.", "error");
-                return null;
+                return practiceEntry("Sign in to enable verified progress and rewards.");
             }
             const requestStorageKey = `relicgrid.level-entry.${authUser?.id || "player"}.${levelNumber}`;
             const storedRequestId = sessionStorage.getItem(requestStorageKey);
@@ -662,51 +634,34 @@ async function requestLevelEntry(levelNumber) {
                 const costMessage = /^\d+$/.test(String(result.entryCostCredits))
                     ? `Level ${levelNumber} requires ${formatCredits(result.entryCostCredits)} credits.`
                     : `Level ${levelNumber} could not be charged.`;
-                setLevelEntryMessage(`Insufficient verified credits. ${costMessage} ${balanceMessage}`, "error");
-                return null;
+                return practiceEntry(`Paid entry is unavailable. ${costMessage} ${balanceMessage}`);
             }
             if (response.status === 409 && result.error === "level_session_active") {
-                setLevelEntryMessage(
-                    "Another level session is already active. Continue that session or wait for it to expire; no additional entry fee was charged.",
-                    "error"
-                );
-                return null;
+                return practiceEntry("A paid session is already active.");
             }
             if (response.status === 423 && result.error === "levels_locked") {
-                applyLevelsLockState(true);
-                return null;
+                return practiceEntry("The campaign API is paused.");
             }
             if (result.error === "paid_gameplay_disabled") {
-                setLevelEntryMessage(
-                    `Level ${levelNumber} requires ${formatCredits(result.entryCostCredits)} credits. Your verified balance is ${formatCredits(result.balanceCredits)}. Paid gameplay remains disabled, so this level cannot start.`,
-                    "disabled"
-                );
-                return null;
+                return practiceEntry("Paid entries are not enabled.");
             }
             if (result.error === "wallet_schema_not_installed") {
-                setLevelEntryMessage("Cannot start a paid mission: apply supabase-wallet.sql and deploy the wallet API before balance checks are available.", "error");
-                return null;
+                return practiceEntry("Wallet database setup is incomplete.");
             }
             if (result.error === "wallet_migration_required") {
-                setLevelEntryMessage(result.message ||
-                    "Cannot start this mission until the latest wallet access migration is applied.", "error");
-                return null;
+                return practiceEntry("The latest wallet access migration is not available.");
             }
             if (result.error === "verified_balance_unavailable") {
-                setLevelEntryMessage("Cannot start a paid mission: the backend has no verified credit balance for this player.", "error");
-                return null;
+                return practiceEntry("A verified credit balance is unavailable.");
             }
             if (result.error === "wallet_api_not_configured") {
-                setLevelEntryMessage("Cannot start a paid mission: server wallet credentials are not configured.", "error");
-                return null;
+                return practiceEntry("The server wallet API is not configured.");
             }
             if (result.error === "authentication_required") {
-                setLevelEntryMessage("Cannot start a paid mission: the backend could not authenticate this player.", "error");
-                return null;
+                return practiceEntry("The backend could not authenticate this player.");
             }
             if (response.status === 404 || response.status === 501) {
-                setLevelEntryMessage("Cannot start a paid mission: this preview host does not run the Vercel balance-check API. No level was started.", "error");
-                return null;
+                return practiceEntry("This host does not provide the paid-entry API.");
             }
             if (response.ok && result.allowed === true && result.balanceVerified === true &&
                 typeof result.sessionId === "string" &&
@@ -719,9 +674,8 @@ async function requestLevelEntry(levelNumber) {
 
             throw new Error(result.error || `Level entry check failed (${response.status}).`);
         } catch (error) {
-            console.error("Paid level entry check failed closed.", error);
-            setLevelEntryMessage(`Cannot start a paid mission: backend balance verification failed. ${error.message}`, "error");
-            return null;
+            console.warn("Paid level entry is unavailable; continuing in free practice.", error);
+            return practiceEntry("Backend balance verification failed.");
         } finally {
             levelEntryRequestInProgress = false;
     }
@@ -2097,16 +2051,10 @@ async function startLevel(number, resumeMusic = false) {
     const level = levels[number - 1];
     if (!level) return;
     const musicWasPlaying = musicStarted && !backgroundMusic.paused;
-    if (resumeMusic || !musicStarted) startMusic();
+    if (resumeMusic || !musicStarted || backgroundMusic.paused) startMusic();
     const stopNewMusic = () => {
         if (!musicWasPlaying) stopMusic();
     };
-    if (await refreshLevelsLockState()) {
-        stopNewMusic();
-        showScreen("home-screen");
-        setLevelEntryMessage("All 99 levels are temporarily locked. Your saved progress remains intact.", "disabled");
-        return;
-    }
     const entry = await requestLevelEntry(number);
     if (!entry) {
         stopNewMusic();
@@ -2118,19 +2066,21 @@ async function startLevel(number, resumeMusic = false) {
     document.getElementById("first-level-tutorial").hidden = !showTutorial;
     document.getElementById("game-guide-toggle").setAttribute("aria-expanded", String(showTutorial));
     activeWalletLevelSessionId = entry.sessionId;
-    activeLevelEntryCostCredits = Number(entry.entryCostCredits);
+    activeLevelEntryCostCredits = entry.practice ? null : Number(entry.entryCostCredits);
     walletTimerStartPromise = Promise.resolve(false);
-    document.getElementById("wallet-balance").textContent = formatCredits(entry.balanceCredits);
-    document.getElementById("wallet-balance-state").textContent = "CREDITS · BACKEND VERIFIED";
-    walletStatusSnapshot = {
-        ...walletStatusSnapshot,
-        balanceCredits: String(entry.balanceCredits),
-        balanceVerified: true
-    };
-    setLevelEntryMessage(
-        `Level ${String(number).padStart(2, "0")} started. ${formatCredits(entry.entryCostCredits)} credits deducted; verified balance ${formatCredits(entry.balanceCredits)}.`,
-        "success"
-    );
+    if (!entry.practice) {
+        document.getElementById("wallet-balance").textContent = formatCredits(entry.balanceCredits);
+        document.getElementById("wallet-balance-state").textContent = "CREDITS · BACKEND VERIFIED";
+        walletStatusSnapshot = {
+            ...walletStatusSnapshot,
+            balanceCredits: String(entry.balanceCredits),
+            balanceVerified: true
+        };
+    }
+    setLevelEntryMessage(entry.practice
+        ? `Level ${String(number).padStart(2, "0")} started in free practice. No credits were charged; progress and rewards will not be saved.`
+        : `Level ${String(number).padStart(2, "0")} started. ${formatCredits(entry.entryCostCredits)} credits deducted; verified balance ${formatCredits(entry.balanceCredits)}.`,
+    entry.practice ? "ready" : "success");
     player.lastLevel = number;
     pendingLevel = level;
     savePlayer();
@@ -2441,11 +2391,6 @@ window.addEventListener("fluxgrid:level-timer-start", (event) => {
 });
 
 window.addEventListener("fluxgrid:level-complete", async (event) => {
-    if (await refreshLevelsLockState()) {
-        setLevelEntryMessage("The campaign is temporarily locked. No completion or reward was recorded.", "disabled");
-        showScreen("home-screen");
-        return;
-    }
     const detail = event.detail ?? {};
     const number = detail.number;
     if (!Number.isInteger(number) || number < 1 || number > 99) {
@@ -2471,8 +2416,13 @@ window.addEventListener("fluxgrid:level-complete", async (event) => {
             return;
         }
     } else {
+        const nextLevelButton = document.getElementById("next-level");
+        nextLevelButton.hidden = false;
+        nextLevelButton.disabled = number >= 99;
+        nextLevelButton.dataset.nextLevel = String(number + 1);
+        nextLevelButton.textContent = number >= 99 ? "PRACTICE COMPLETE" : "NEXT LEVEL →";
         document.getElementById("game-status").textContent =
-            "This completion has no server-authorized level session. No progress or credit reward was recorded.";
+            "Practice complete. No credits, leaderboard points, or saved progress were awarded.";
         return;
     }
 
@@ -2488,12 +2438,6 @@ window.addEventListener("fluxgrid:level-complete", async (event) => {
 });
 
 backendReady = initializeBackend();
-void refreshLevelsLockState();
-window.addEventListener("focus", () => void refreshLevelsLockState());
-document.addEventListener("visibilitychange", () => {
-    if (!document.hidden) void refreshLevelsLockState();
-});
-window.setInterval(() => void refreshLevelsLockState(), 30000);
 const phantomMobileCallback = readPhantomMobileCallback(window);
 if (phantomMobileCallback) {
     showNameOrHome();

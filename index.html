@@ -134,13 +134,13 @@
                     <section class="hero-tactical-map" aria-label="Campaign completion map">
                         <header><span>CAMPAIGN MAP</span><strong>99 SECTORS</strong></header>
                         <div id="campaign-map-grid" class="campaign-map-grid" role="img" aria-label="Campaign sectors"></div>
-                        <footer><span><i></i> CLEARED</span><span><i></i> CURRENT</span><span><i></i> LOCKED</span></footer>
+                        <footer><span><i></i> CLEARED</span><span><i></i> CURRENT</span><span><i></i> AVAILABLE</span></footer>
                     </section>
                     <div class="hero-signal-readout">
                         <span><i></i> SECTOR STATUS</span>
                         <b id="hero-campaign-status">0 / 99 CLEARED</b>
                         <small>UP NEXT <strong id="hero-current-sector">LEVEL 01</strong></small>
-                        <small id="hero-sector-access">CAMPAIGN ACCESS CHECKING</small>
+                        <small id="hero-sector-access">ALL SECTORS AVAILABLE</small>
                         <button id="home-levels-toggle" class="hero-sector-button" type="button" aria-controls="level-section" aria-expanded="false" aria-label="Open level map" title="Open level map">
                             <span aria-hidden="true">↗</span>
                         </button>
@@ -148,15 +148,11 @@
                     <section class="hero-action-panel" aria-label="Campaign actions">
                         <span class="hud-kicker">PILOT CONSOLE</span>
                         <div class="hero-mission-actions">
-                            <button id="continue-game" class="button button-primary" type="button" disabled>
+                            <button id="continue-game" class="button button-primary" type="button">
                                 <span class="mission-button-label">START MISSION<small id="hero-next-level">LEVEL 01 / 99</small></span>
                                 <span aria-hidden="true">→</span>
                             </button>
                         </div>
-                        <aside id="levels-lock-banner" class="levels-lock-banner" role="status" aria-live="polite">
-                            <span class="levels-lock-icon" aria-hidden="true">Ⅱ</span>
-                            <span><b>CAMPAIGN TEMPORARILY LOCKED</b><small>All 99 sectors are unavailable while the campaign is paused.</small></span>
-                        </aside>
                     </section>
                 </section>
 
@@ -165,7 +161,7 @@
                         <div>
                             <span class="eyebrow">THE CAMPAIGN</span>
                             <h2 id="level-heading">Select a sector</h2>
-                            <p id="level-section-description">All 99 sectors are temporarily locked. Your campaign progress and saved records remain unchanged.</p>
+                            <p id="level-section-description">Choose any of the 99 sectors. Paid entries require verified credits; free practice is always available.</p>
                         </div>
                         <div class="campaign-progress-card">
                             <span>SECTORS CLEARED</span>
@@ -173,7 +169,7 @@
                             <i><span id="campaign-progress-fill"></span></i>
                         </div>
                     </div>
-                    <p id="level-entry-status" class="level-entry-status" role="status" aria-live="polite">All levels are temporarily locked. Your saved progress remains intact.</p>
+                    <p id="level-entry-status" class="level-entry-status" role="status" aria-live="polite">All 99 sectors are available in free practice.</p>
                     <ol id="level-list" class="level-list" aria-label="Levels"></ol>
                 </section>
 
