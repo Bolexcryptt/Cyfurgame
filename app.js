@@ -115,7 +115,6 @@ let authUser = null;
 let backendStatus = supabaseConfigured ? "Connecting to Supabase…" : "Supabase is not configured.";
 let backendReady;
 let walletStatusSnapshot = null;
-let currentDepositIntent = null;
 let solanaWeb3ModulePromise = null;
 let activeLevelEntryCostCredits = null;
 
@@ -700,11 +699,11 @@ function setWalletMessage(message, state = "") {
     const stateLabels = {
         verifying: "VERIFYING",
         pending: "PENDING",
-        setup: "CHECK SETUP",
+        setup: "SETUP NEEDED",
         confirmed: "CONFIRMED",
         rejected: "REJECTED",
         error: "ERROR",
-        disabled: "CHECK SETUP",
+        disabled: "SETUP NEEDED",
         ready: "READY"
     };
     if (badge && stateLabels[state]) {
@@ -746,7 +745,7 @@ function renderWalletHistory(deposits) {
         history.replaceChildren();
         const empty = document.createElement("li");
         empty.className = "wallet-history-empty";
-        empty.textContent = "Deposit history is unavailable.";
+        empty.textContent = "Deposit history could not be loaded.";
         history.append(empty);
         return;
     }
@@ -1055,7 +1054,6 @@ async function validateWithdrawalAddress() {
 async function refreshWallet() {
     const address = document.getElementById("wallet-address");
     const copyButton = document.getElementById("wallet-copy-address");
-    const createIntentButton = document.getElementById("deposit-create-intent");
     const signatureInput = document.getElementById("deposit-signature");
     const signatureSubmit = document.getElementById("deposit-verify-button");
     const balance = document.getElementById("wallet-balance");
@@ -1063,35 +1061,44 @@ async function refreshWallet() {
     const refreshButton = document.getElementById("wallet-refresh");
     const balanceRefreshButton = document.getElementById("wallet-balance-refresh");
     const walletRequirement = document.getElementById("deposit-wallet-requirement");
+    const markFundingSetupNeeded = (message, stateMessage = message, state = "setup") => {
+        address.textContent = "Treasury address not ready for deposits";
+        copyButton.disabled = true;
+        walletRequirement.textContent = message;
+        setWalletMessage(stateMessage, state);
+    };
     walletStatusSnapshot = null;
     refreshButton.disabled = true;
     refreshButton.textContent = "LOADING";
     balanceRefreshButton.disabled = true;
     balanceRefreshButton.textContent = "CHECKING BALANCE…";
     copyButton.disabled = true;
-    address.textContent = "Loading verified treasury…";
+    address.textContent = "Checking treasury setup…";
     status.textContent = "CHECKING";
     status.dataset.state = "pending";
-    balance.textContent = "Unavailable";
+    balance.textContent = "—";
     document.getElementById("wallet-balance-state").textContent = "CREDITS · NOT VERIFIED";
-    walletRequirement.textContent = "Checking deposit readiness…";
-    createIntentButton.disabled = false;
+    walletRequirement.textContent = "Checking funding setup…";
     signatureInput.disabled = false;
     signatureSubmit.disabled = false;
     renderWalletHistory(null);
 
     try {
         if (!supabaseConfigured || !supabase) {
-            walletRequirement.textContent = "Unavailable: Supabase is not configured.";
-            setWalletMessage("Supabase is not configured; wallet data and deposit readiness are unavailable.", "error");
+            markFundingSetupNeeded(
+                "Funding setup is incomplete. Do not send CYFUR until the status is READY.",
+                "Funding is not active because game wallet services are not configured. Do not send CYFUR."
+            );
             return;
         }
         const { data, error } = await supabase.auth.getSession();
         if (error) throw error;
         const accessToken = data.session?.access_token;
         if (!accessToken) {
-            walletRequirement.textContent = "Unavailable: sign in to your RelicGrid account first.";
-            setWalletMessage("Sign in to view wallet data and deposit readiness.", "error");
+            markFundingSetupNeeded(
+                "Sign in to load the treasury address and verify your funding status.",
+                "Sign in to your RelicGrid account to continue."
+            );
             return;
         }
 
@@ -1102,35 +1109,41 @@ async function refreshWallet() {
         const result = await response.json().catch(() => ({}));
         if (!response.ok) {
             if (result.error === "wallet_schema_not_installed") {
-                walletRequirement.textContent = "Wallet database setup is incomplete.";
-                setWalletMessage("Wallet database setup is incomplete. Deposit readiness cannot be verified.", "error");
+                markFundingSetupNeeded(
+                    "Funding setup is incomplete on this game server. Do not send CYFUR.",
+                    "Wallet database setup is incomplete. Funding is not active."
+                );
                 return;
             }
             if (result.error === "wallet_api_not_configured") {
-                walletRequirement.textContent = "Wallet server configuration is incomplete.";
-                setWalletMessage("Wallet server configuration is incomplete. Deposit readiness cannot be verified.", "error");
+                markFundingSetupNeeded(
+                    "Funding setup is incomplete on this game server. Do not send CYFUR.",
+                    "Wallet server configuration is incomplete. Funding is not active."
+                );
                 return;
             }
             if (result.error === "authentication_required") {
-                walletRequirement.textContent = "Unavailable: your session could not be authenticated.";
-                setWalletMessage("Your RelicGrid identity could not be authenticated by the wallet API.", "error");
+                markFundingSetupNeeded(
+                    "Sign in again to load the treasury address and verify your funding status.",
+                    "Your RelicGrid session needs to be refreshed."
+                );
                 return;
             }
             if (response.status === 404 || response.status === 501) {
-                walletRequirement.textContent = "Deposit service is unavailable.";
-                setWalletMessage("Deposit readiness service is unavailable. Try refreshing the wallet status.", "error");
+                markFundingSetupNeeded(
+                    "Funding verification is not configured on this game server. Do not send CYFUR.",
+                    "Funding setup is incomplete. Try refreshing the wallet status later."
+                );
                 return;
             }
             if (response.status >= 500) {
-                throw new Error("Deposit readiness could not be verified. Please try again later.");
+                throw new Error("Funding status could not be checked. Please try again later.");
             }
             throw new Error(result.message || result.error || `Wallet request failed (${response.status}).`);
         }
 
-        address.textContent = result.treasuryAddress || "Treasury unavailable";
         document.getElementById("wallet-network-label").textContent =
             `CYFUR TREASURY · ${typeof result.network === "string" ? result.network.toUpperCase() : "NETWORK NOT VERIFIED"}`;
-        copyButton.disabled = !result.treasuryAddress;
         walletStatusSnapshot = result;
         renderLevels();
         const depositConfigurationReady = result.depositsEnabled === true &&
@@ -1140,22 +1153,23 @@ async function refreshWallet() {
             Number.isInteger(result.tokenDecimals) &&
             Boolean(result.treasuryTokenAccountAddress);
         const depositReady = depositConfigurationReady;
-        createIntentButton.disabled = false;
+        address.textContent = depositReady
+            ? result.treasuryAddress
+            : "Treasury address not ready for deposits";
+        copyButton.disabled = !depositReady;
         signatureInput.disabled = false;
         signatureSubmit.disabled = false;
         balance.textContent = result.balanceCredits === null
-            ? "Unavailable"
+            ? "—"
             : formatCredits(result.balanceCredits);
         document.getElementById("wallet-balance-state").textContent =
             result.balanceVerified === true ? "CREDITS · BACKEND VERIFIED" : "CREDITS · NOT VERIFIED";
-        status.textContent = result.depositsEnabled === true
+        status.textContent = depositReady
             ? `READY${result.network ? ` · ${result.network.toUpperCase()}` : ""}`
-            : "CHECK SETUP";
+            : "SETUP NEEDED";
         renderWalletHistory(result.deposits);
         if (depositReady) {
-            walletRequirement.textContent = currentDepositIntent
-                ? "Instructions are ready. Send at least the displayed amount and include the unique memo, then submit the transaction link."
-                : "Create deposit instructions first. Send at least the displayed amount with its unique memo, then submit the transaction link.";
+            walletRequirement.textContent = "Send at least 1 CYFUR to the shared treasury address from any Solana wallet, then paste the transaction signature or explorer link.";
             setWalletMessage(walletRequirement.textContent, "ready");
         } else {
             const readinessMessage = typeof result.disabledMessage === "string" &&
@@ -1168,8 +1182,11 @@ async function refreshWallet() {
         await refreshWithdrawalStatus();
     } catch (error) {
         console.error("Wallet data could not be refreshed.", error);
-        walletRequirement.textContent = "Deposit status could not be loaded.";
-        setWalletMessage("Deposit readiness could not be verified. Please try again later.", "error");
+        markFundingSetupNeeded(
+            "Funding status could not be checked. Refresh and wait for READY before sending CYFUR.",
+            "Funding status could not be checked. Refresh and wait for READY before sending CYFUR.",
+            "error"
+        );
     } finally {
         refreshButton.disabled = false;
         refreshButton.textContent = "REFRESH";
@@ -1604,11 +1621,10 @@ async function verifyDepositSignature(signatureOrLink) {
 
     if (!response.ok) {
         const messages = {
-            transaction_not_found: "Transaction was not found on Solana mainnet. Check again after it has been submitted.",
+            transaction_not_found: "Transaction was not found on the configured Solana network. Check again after it has been submitted.",
             transaction_failed: "Solana reports this transaction failed. No credits were added.",
             wrong_token_or_destination: "This transaction does not contain a verified CYFUR transfer to the exact treasury token account. No credits were added.",
             wrong_amount: "The finalized CYFUR transfer is below the 1 CYFUR minimum. No credits were added.",
-            payment_intent_mismatch: "This transaction does not match an active deposit instruction for this account. No credits were added.",
             transaction_already_claimed: "This transaction has already been claimed or credited to another player. No credits were added.",
             deposit_rejected: "The deposit was rejected because it did not match the current verified account or deposit configuration.",
             owner_approved_mint_not_configured: result.message,
@@ -1633,8 +1649,6 @@ async function verifyDepositSignature(signatureOrLink) {
     }
     document.getElementById("wallet-balance").textContent = formatCredits(result.balanceCredits);
     document.getElementById("wallet-balance-state").textContent = "CREDITS · BACKEND VERIFIED";
-    currentDepositIntent = null;
-    document.getElementById("deposit-intent-panel").hidden = true;
     document.getElementById("deposit-signature").value = "";
     await refreshWallet();
     setWalletMessage(
@@ -1651,7 +1665,7 @@ async function getWalletAuthorizationHeaders() {
     const { data, error } = await supabase.auth.getSession();
     if (error) throw error;
     const accessToken = data.session?.access_token;
-    if (!accessToken) throw new Error("Sign in to your game account before creating deposit instructions.");
+    if (!accessToken) throw new Error("Sign in to your game account before submitting a deposit.");
     return {
         Authorization: `Bearer ${accessToken}`,
         "Content-Type": "application/json"
@@ -2180,7 +2194,7 @@ document.getElementById("wallet-copy-address").addEventListener("click", async (
         document.getElementById("wallet-address-copy-status").textContent = "Treasury address copied.";
         setWalletMessage(
             depositsReady
-                    ? "Treasury copied. Create deposit instructions and include their unique memo with your transfer."
+                    ? "Shared treasury address copied. Send CYFUR externally, then submit its transaction signature for verification."
                 : "Treasury address copied for setup only. Deposit verification is not READY; do not send CYFUR.",
             depositsReady ? "ready" : "disabled"
         );
@@ -2188,64 +2202,6 @@ document.getElementById("wallet-copy-address").addEventListener("click", async (
         console.error("Deposit address could not be copied.", error);
         document.getElementById("wallet-address-copy-status").textContent = "Copy failed. Select the address to copy it.";
         setWalletMessage(`Address copy failed. Select and copy it manually. ${error.message}`, "error");
-    }
-});
-document.getElementById("deposit-create-intent").addEventListener("click", async () => {
-    const button = document.getElementById("deposit-create-intent");
-    button.disabled = true;
-    button.textContent = "PREPARING…";
-    try {
-        const response = await fetch(apiUrl("payment-intent"), {
-            method: "POST",
-            headers: await getWalletAuthorizationHeaders(),
-            body: JSON.stringify({}),
-            cache: "no-store"
-        });
-        const result = await response.json().catch(() => ({}));
-        if (!response.ok) {
-            const readinessDetails = Array.isArray(result.readinessChecks)
-                ? ` ${result.readinessChecks.join(" ")}`
-                : "";
-            throw new Error(
-                `${result.message || result.error || `Deposit instructions failed (${response.status}).`}${readinessDetails}`
-            );
-        }
-        if (typeof result.intentId !== "string" ||
-            typeof result.amountRaw !== "string" || !/^[1-9]\d*$/.test(result.amountRaw) ||
-            !Number.isInteger(result.tokenDecimals) || result.tokenDecimals < 0 ||
-            typeof result.treasuryAddress !== "string" ||
-            typeof result.memo !== "string" ||
-            !Number.isFinite(Date.parse(result.expiresAt))) {
-            throw new Error("The server returned incomplete deposit instructions.");
-        }
-        currentDepositIntent = result;
-        document.getElementById("deposit-intent-amount").textContent =
-            `${formatTokenAmount(result.amountRaw, result.tokenDecimals)} CYFUR`;
-        document.getElementById("deposit-intent-memo").textContent = result.memo;
-        document.getElementById("deposit-intent-expiry").textContent =
-            `Expires ${new Date(result.expiresAt).toLocaleTimeString()}`;
-        document.getElementById("deposit-intent-panel").hidden = false;
-        document.getElementById("deposit-signature").disabled = false;
-        document.getElementById("deposit-verify-button").disabled = false;
-        document.getElementById("deposit-wallet-requirement").textContent =
-            "Send at least the displayed amount to the treasury and include the memo exactly. Then paste the transaction signature or Explorer/Solscan link.";
-        setWalletMessage("Deposit instructions are ready. Include the unique memo so the payment can be credited to your account.", "ready");
-    } catch (error) {
-        console.error("Deposit instructions could not be created.", error);
-        setWalletMessage(error.message, "error");
-    } finally {
-        button.textContent = "CREATE DEPOSIT INSTRUCTIONS";
-        button.disabled = false;
-    }
-});
-document.getElementById("deposit-copy-memo").addEventListener("click", async () => {
-    if (!currentDepositIntent) return;
-    try {
-        await navigator.clipboard.writeText(currentDepositIntent.memo);
-        document.getElementById("deposit-memo-copy-status").textContent = "Memo copied.";
-    } catch (error) {
-        console.error("Deposit memo could not be copied.", error);
-        document.getElementById("deposit-memo-copy-status").textContent = "Copy failed. Select and copy the memo manually.";
     }
 });
 document.getElementById("deposit-signature-form").addEventListener("submit", async (event) => {

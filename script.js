@@ -35,17 +35,19 @@ try {
 
 function startScene() {
     const scene = new THREE.Scene();
-    scene.background = new THREE.Color(0x090d14);
-    scene.fog = new THREE.FogExp2(0x171b23, 0.009);
+    scene.background = null;
+    scene.fog = new THREE.FogExp2(0x10151c, 0.0075);
 
     const camera = new THREE.PerspectiveCamera(37, 1, 0.1, 160);
     const mobileQuality = window.innerWidth < 620;
     const renderer = new THREE.WebGLRenderer({
         canvas,
+        alpha: true,
         antialias: !mobileQuality,
         powerPreference: "high-performance"
     });
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, mobileQuality ? 1 : 1.5));
+    renderer.setClearColor(0x000000, 0);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, mobileQuality ? 1.5 : 2));
     renderer.shadowMap.enabled = !mobileQuality;
     renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
@@ -67,7 +69,7 @@ function startScene() {
     const moonLight = new THREE.DirectionalLight(0xffdfbd, 2.25);
     moonLight.position.set(-7, 15, -4);
     moonLight.castShadow = window.innerWidth >= 620;
-    moonLight.shadow.mapSize.set(1024, 1024);
+    moonLight.shadow.mapSize.set(2048, 2048);
     moonLight.shadow.camera.left = -14;
     moonLight.shadow.camera.right = 14;
     moonLight.shadow.camera.top = 14;
@@ -451,31 +453,31 @@ function startScene() {
     };
 
     const materials = {
-        platform: makeStoneMaterial(0x62615b, 2.8, 2.3),
-        platformSide: makeStoneMaterial(0x50504d, 2.1, 1.2),
-        underside: makeStoneMaterial(0x41403c, 2.2, 1.1),
+        platform: makeStoneMaterial(0x786a57, 2.8, 2.3),
+        platformSide: makeStoneMaterial(0x55483f, 2.1, 1.2),
+        underside: makeStoneMaterial(0x3e4148, 2.2, 1.1),
         floor: [
-            makeStoneMaterial(0x66645c, 1.15, 1.15, { side: THREE.DoubleSide }),
-            makeStoneMaterial(0x706b61, 1.15, 1.15, { side: THREE.DoubleSide }),
-            makeStoneMaterial(0x5d5d58, 1.15, 1.15, { side: THREE.DoubleSide }),
-            makeStoneMaterial(0x68665d, 1.15, 1.15, { side: THREE.DoubleSide }),
-            makeStoneMaterial(0x595c58, 1.15, 1.15, { side: THREE.DoubleSide }),
-            makeStoneMaterial(0x62645c, 1.15, 1.15, { side: THREE.DoubleSide })
+            makeStoneMaterial(0x88765f, 1.15, 1.15, { side: THREE.DoubleSide }),
+            makeStoneMaterial(0x958065, 1.15, 1.15, { side: THREE.DoubleSide }),
+            makeStoneMaterial(0x71675d, 1.15, 1.15, { side: THREE.DoubleSide }),
+            makeStoneMaterial(0x81725f, 1.15, 1.15, { side: THREE.DoubleSide }),
+            makeStoneMaterial(0x665f58, 1.15, 1.15, { side: THREE.DoubleSide }),
+            makeStoneMaterial(0x756d5d, 1.15, 1.15, { side: THREE.DoubleSide })
         ],
-        seam: new THREE.MeshBasicMaterial({ color: 0x111719 }),
-        metal: makeMaterial(0x202a34, 0.46, 0.78),
-        metalEdge: makeMaterial(0x4b5560, 0.4, 0.82),
-        column: makeStoneMaterial(0x62615b, 1.3, 3.4),
-        columnLight: makeStoneMaterial(0x777268, 1.5, 2.2),
+        seam: new THREE.MeshBasicMaterial({ color: 0x201c1a }),
+        metal: makeMaterial(0x302d31, 0.52, 0.72),
+        metalEdge: makeMaterial(0x8b6944, 0.38, 0.72),
+        column: makeStoneMaterial(0x746451, 1.3, 3.4),
+        columnLight: makeStoneMaterial(0x9a8260, 1.5, 2.2),
         stone: [
-            makeStoneMaterial(0x625e55, 0.95, 0.95),
-            makeStoneMaterial(0x70695e, 0.95, 0.95),
-            makeStoneMaterial(0x585a54, 0.95, 0.95)
+            makeStoneMaterial(0x756451, 0.95, 0.95),
+            makeStoneMaterial(0x8c765b, 0.95, 0.95),
+            makeStoneMaterial(0x5c5b5e, 0.95, 0.95)
         ],
         floatingRock: [
-            makeStoneMaterial(0x777065, 2.2, 2.2, { flatShading: true }),
-            makeStoneMaterial(0x857a6b, 2.2, 2.2, { flatShading: true }),
-            makeStoneMaterial(0x625f58, 2.2, 2.2, { flatShading: true })
+            makeStoneMaterial(0x6b625b, 2.2, 2.2, { flatShading: true }),
+            makeStoneMaterial(0x797064, 2.2, 2.2, { flatShading: true }),
+            makeStoneMaterial(0x555861, 2.2, 2.2, { flatShading: true })
         ],
         crack: new THREE.LineBasicMaterial({ color: 0x191918, transparent: true, opacity: 0.86 }),
         circuit: new THREE.MeshStandardMaterial({
@@ -514,7 +516,7 @@ function startScene() {
                     texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
                     texture.anisotropy = Math.min(
                         renderer.capabilities.getMaxAnisotropy(),
-                        mobileQuality ? 2 : 4
+                        mobileQuality ? 4 : 8
                     );
                     resolve(texture);
                 },
@@ -687,78 +689,6 @@ function startScene() {
     };
 
     function createVoid() {
-        const skyCanvas = document.createElement("canvas");
-        skyCanvas.width = 512;
-        skyCanvas.height = 256;
-        const skyContext = skyCanvas.getContext("2d");
-        const skyGradient = skyContext.createLinearGradient(0, 0, 0, skyCanvas.height);
-        skyGradient.addColorStop(0, "#080d17");
-        skyGradient.addColorStop(0.42, "#1b2635");
-        skyGradient.addColorStop(0.72, "#57443f");
-        skyGradient.addColorStop(1, "#17171b");
-        skyContext.fillStyle = skyGradient;
-        skyContext.fillRect(0, 0, skyCanvas.width, skyCanvas.height);
-        const horizonHaze = skyContext.createRadialGradient(260, 184, 8, 260, 184, 220);
-        horizonHaze.addColorStop(0, "rgba(231, 153, 111, 0.26)");
-        horizonHaze.addColorStop(1, "rgba(255, 178, 126, 0)");
-        skyContext.fillStyle = horizonHaze;
-        skyContext.fillRect(0, 0, skyCanvas.width, skyCanvas.height);
-        [
-            [90, 90, 105, "rgba(135, 161, 185, 0.09)"],
-            [310, 117, 130, "rgba(230, 177, 142, 0.08)"],
-            [450, 76, 80, "rgba(137, 159, 182, 0.07)"]
-        ].forEach(([x, y, radius, color]) => {
-            const cloud = skyContext.createRadialGradient(x, y, 4, x, y, radius);
-            cloud.addColorStop(0, color);
-            cloud.addColorStop(1, "rgba(0, 0, 0, 0)");
-            skyContext.fillStyle = cloud;
-            skyContext.fillRect(x - radius, y - radius, radius * 2, radius * 2);
-        });
-        skyContext.fillStyle = "#171b23";
-        skyContext.beginPath();
-        skyContext.moveTo(0, 193);
-        skyContext.lineTo(45, 154);
-        skyContext.lineTo(76, 180);
-        skyContext.lineTo(130, 145);
-        skyContext.lineTo(171, 183);
-        skyContext.lineTo(218, 156);
-        skyContext.lineTo(265, 186);
-        skyContext.lineTo(314, 149);
-        skyContext.lineTo(362, 180);
-        skyContext.lineTo(414, 151);
-        skyContext.lineTo(467, 183);
-        skyContext.lineTo(512, 157);
-        skyContext.lineTo(512, 256);
-        skyContext.lineTo(0, 256);
-        skyContext.closePath();
-        skyContext.fill();
-        skyContext.fillStyle = "rgba(24, 24, 29, 0.72)";
-        skyContext.fillRect(0, 195, skyCanvas.width, 61);
-        const skyTexture = new THREE.CanvasTexture(skyCanvas);
-        skyTexture.colorSpace = THREE.SRGBColorSpace;
-        const sky = new THREE.Mesh(
-            new THREE.SphereGeometry(120, 32, 20),
-            new THREE.MeshBasicMaterial({
-                map: skyTexture,
-                side: THREE.BackSide,
-                depthWrite: false,
-                depthTest: false,
-                fog: false,
-                toneMapped: false
-            })
-        );
-        sky.renderOrder = -1;
-        scene.add(sky);
-
-        const floor = new THREE.Mesh(
-            new THREE.PlaneGeometry(180, 180),
-            makeMaterial(0x090e17, 1, 0)
-        );
-        floor.rotation.x = -Math.PI / 2;
-        floor.position.y = -3.5;
-        floor.receiveShadow = true;
-        scene.add(floor);
-
         const beamCanvas = document.createElement("canvas");
         beamCanvas.width = 128;
         beamCanvas.height = 512;
@@ -795,28 +725,6 @@ function startScene() {
             beam.renderOrder = 0;
             scene.add(beam);
         });
-
-        const shadowCanvas = document.createElement("canvas");
-        shadowCanvas.width = shadowCanvas.height = 256;
-        const shadowContext = shadowCanvas.getContext("2d");
-        const shadowGradient = shadowContext.createRadialGradient(128, 128, 8, 128, 128, 126);
-        shadowGradient.addColorStop(0, "rgba(2, 4, 9, 0.78)");
-        shadowGradient.addColorStop(0.58, "rgba(2, 4, 9, 0.3)");
-        shadowGradient.addColorStop(1, "rgba(2, 4, 9, 0)");
-        shadowContext.fillStyle = shadowGradient;
-        shadowContext.fillRect(0, 0, 256, 256);
-        const shadow = new THREE.Mesh(
-            new THREE.PlaneGeometry(19, 13),
-            new THREE.MeshBasicMaterial({
-                map: new THREE.CanvasTexture(shadowCanvas),
-                transparent: true,
-                depthWrite: false,
-                toneMapped: false
-            })
-        );
-        shadow.rotation.x = -Math.PI / 2;
-        shadow.position.set(0, -3.47, 0);
-        scene.add(shadow);
 
         const dustPositions = [];
         let seed = 7812;
@@ -959,7 +867,7 @@ function startScene() {
         const positions = [];
         const colors = [];
         const uvs = [];
-        const strata = [0xa69a87, 0x928472, 0x74685e, 0x9c8d79, 0x81776d, 0x687071];
+        const strata = [0x9b8064, 0x857566, 0x69646a, 0x98846a, 0x706b68, 0x505762];
         let seed = 62041;
         const random = () => {
             seed = (seed * 1664525 + 1013904223) >>> 0;
@@ -1279,7 +1187,7 @@ function startScene() {
             const z = gridZ(GRID.start.row);
             marker.position.set(x, 0.25, z);
             hitArea.position.set(x, 0.29, z);
-            sourcePylon?.position.set(x, 0.05, z);
+            sourcePylon?.position.set(x, 0, z);
             if (sourcePylon?.userData.wallEmitter) {
                 sourcePylon.userData.wallEmitter.position.x = -launchDirection * 0.3;
                 sourcePylon.userData.emitterRing.position.x = launchDirection * 0.2;
@@ -1532,25 +1440,35 @@ function startScene() {
             levelObjectGroup.add(crystalGroup);
             addContactShadow(crystalGroup, 0.95, 0.95, 0.006);
 
+            const pedestalMetal = materials.metal.clone();
+            const pedestalStone = materials.columnLight.clone();
+            addCylinder(crystalGroup, 0.42, 0.48, 0.12, [0, -0.12, 0], pedestalMetal, 12);
+            addCylinder(crystalGroup, 0.34, 0.42, 0.12, [0, 0, 0], pedestalStone, 10);
+            addCylinder(crystalGroup, 0.3, 0.34, 0.055, [0, 0.08, 0], pedestalMetal, 24);
             const ring = new THREE.Mesh(
-                new THREE.TorusGeometry(0.29, 0.012, 5, 24),
-                new THREE.MeshBasicMaterial({
+                new THREE.TorusGeometry(0.36, 0.026, 6, 32),
+                new THREE.MeshStandardMaterial({
                     color: crystalColors[definition.inputColor],
+                    emissive: crystalColors[definition.inputColor],
+                    emissiveIntensity: 1.45,
+                    metalness: 0.62,
+                    roughness: 0.24,
                     transparent: true,
-                    opacity: 0.46,
-                    toneMapped: false
+                    opacity: 0.88
                 })
             );
             ring.rotation.x = Math.PI / 2;
-            ring.position.y = 0.15;
+            ring.position.y = 0.115;
             crystalGroup.add(ring);
 
-            const material = new THREE.MeshStandardMaterial({
+            const material = new THREE.MeshPhysicalMaterial({
                 color: crystalColors[definition.inputColor],
                 emissive: crystalColors[definition.inputColor],
-                emissiveIntensity: 0.68,
+                emissiveIntensity: 0.82,
                 metalness: 0.16,
-                roughness: 0.17,
+                roughness: 0.12,
+                clearcoat: 0.82,
+                clearcoatRoughness: 0.08,
                 flatShading: true,
                 vertexColors: true
             });
@@ -2107,33 +2025,70 @@ function startScene() {
     }
 
     function createColumnsAndRuins() {
+        const columnScale = 0.58;
+        const platformFloorY = 0.08;
+        const islandUndersideY = -1.9;
         const columns = [
-            [-7.3, -4.1, 10.8, 0.72],
-            [-5.8, -5.25, 9.4, 0.54],
-            [-3.0, -5.55, 11.5, 0.6],
-            [-0.15, -5.45, 10.7, 0.74],
-            [2.68, -5.1, 12.3, 0.63],
-            [-7.55, -0.75, 10.1, 0.78],
-            [-7.45, 2.1, 8.8, 0.65],
-            [6.55, -3.7, 11.8, 0.74]
+            [-3.4, -4.9, 9.6, 0.56],
+            [0, -4.55, 10.4, 0.62],
+            [3.2, -4.35, 9.4, 0.58],
+            [-6.65, -2, 8.8, 0.66],
+            [6.15, -1.7, 9, 0.68],
+            [-5.1, 3.65, 8, 0.58],
+            [4.5, 3.5, 8.3, 0.62]
         ];
 
         columns.forEach(([x, z, height, radius], i) => {
-            const baseY = -0.12;
+            const baseY = platformFloorY + 0.34 * columnScale / 2;
             const columnGroup = new THREE.Group();
-            columnGroup.position.set(x * 1.38, baseY, z * 1.38);
-            columnGroup.scale.setScalar(0.58);
+            columnGroup.position.set(x, baseY, z);
+            columnGroup.scale.setScalar(columnScale);
             world.add(columnGroup);
 
-            addBox(columnGroup, [radius * 2.8, 0.34, radius * 2.8], [0, 0, 0], materials.stone[i % materials.stone.length]);
-            addBox(columnGroup, [radius * 2.35, 0.17, radius * 2.35], [0, 0.24, 0], materials.columnLight);
+            addCylinder(
+                columnGroup,
+                radius * 1.52,
+                radius * 1.72,
+                0.34,
+                [0, 0, 0],
+                materials.stone[i % materials.stone.length],
+                8
+            );
+            addCylinder(
+                columnGroup,
+                radius * 1.26,
+                radius * 1.52,
+                0.17,
+                [0, 0.24, 0],
+                materials.columnLight,
+                8
+            );
+            addCylinder(
+                columnGroup,
+                radius * 1.08,
+                radius * 1.24,
+                0.14,
+                [0, 0.38, 0],
+                materials.stone[(i + 1) % materials.stone.length],
+                12
+            );
+            [0.17, 0.33, 0.44].forEach((y, bandIndex) => {
+                const band = new THREE.Mesh(
+                    new THREE.TorusGeometry(radius * [1.46, 1.27, 1.12][bandIndex], 0.035, 6, 24),
+                    bandIndex === 1 ? materials.metalEdge : materials.columnLight
+                );
+                band.rotation.x = Math.PI / 2;
+                band.position.y = y;
+                band.castShadow = true;
+                columnGroup.add(band);
+            });
 
             const shaftGeometry = new THREE.CylinderGeometry(
                 radius * 0.82,
                 radius,
                 height,
+                32,
                 24,
-                16,
                 false
             );
             const shaftPositions = shaftGeometry.attributes.position;
@@ -2143,8 +2098,8 @@ function startScene() {
                 const z = shaftPositions.getZ(vertex);
                 const angle = Math.atan2(z, x);
                 const heightRatio = y / height + 0.5;
-                const flute = Math.cos(angle * 8 + i * 0.31) * 0.035;
-                const weathering = Math.sin(angle * 3 + heightRatio * 6 + i) * 0.012;
+                const flute = Math.cos(angle * 12 + i * 0.31) * 0.065;
+                const weathering = Math.sin(angle * 3 + heightRatio * 6 + i) * 0.016;
                 const radialScale = 1 + flute + weathering;
                 shaftPositions.setXYZ(
                     vertex,
@@ -2160,14 +2115,26 @@ function startScene() {
             shaft.receiveShadow = true;
             columnGroup.add(shaft);
 
-            for (let band = 0; band < 4; band++) {
-                const y = 0.48 + height * (band + 1) / 5;
+            const supportBottom = (islandUndersideY - 0.18 - baseY) / columnScale;
+            const supportHeight = 0.3 - supportBottom;
+            const islandSupport = new THREE.Mesh(
+                new THREE.CylinderGeometry(radius * 0.72, radius * 0.9, supportHeight, 20, 8),
+                materials.column
+            );
+            islandSupport.position.y = (0.3 + supportBottom) / 2;
+            islandSupport.castShadow = true;
+            islandSupport.receiveShadow = true;
+            columnGroup.add(islandSupport);
+
+            for (let band = 0; band < 5; band++) {
+                const y = 0.52 + height * (band + 1) / 6;
                 const collar = new THREE.Mesh(
-                    new THREE.CylinderGeometry(radius * 0.9, radius * 0.94, 0.18, 14),
-                    band % 2 === 0 ? materials.columnLight : materials.stone[(i + band) % materials.stone.length]
+                    new THREE.CylinderGeometry(radius * 0.94, radius * 1.01, 0.13, 20),
+                    band % 2 === 0 ? materials.metalEdge : materials.columnLight
                 );
                 collar.position.y = y;
                 collar.castShadow = true;
+                collar.receiveShadow = true;
                 columnGroup.add(collar);
             }
 
@@ -2185,16 +2152,30 @@ function startScene() {
                 columnGroup.add(crack);
             }
 
+            const capital = new THREE.Mesh(
+                new THREE.CylinderGeometry(radius * 1.22, radius * 1.42, 0.3, 8),
+                materials.stone[(i + 1) % materials.stone.length]
+            );
+            capital.position.y = height + 0.34;
+            capital.castShadow = true;
+            capital.receiveShadow = true;
+            columnGroup.add(capital);
             addBox(
                 columnGroup,
-                [radius * 2.3, 0.38, radius * 2.3],
-                [0, height + 0.39, 0],
-                materials.stone[(i + 1) % materials.stone.length]
+                [radius * 2.75, 0.28, radius * 2.75],
+                [0, height + 0.58, 0],
+                materials.columnLight
             );
             addBox(
                 columnGroup,
-                [radius * 1.65, 0.18, radius * 1.65],
-                [0, height + 0.67, 0],
+                [radius * 2.25, 0.12, radius * 2.25],
+                [0, height + 0.78, 0],
+                materials.metalEdge
+            );
+            addBox(
+                columnGroup,
+                [radius * 1.72, 0.14, radius * 1.72],
+                [0, height + 0.91, 0],
                 materials.columnLight
             );
             if (i % 3 === 1) {
@@ -2207,69 +2188,124 @@ function startScene() {
                 brokenCap.rotation.z = 0.12;
             }
 
-            if (i === 0 || i === 5) {
-                addBox(
-                    world,
-                    [0.9, height * 0.76, 0.2],
-                    [x + 0.58, height * 0.53, z + 0.22],
-                    materials.stone[(i + 1) % materials.stone.length],
-                    { rotation: [0, -0.08, -0.035] }
-                );
-            }
-        });
-
-        const buttresses = [
-            [-7.85, -2.6, 3.8, 3.1, 0.72, -0.14],
-            [-5.7, -5.35, 2.7, 2.6, 0.68, 0.12],
-            [-3.9, -5.35, 2.3, 2.2, 0.65, -0.08],
-            [-7.0, 0.9, 2.4, 2.2, 0.7, -0.12]
-        ];
-        buttresses.forEach(([x, z, h, w, d, rot], i) => {
-            const scale = 0.62;
-            const position = [x * 1.28, h * scale / 2 - 0.06, z * 1.28];
-            addBox(world, [w * scale, h * scale, d * scale], position, i % 2 ? materials.columnLight : materials.column, {
-                rotation: [0, 0, rot]
-            });
-            addBox(
-                world,
-                [w * 1.28 * scale, 0.34 * scale, d * 1.5 * scale],
-                [position[0], 0.12, position[2]],
-                materials.stone[i % materials.stone.length]
-            );
         });
 
         createAncientLintels();
+        createBrokenWallsAndSupplies();
     }
 
     function createAncientLintels() {
-        const lintels = [
-            [-6.55, 8.0, -4.7, 2.6, 0.06],
-            [-1.58, 9.2, -5.5, 3.15, -0.035],
-            [1.27, 8.7, -5.25, 2.75, 0.045]
-        ];
-        lintels.forEach(([x, y, z, width, lean], index) => {
-            const lintel = addBox(
+        const span = 10.8;
+        const deckY = 4.72;
+        const walkwayZ = -4.55;
+        addBox(world, [span, 0.2, 1.05], [0, deckY, walkwayZ], materials.metal);
+        addBox(world, [span + 0.3, 0.12, 0.12], [0, deckY + 0.13, walkwayZ - 0.5], materials.metalEdge);
+        addBox(world, [span + 0.3, 0.12, 0.12], [0, deckY + 0.13, walkwayZ + 0.5], materials.metalEdge);
+
+        for (let x = -4.8; x <= 4.8; x += 1.6) {
+            const plank = addBox(
                 world,
-                [width, 0.54, 0.8],
-                [x, y, z],
+                [1.52, 0.045, 0.92],
+                [x, deckY + 0.12, walkwayZ],
+                x % 3.2 === 0 ? materials.columnLight : materials.metalEdge,
+                { castShadow: false }
+            );
+            plank.rotation.y = x * 0.003;
+        }
+
+        for (let bay = 0; bay < 4; bay++) {
+            const centerX = -3.6 + bay * 2.4;
+            [-1, 1].forEach((direction) => {
+                const brace = addBox(
+                    world,
+                    [2.7, 0.1, 0.12],
+                    [centerX, deckY + 0.82, walkwayZ],
+                    materials.metalEdge
+                );
+                brace.rotation.z = direction * 0.52;
+            });
+        }
+
+        [-4.8, -3.4, 0, 3.2, 4.8].forEach((x) => {
+            addBox(world, [0.14, 0.92, 0.14], [x, deckY + 0.57, walkwayZ], materials.metal);
+        });
+    }
+
+    function createBrokenWallsAndSupplies() {
+        const floorY = 0.08;
+        const wallFragments = [
+            { x: -5.25, z: 4.08, width: 0.62, height: 1.22, depth: 0.48, lean: -0.08 },
+            { x: 5.38, z: 1.92, width: 0.72, height: 1.62, depth: 0.42, lean: 0.06 },
+            { x: -3.75, z: -4.62, width: 1.35, height: 0.86, depth: 0.34, lean: -0.04 }
+        ];
+        wallFragments.forEach(({ x, z, width, height, depth, lean }, index) => {
+            const wall = addBox(
+                platform,
+                [width, height, depth],
+                [x, floorY + height / 2, z],
+                materials.stone[index % materials.stone.length],
+                { rotation: [0, 0, lean] }
+            );
+            wall.receiveShadow = true;
+            const brokenCap = addBox(
+                platform,
+                [width * 1.12, 0.14, depth * 1.16],
+                [x + width * 0.12, floorY + height + 0.02, z],
                 materials.columnLight
             );
-            lintel.rotation.z = lean;
-            if (index !== 1) {
-                const fallenStone = addBox(
-                    world,
-                    [0.85, 0.58, 0.9],
-                    [x + width * 0.48, y - 0.16, z + 0.06],
-                    materials.stone[index % materials.stone.length]
-                );
-                fallenStone.rotation.z = index === 0 ? 0.22 : -0.19;
-            }
+            brokenCap.rotation.z = -lean * 1.4 + (index % 2 ? 0.08 : -0.06);
+        });
+
+        const createCrate = (x, z, size, rotation) => {
+            const crate = new THREE.Group();
+            crate.position.set(x, floorY, z);
+            crate.rotation.y = rotation;
+            platform.add(crate);
+            addContactShadow(crate, size * 1.5, size * 1.5, 0.008);
+            const wood = makeMaterial(0x584638, 0.92, 0.02);
+            const trim = makeMaterial(0x957047, 0.56, 0.4);
+            addBox(crate, [size, size * 0.76, size], [0, size * 0.38, 0], wood);
+            [-1, 1].forEach((side) => {
+                addBox(crate, [size * 1.08, size * 0.1, size * 0.1], [0, size * 0.25, side * size * 0.46], trim);
+                addBox(crate, [size * 1.08, size * 0.1, size * 0.1], [0, size * 0.68, side * size * 0.46], trim);
+            });
+            [-1, 1].forEach((side) => {
+                addBox(crate, [size * 0.09, size * 0.76, size * 0.09], [side * size * 0.44, size * 0.38, 0], trim);
+            });
+        };
+        createCrate(-3.9, -4.72, 0.72, 0.08);
+        createCrate(1.7, -4.52, 0.62, -0.12);
+        createCrate(-2.2, 4.42, 0.66, 0.16);
+        createCrate(2.2, 4.34, 0.54, -0.08);
+
+        const floorPlates = [
+            [-3.5, -4.82, 0.18],
+            [-1.4, 4.5, -0.12],
+            [1.2, 4.48, 0.26]
+        ];
+        floorPlates.forEach(([x, z, rotation], index) => {
+            const plate = addBox(
+                platform,
+                [1.12, 0.045, 0.46],
+                [x, floorY + 0.01, z],
+                index % 2 ? materials.metal : materials.metalEdge,
+                { castShadow: false }
+            );
+            plate.rotation.y = rotation;
+            const inset = addBox(
+                platform,
+                [0.82, 0.018, 0.29],
+                [x, floorY + 0.041, z],
+                materials.metal,
+                { castShadow: false }
+            );
+            inset.rotation.y = rotation;
         });
     }
 
     function createPylon(x, z, color, scale = 1, type = "relay") {
         const group = new THREE.Group();
-        group.position.set(x, 0.05, z);
+        group.position.set(x, 0, z);
         const parent = type === "source" ? platform : decorativeTerminalGroup ?? platform;
         const isBeacon = type === "beacon" || type === "source";
         parent.add(group);
@@ -2285,7 +2321,7 @@ function startScene() {
             const emitterRing = new THREE.Mesh(
                 new THREE.TorusGeometry(0.31, 0.055, 8, 28),
                 new THREE.MeshBasicMaterial({
-                    color: 0x79eaff,
+                    color: 0xff70de,
                     toneMapped: false,
                     blending: THREE.AdditiveBlending
                 })
@@ -2294,11 +2330,11 @@ function startScene() {
             wallEmitter.add(emitterRing);
             const emitterCore = new THREE.Mesh(
                 new THREE.SphereGeometry(0.16, 12, 8),
-                new THREE.MeshBasicMaterial({ color: 0xd8fbff, toneMapped: false })
+                new THREE.MeshBasicMaterial({ color: 0xffd5f4, toneMapped: false })
             );
             emitterCore.position.copy(emitterRing.position);
             wallEmitter.add(emitterCore);
-            const beaconLight = configureQualityLight(new THREE.PointLight(0x63dfff, 8, 3.8, 2));
+            const beaconLight = configureQualityLight(new THREE.PointLight(0xff45cf, 8, 3.8, 2));
             beaconLight.position.copy(emitterRing.position);
             wallEmitter.add(beaconLight);
             group.userData.wallEmitter = wallEmitter;
@@ -2607,31 +2643,6 @@ function startScene() {
         platform.add(coreSystem);
     }
 
-    function addBackdropArchitecture() {
-        const ruinedMonoliths = [
-            [-8.2, -3.2, 4.7, 1.65, 1.05, -0.08],
-            [-8.5, 1.65, 3.35, 1.35, 0.9, 0.06],
-            [7.6, -3.7, 4.3, 1.5, 0.95, 0.07],
-            [6.8, 3.7, 3.2, 1.8, 0.85, -0.1]
-        ];
-        ruinedMonoliths.forEach(([x, z, height, width, depth, lean], i) => {
-            addBox(
-                world,
-                [width, height, depth],
-                [x, height / 2 - 0.05, z],
-                materials.stone[i % materials.stone.length],
-                { rotation: [0, 0, lean] }
-            );
-            const fallenCap = addBox(
-                world,
-                [width * 1.18, 0.34, depth * 1.22],
-                [x - width * 0.12, height + 0.08, z],
-                materials.columnLight
-            );
-            fallenCap.rotation.z = lean * -1.6;
-        });
-    }
-
     function setupCamera() {
         const target = new THREE.Vector3(-0.65, window.innerWidth < 620 ? -0.5 : -0.3, -0.1);
         const horizontal = Math.cos(cameraState.elevation) * cameraState.distance;
@@ -2657,7 +2668,7 @@ function startScene() {
         const width = Math.max(1, canvas.clientWidth);
         const height = Math.max(1, canvas.clientHeight);
         const mobileQuality = width < 620;
-        const pixelRatio = Math.min(window.devicePixelRatio || 1, mobileQuality ? 1.1 : 1.5);
+        const pixelRatio = Math.min(window.devicePixelRatio || 1, mobileQuality ? 1.5 : 2);
         if (renderer.getPixelRatio() !== pixelRatio) renderer.setPixelRatio(pixelRatio);
         renderer.shadowMap.enabled = !mobileQuality;
         moonLight.castShadow = !mobileQuality;
@@ -2754,7 +2765,6 @@ function startScene() {
 
     createVoid();
     createFloatingPlatform();
-    addBackdropArchitecture();
     createColumnsAndRuins();
     createCore();
     createTerminals();

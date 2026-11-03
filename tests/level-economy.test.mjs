@@ -821,14 +821,46 @@ test("all levels can start in practice while paid rewards require a server sessi
     );
 });
 
-test("RelicGrid branding is used in the game and hidden scenes stop rendering", () => {
+test("gameplay uses high-resolution scene lighting and the shared environment background", () => {
     const html = readFileSync(new URL("../index.html", import.meta.url), "utf8");
     assert.match(html, /<title>RelicGrid/);
     assert.doesNotMatch(html, /FluxGrid/i);
 
     const scene = readFileSync(new URL("../script.js", import.meta.url), "utf8");
     assert.match(scene, /antialias: !mobileQuality/);
-    assert.match(scene, /mobileQuality \? 1 : 1\.5/);
+    assert.match(scene, /alpha: true/);
+    assert.match(scene, /mobileQuality \? 1\.5 : 2/);
+    assert.match(scene, /moonLight\.shadow\.mapSize\.set\(2048, 2048\)/);
+    assert.match(scene, /renderer\.setClearColor\(0x000000, 0\)/);
+    const columns = scene.slice(
+        scene.indexOf("function createColumnsAndRuins"),
+        scene.indexOf("function createAncientLintels")
+    );
+    assert.match(columns, /const platformFloorY = 0\.08/);
+    assert.match(columns, /columnGroup\.position\.set\(x, baseY, z\)/);
+    assert.match(columns, /const supportBottom = \(islandUndersideY - 0\.18 - baseY\) \/ columnScale/);
+    assert.match(columns, /columnGroup\.add\(islandSupport\)/);
+    assert.match(columns, /radius \* 1\.52,[\s\S]*?radius \* 1\.72/);
+    assert.match(columns, /Math\.cos\(angle \* 12 \+ i \* 0\.31\) \* 0\.065/);
+    assert.match(columns, /for \(let band = 0; band < 5; band\+\+\)/);
+    assert.match(columns, /const capital = new THREE\.Mesh/);
+    assert.doesNotMatch(columns, /x \* 1\.38|z \* 1\.38/);
+    const architecture = scene.slice(
+        scene.indexOf("function createAncientLintels"),
+        scene.indexOf("function createPylon")
+    );
+    assert.match(architecture, /const walkwayZ = -4\.55/);
+    assert.match(architecture, /const span = 10\.8/);
+    assert.match(architecture, /brace\.rotation\.z = direction \* 0\.52/);
+    assert.match(architecture, /function createBrokenWallsAndSupplies/);
+    assert.match(architecture, /const createCrate =/);
+    assert.doesNotMatch(scene, /function addBackdropArchitecture/);
+    assert.match(scene, /new THREE\.MeshPhysicalMaterial\(\{[\s\S]*?clearcoat: 0\.82/);
+    assert.match(scene, /addCylinder\(crystalGroup, 0\.42, 0\.48, 0\.12/);
+    const gameplayStyles = readFileSync(new URL("../style.css", import.meta.url), "utf8");
+    assert.match(gameplayStyles, /url\("background\.png"\) center \/ cover no-repeat/);
+    const previewServer = readFileSync(new URL("../tools/local-preview-server.cjs", import.meta.url), "utf8");
+    assert.match(previewServer, /"background\.png"/);
     assert.match(scene, /configureQualityLight/);
     assert.match(scene, /new THREE\.Sprite\(new THREE\.SpriteMaterial/);
     assert.match(scene, /crystalHits\.forEach/);
@@ -904,26 +936,34 @@ test("RelicGrid branding is used in the game and hidden scenes stop rendering", 
     assert.match(styles, /video-action \.button \{[\s\S]*?font-size: clamp\(17px, 4vw, 20px\)/);
 });
 
-test("deposit UI creates an account-bound payment memo before accepting a transaction link", () => {
+test("deposit UI guides players through copying, sending, and verifying shared-treasury transfers", () => {
     const html = readFileSync(new URL("../index.html", import.meta.url), "utf8");
     assert.match(html, /FUND YOUR RELICGRID ACCOUNT/);
     assert.match(html, /Minimum deposit: 1 CYFUR/);
-    assert.match(html, /id="wallet-address">Loading verified treasury…<\/code>/);
+    assert.match(html, /id="wallet-address">Checking treasury setup…<\/code>/);
     assert.match(html, /id="wallet-copy-address"/);
-    assert.match(html, /id="deposit-create-intent"/);
-    assert.match(html, /id="deposit-intent-memo"/);
-    assert.match(html, /include the memo exactly/i);
+    assert.match(html, /id="wallet-copy-address"[^>]+disabled/);
+    assert.match(html, /01 · COPY THE CYFUR TREASURY ADDRESS/);
+    assert.match(html, /Phantom or any Solana wallet/);
+    assert.match(html, /02[\s\S]*?SEND CYFUR/);
+    assert.match(html, /03 · PASTE TRANSACTION LINK OR SIGNATURE/);
+    assert.doesNotMatch(html, /deposit-create-intent|deposit-intent-memo|include the memo/i);
     assert.match(html, /VERIFY PAYMENT/);
-    assert.match(html, /Paste signature or Solana Explorer\/Solscan link/);
+    assert.match(html, /Paste Solana Explorer\/Solscan link or signature/);
+    assert.match(html, /5-second security delay/);
+    assert.match(html, /owner must approve the attribution method/);
+    assert.doesNotMatch(html, /id="wallet-balance">Unavailable/);
+    assert.doesNotMatch(html, /deposit verification is unavailable/i);
     const app = readFileSync(new URL("../app.js", import.meta.url), "utf8");
-    assert.match(app, /apiUrl\("payment-intent"\)/);
+    assert.doesNotMatch(app, /apiUrl\("payment-intent"\)/);
     assert.match(app, /walletRequirement\.textContent = readinessMessage/);
     assert.match(app, /typeof result\.disabledMessage === "string"/);
     assert.doesNotMatch(app, /SOLANA_TREASURY_ADDRESS must exactly match Supabase treasury_address/);
     assert.doesNotMatch(app, /wallet_system_config\.deposits_enabled/);
-    assert.match(app, /Deposit readiness could not be verified\. Please check back later\./);
+    assert.match(app, /Funding status could not be checked\. Refresh and wait for READY before sending CYFUR\./);
     assert.doesNotMatch(html, /id="wallet-transfer-amount"|id="wallet-transfer-form"|id="wallet-preflight-button"/);
-    assert.match(app, /address\.textContent = result\.treasuryAddress \|\| "Treasury unavailable"/);
+    assert.match(app, /address\.textContent = depositReady[\s\S]*?result\.treasuryAddress[\s\S]*?"Treasury address not ready for deposits"/);
+    assert.match(app, /copyButton\.disabled = !depositReady/);
     assert.match(app, /body: JSON\.stringify\(\{ signature: signatureOrLink \}\)/);
     assert.match(app, /Deposit not detected yet\. Please wait and check again/);
 });
@@ -971,11 +1011,9 @@ test("deposit backend requires owner-approved mint configuration and migration k
     assert.doesNotMatch(app, new RegExp(treasury));
     assert.doesNotMatch(html, new RegExp(treasury));
     assert.match(paymentIntentApi, /readinessChecks/);
-    assert.match(app, /setup: "CHECK SETUP"/);
-    assert.doesNotMatch(html, /id="deposit-create-intent"[^>]+disabled/);
+    assert.match(app, /setup: "SETUP NEEDED"/);
     assert.doesNotMatch(html, /id="deposit-signature"[^>]+disabled/);
     assert.doesNotMatch(html, /id="deposit-verify-button"[^>]+disabled/);
-    assert.match(app, /createIntentButton\.disabled = false/);
     assert.match(app, /signatureSubmit\.disabled = false/);
     assert.match(app, /If it passes, credits are applied after a 5-second security delay/);
 });
@@ -1811,7 +1849,7 @@ test("deposit API rejects a failed on-chain transaction before requesting ledger
     }
 });
 
-test("deposit API credits a finalized shared-treasury transfer using the authenticated player's payment memo", async () => {
+test("deposit API credits a finalized shared-treasury transfer without a payment memo", async () => {
     const environment = {
         SUPABASE_URL: "https://example.supabase.co",
         SUPABASE_PUBLISHABLE_KEY: "public-test-key",
@@ -1839,7 +1877,6 @@ test("deposit API credits a finalized shared-treasury transfer using the authent
         return originalSetTimeout(callback, delay, ...args);
     };
     const signature = "1".repeat(64);
-    const paymentIntentId = "8f9ef883-520e-45ef-96ae-62e621d3b31c";
     const sourceWallet = "11111111111111111111111111111111";
     let rpcSourceWallet = null;
     let authenticatedPlayer = "test-player";
@@ -1864,12 +1901,7 @@ test("deposit API credits a finalized shared-treasury transfer using the authent
                     sourceTokenAccount,
                     treasuryTokenAccount
                 ],
-                instructions: [
-                    {
-                        programId: "MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr",
-                        parsed: `RelicGrid payment intent: ${paymentIntentId}`
-                    },
-                    {
+                instructions: [{
                         programId: tokenProgramId,
                         parsed: {
                             type: "transferChecked",
@@ -1881,8 +1913,7 @@ test("deposit API credits a finalized shared-treasury transfer using the authent
                                 tokenAmount: { amount: "100000000" }
                             }
                         }
-                    }
-                ]
+                    }]
             }
         },
         meta: {
@@ -1935,22 +1966,6 @@ test("deposit API credits a finalized shared-treasury transfer using the authent
                 treasury_address: environment.SOLANA_TREASURY_ADDRESS
             }]), { status: 200 });
         }
-        if (target.includes("/wallet_payment_intents?")) {
-            const matchesPlayer = target.includes(`player_id=eq.${authenticatedPlayer}`);
-            return new Response(JSON.stringify(matchesPlayer ? [{
-                id: paymentIntentId,
-                player_id: "test-player",
-                network: "mainnet-beta",
-                mint_address: mintAddress,
-                token_program_id: tokenProgramId,
-                treasury_address: environment.SOLANA_TREASURY_ADDRESS,
-                amount_raw: "100000000",
-                token_decimals: 8,
-                created_at: new Date(Date.now() - 60_000).toISOString(),
-                expires_at: new Date(Date.now() + 10 * 60_000).toISOString(),
-                status: "pending"
-            }] : []), { status: 200 });
-        }
         if (target === environment.SOLANA_RPC_URL) {
             const call = JSON.parse(options.body);
             const result = call.method === "getGenesisHash"
@@ -1970,7 +1985,7 @@ test("deposit API credits a finalized shared-treasury transfer using the authent
                                 } } } } };
             return new Response(JSON.stringify({ result }), { status: 200 });
         }
-        if (target.includes("/rpc/process_verified_payment_intent")) {
+        if (target.includes("/rpc/process_verified_treasury_deposit")) {
             const alreadyApplied = ledgerCallCount > 0;
             ledgerCallCount += 1;
             rpcPayload = JSON.parse(options.body);
@@ -1985,23 +2000,6 @@ test("deposit API credits a finalized shared-treasury transfer using the authent
 
     try {
         const endpoint = require("../api/deposits.js");
-        const otherPlayerResponse = {
-            statusCode: 200,
-            status(code) { this.statusCode = code; return this; },
-            setHeader() {},
-            json(payload) { this.payload = payload; }
-        };
-        authenticatedPlayer = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
-        await endpoint({
-            method: "POST",
-            headers: { authorization },
-            body: { signature: `https://solscan.io/tx/${signature}` }
-        }, otherPlayerResponse);
-        assert.equal(otherPlayerResponse.statusCode, 422);
-        assert.equal(otherPlayerResponse.payload.error, "payment_intent_mismatch");
-        assert.equal(ledgerCallCount, 0);
-
-        authenticatedPlayer = "test-player";
         const response = {
             statusCode: 200,
             status(code) { this.statusCode = code; return this; },
@@ -2019,10 +2017,10 @@ test("deposit API credits a finalized shared-treasury transfer using the authent
         assert.equal(response.payload.credited, true);
         assert.equal(response.payload.creditAmountCredits, "10000");
         assert.equal(rpcSourceWallet, sourceWallet);
+        assert.equal(rpcPayload.p_player_id, authenticatedPlayer);
         assert.equal(rpcPayload.p_deposit_address, environment.SOLANA_TREASURY_ADDRESS);
         assert.equal(rpcPayload.p_amount_raw, "100000000");
-        assert.equal(rpcPayload.p_payment_intent_id, paymentIntentId);
-        assert.equal(typeof rpcPayload.p_finalized_at, "string");
+        assert.equal(typeof rpcPayload.p_finalized_slot, "number");
 
         const duplicateResponse = {
             statusCode: 200,

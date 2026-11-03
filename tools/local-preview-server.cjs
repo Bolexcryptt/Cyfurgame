@@ -16,6 +16,7 @@ const publicFiles = new Set([
     "assets/pbr/stone-color.jpg",
     "assets/pbr/stone-normal.jpg",
     "assets/pbr/stone-roughness.jpg",
+    "background.png",
     "gamevideo.mp4",
     "index.html",
     "intro.mp4",
