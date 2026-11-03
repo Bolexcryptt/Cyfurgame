@@ -797,8 +797,10 @@ test("all levels can start in practice while paid rewards require a server sessi
     assert.match(scene, /ESTIMATED REWARD/);
     assert.match(scene, /Pending server validation; not yet credited/);
     assert.match(scene, /No reward is credited for a failed attempt/);
-    assert.match(scene, /const mirror = placedMirrors\.get\(gridKey\(row, col\)\);[\s\S]*?else if \(isObstacle\)/);
-    assert.match(scene, /crystal\.definition\.inputColor !== colorIndex % beamColors\.length/);
+    assert.match(scene, /traceLaserRoute\(activeLevel, mirrorOrientations, launchDirection\)/);
+    const levelsModule = readFileSync(new URL("../levels.js", import.meta.url), "utf8");
+    assert.match(levelsModule, /if \(orientation === "\/" \|\| orientation === "\\\\"\)[\s\S]*?else if \(obstacles\.has/);
+    assert.match(levelsModule, /crystal\.inputColor !== colorIndex % BEAM_COLOR_COUNT/);
     assert.match(scene, /drawActiveRoute\(previewRoute, previewRoute\.segments\.length, true\)/);
     assert.doesNotMatch(
         scene.slice(scene.indexOf("function placeOrRotateMirror"), scene.indexOf("function toggleLaunchDirection")),
@@ -812,8 +814,21 @@ test("RelicGrid branding is used in the game and hidden scenes stop rendering", 
     assert.doesNotMatch(html, /FluxGrid/i);
 
     const scene = readFileSync(new URL("../script.js", import.meta.url), "utf8");
-    assert.match(scene, /antialias: true/);
-    assert.match(scene, /mobileQuality \? 1\.25 : 1\.5/);
+    assert.match(scene, /antialias: !mobileQuality/);
+    assert.match(scene, /mobileQuality \? 1\.5 : 2/);
+    assert.match(scene, /loadPbrTexture\(`\$\{prefix\}-color\.jpg`/);
+    assert.match(scene, /new URL\(`\.\/assets\/pbr\/\$\{filename\}`, import\.meta\.url\)/);
+    assert.equal(existsSync(new URL("../background.png", import.meta.url)), true);
+    for (const texture of [
+        "rock-color.jpg",
+        "rock-normal.jpg",
+        "rock-roughness.jpg",
+        "stone-color.jpg",
+        "stone-normal.jpg",
+        "stone-roughness.jpg"
+    ]) {
+        assert.equal(existsSync(new URL(`../assets/pbr/${texture}`, import.meta.url)), true);
+    }
     assert.match(scene, /configureQualityLight/);
     assert.match(scene, /new THREE\.Sprite\(new THREE\.SpriteMaterial/);
     assert.match(scene, /crystalHits\.forEach/);
@@ -821,7 +836,7 @@ test("RelicGrid branding is used in the game and hidden scenes stop rendering", 
     assert.match(scene, /cancelAnimationFrame\(renderRequest\)/);
     assert.match(scene, /const CORE_SCALE = 0\.36/);
     assert.match(scene, /const CORE_CONTACT_HEIGHT = CORE_SCALE \* \(CORE_HOLOGRAM_Y \+ CORE_PULSE_Y\)/);
-    assert.match(scene, /new THREE\.Vector3\(gridX\(col\), CORE_CONTACT_HEIGHT, gridZ\(row\)\)/);
+    assert.match(scene, /new THREE\.Vector3\(\s*gridX\(segment\.to\.col\),\s*segment\.to\.row === GRID\.target\.row && segment\.to\.col === GRID\.target\.col\s*\?\s*CORE_CONTACT_HEIGHT\s*:\s*0\.72,\s*gridZ\(segment\.to\.row\)\s*\)/);
     assert.match(scene, /hologram\.position\.set\(x, CORE_HOLOGRAM_Y, z\)/);
     assert.match(scene, /corePulse\.position\.y = CORE_PULSE_Y/);
     assert.match(scene, /gridX\(GRID\.target\.col\) - 1\.35 \* CORE_SCALE/);
@@ -883,14 +898,16 @@ test("deposit UI creates an account-bound payment memo before accepting a transa
     const html = readFileSync(new URL("../index.html", import.meta.url), "utf8");
     assert.match(html, /FUND YOUR RELICGRID ACCOUNT/);
     assert.match(html, /Minimum deposit: 1 CYFUR/);
-    assert.match(html, /id="wallet-address">Loading verified treasury…<\/code>/);
-    assert.match(html, /id="wallet-copy-address"/);
+    assert.match(html, /id="wallet-address">Checking treasury setup…<\/code>/);
+    assert.match(html, /id="wallet-copy-address"[^>]*disabled/);
     assert.match(html, /id="deposit-create-intent"/);
     assert.match(html, /id="deposit-intent-memo"/);
     assert.match(html, /include the memo exactly/i);
     assert.match(html, /VERIFY PAYMENT/);
     assert.match(html, /Paste signature or Solana Explorer\/Solscan link/);
     const app = readFileSync(new URL("../app.js", import.meta.url), "utf8");
+    assert.match(app, /copyButton\.disabled = !depositReady/);
+    assert.match(app, /status\.textContent = depositReady/);
     assert.match(app, /apiUrl\("payment-intent"\)/);
     assert.match(app, /Unavailable: \$\{readinessMessage\}/);
     assert.match(app, /typeof result\.disabledMessage === "string"/);
@@ -901,6 +918,11 @@ test("deposit UI creates an account-bound payment memo before accepting a transa
     assert.match(app, /address\.textContent = result\.treasuryAddress \|\| "Treasury unavailable"/);
     assert.match(app, /body: JSON\.stringify\(\{ signature: signatureOrLink \}\)/);
     assert.match(app, /Deposit not detected yet\. Please wait and check again/);
+    const depositApi = readFileSync(new URL("../api/deposits.js", import.meta.url), "utf8");
+    assert.match(depositApi, /requirePaymentIntentMemo: true/);
+    assert.match(depositApi, /process_verified_payment_intent/);
+    assert.match(depositApi, /await new Promise\(\(resolve\) => setTimeout\(resolve, CREDIT_DELAY_MS\)\)/);
+    assert.doesNotMatch(depositApi, /process_verified_treasury_deposit/);
 });
 
 test("deposit backend requires owner-approved mint configuration and migration keeps deposits disabled", () => {

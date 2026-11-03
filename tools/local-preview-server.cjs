@@ -10,6 +10,13 @@ const host = "127.0.0.1";
 const maxBodyBytes = 1024 * 1024;
 const publicFiles = new Set([
     "app.js",
+    "assets/pbr/rock-color.jpg",
+    "assets/pbr/rock-normal.jpg",
+    "assets/pbr/rock-roughness.jpg",
+    "assets/pbr/stone-color.jpg",
+    "assets/pbr/stone-normal.jpg",
+    "assets/pbr/stone-roughness.jpg",
+    "background.png",
     "gamevideo.mp4",
     "index.html",
     "intro.mp4",

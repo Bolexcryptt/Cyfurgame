@@ -1814,6 +1814,20 @@ button { -webkit-tap-highlight-color: transparent; }
     font: 700 clamp(11px, 1.1vw, 14px)/1.55 "Consolas", monospace;
     letter-spacing: .015em;
 }
+.deposit-memo-panel {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 8px 12px;
+    padding: 12px;
+    border: 1px solid #7ddbd531;
+    border-radius: 7px;
+    background: #09151e;
+}
+.deposit-memo-panel[hidden] { display: none; }
+.deposit-memo-panel .wallet-field-label { grid-column: 1 / -1; }
+.deposit-memo-panel code { overflow-wrap: anywhere; color: #bcf2df; font: 11px/1.5 "Consolas", monospace; }
+.deposit-memo-panel .button { min-height: 34px; }
 .wallet-address-panel .button { grid-column: 2; grid-row: 2; min-height: 38px; }
 .copy-confirmation { grid-column: 1 / -1; min-height: 14px; color: #8bf2c8; font-size: 10px; }
 .deposit-steps { display: grid; gap: 10px; margin: 2px 0; padding: 0; list-style: none; }
@@ -1831,20 +1845,6 @@ button { -webkit-tap-highlight-color: transparent; }
 .deposit-steps li div { display: grid; gap: 3px; }
 .deposit-steps strong { color: #dff5f4; font-size: 10px; letter-spacing: .09em; }
 .deposit-steps small { color: #91a8b1; font-size: 10px; line-height: 1.55; }
-.deposit-memo-panel {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) auto;
-    align-items: center;
-    gap: 8px 12px;
-    padding: 12px;
-    border: 1px solid #7ddbd531;
-    border-radius: 7px;
-    background: #09151e;
-}
-.deposit-memo-panel[hidden] { display: none; }
-.deposit-memo-panel .wallet-field-label { grid-column: 1 / -1; }
-.deposit-memo-panel code { overflow-wrap: anywhere; color: #bcf2df; font: 11px/1.5 "Consolas", monospace; }
-.deposit-memo-panel .button { min-height: 34px; }
 .deposit-signature-form { display: grid; gap: 9px; }
 .deposit-signature-form input {
     width: 100%;
@@ -2292,7 +2292,7 @@ body {
 .wallet-signal { background: #71e5cf; box-shadow: 0 0 9px #71e5cf; }
 .wallet-card h2, .wallet-card .deposit-panel-heading h2 { color: #f5efff; }
 .wallet-card p, .wallet-card .deposit-panel-heading p { color: #b8bacb; }
-.wallet-balance-panel, .wallet-address-panel, .deposit-memo-panel, .deposit-status-panel {
+.wallet-balance-panel, .wallet-address-panel, .deposit-status-panel {
     border-color: #9782dc3d;
     border-radius: 9px;
     background: linear-gradient(135deg, #171b2c, #101722);
@@ -2315,7 +2315,6 @@ body {
 }
 .deposit-steps strong { color: #f0eaff; }
 .deposit-steps small { color: #b2b4c6; }
-.deposit-memo-panel code { color: #b5f0d2; }
 .deposit-signature-form input, .wallet-transfer-controls input {
     border-color: #9382c852;
     background: #0c101b;
@@ -2670,7 +2669,7 @@ body {
 .completion-summary { animation-duration: .24s; }
 
 .name-card, .info-card, .stat-card, .podium-card, .game-guide,
-.deposit-status-panel, .wallet-address-panel, .deposit-memo-panel { backdrop-filter: none; }
+.deposit-status-panel, .wallet-address-panel { backdrop-filter: none; }
 .button, .game-button, .wallet-refresh, .camera-tools button,
 .game-guide-heading button { min-height: 40px; }
 .wallet-card .button { min-height: 40px; }
@@ -2989,7 +2988,6 @@ body {
 
 .wallet-balance-panel,
 .wallet-address-panel,
-.deposit-memo-panel,
 .deposit-status-panel {
     border-color: #72dce652;
     border-radius: 5px;
@@ -4504,7 +4502,6 @@ body {
 .wallet-data-panel,
 .wallet-balance-panel,
 .wallet-address-panel,
-.deposit-memo-panel,
 .deposit-status-panel {
     border-color: rgba(88, 202, 215, .27);
     border-radius: 3px;
@@ -4514,7 +4511,9 @@ body {
 .wallet-field-label,
 .wallet-card .eyebrow { color: #88b5bf; }
 .wallet-api-status[data-state="error"] { color: #ffb18a; }
+.wallet-api-status[data-state="setup"] { color: #f1d48a; }
 .wallet-api-status[data-state="ready"] { color: #9ce8ca; }
+.deposit-status-badge[data-state="setup"] { border-color: #e5c87865; background: #332d1b; color: #f1d78d; }
 .wallet-history-heading { border-color: rgba(88, 202, 215, .18); }
 .wallet-history-item { border-radius: 2px; background: rgba(7, 18, 27, .9); }
 
@@ -5219,3 +5218,121 @@ body {
 
     .play-screen .camera-tools .reset-camera { width: auto; }
 }
+
+.play-screen {
+    --hud-edge-soft: rgba(179, 150, 103, .68);
+    --hud-copy: #eee2c9;
+    background:
+        linear-gradient(rgba(4, 8, 12, .12), rgba(4, 8, 12, .3)),
+        url("background.png") center / cover no-repeat;
+}
+
+.play-screen::before { display: none; }
+.play-screen::after {
+    background:
+        linear-gradient(180deg, rgba(5, 6, 8, .2), transparent 22% 72%, rgba(5, 6, 8, .42)),
+        radial-gradient(ellipse at 50% 46%, transparent 42%, rgba(2, 4, 6, .48) 100%);
+}
+
+.hud-bezel {
+    border-color: rgba(180, 151, 105, .24);
+    clip-path: none;
+    box-shadow: inset 0 0 48px rgba(0, 0, 0, .18);
+}
+
+.play-topbar,
+.camera-tools,
+.hud-telemetry-panel,
+.hud-side-meters,
+.hud-map-panel,
+.hud-mission-panel,
+.game-hud:not([data-completed="true"]) {
+    border-color: rgba(179, 150, 103, .62);
+    border-radius: 2px;
+    clip-path: none;
+    background: linear-gradient(145deg, rgba(25, 23, 19, .94), rgba(11, 12, 12, .91));
+    box-shadow: inset 0 1px rgba(235, 220, 188, .1), 0 5px 18px rgba(0, 0, 0, .38);
+    backdrop-filter: none;
+}
+
+.play-topbar > .button,
+.play-level-label,
+.play-topbar .icon-button,
+.camera-tools button,
+.game-hud .game-button,
+.hud-mission-panel .game-button {
+    border-color: rgba(187, 157, 109, .62);
+    border-radius: 2px;
+    background: #211f1a;
+    box-shadow: inset 0 1px rgba(235, 220, 188, .1);
+    color: #e6d9bd;
+    backdrop-filter: none;
+}
+
+.play-level-label {
+    box-shadow: inset 2px 0 #aa8959;
+}
+
+.hud-telemetry-panel {
+    border-color: rgba(179, 150, 103, .62);
+    box-shadow: inset 2px 0 rgba(179, 150, 103, .72), 0 5px 18px rgba(0, 0, 0, .38);
+}
+
+.hud-telemetry-panel > header {
+    border-color: rgba(179, 150, 103, .34);
+    color: #d3b77f;
+}
+
+.hud-telemetry-row,
+.hud-telemetry-panel > header,
+.hud-hex-cell > span,
+.hud-system-status .hud-kicker {
+    color: #c4b89f;
+    letter-spacing: .07em;
+}
+
+.hud-telemetry-row-amber span { color: #d3b77f; }
+.hud-telemetry-row-amber b { color: #f0d7a5; }
+.hud-telemetry-track { border-color: rgba(179, 150, 103, .42); }
+.hud-telemetry-track > i { box-shadow: none; }
+.hud-telemetry-track-amber > i { box-shadow: none; }
+.hud-signal-wave { opacity: .48; }
+.hud-signal-wave path { stroke: #c7a86f; filter: none; }
+
+.hud-mission-panel {
+    box-shadow: inset 3px 0 rgba(179, 150, 103, .74), 0 5px 18px rgba(0, 0, 0, .38);
+}
+
+.hud-mission-panel > header strong {
+    color: #eee2c9;
+    font-family: Georgia, "Times New Roman", serif;
+    font-weight: 600;
+}
+
+.hud-objectives li {
+    border-color: rgba(179, 150, 103, .25);
+    background: rgba(13, 13, 12, .55);
+}
+
+.hud-map-panel {
+    box-shadow: inset 0 1px rgba(235, 220, 188, .08), 0 5px 18px rgba(0, 0, 0, .38);
+}
+
+.hud-core-readout { filter: sepia(.35); }
+
+.game-hud:not([data-completed="true"]) {
+    border-color: rgba(179, 150, 103, .68);
+    box-shadow: inset 2px 0 rgba(179, 150, 103, .74), 0 5px 18px rgba(0, 0, 0, .38);
+}
+
+.hud-system-status { border-color: rgba(179, 150, 103, .32); }
+.hud-system-status .hud-kicker,
+.hud-system-status > strong { color: #d3c4a6; }
+.game-button.primary {
+    border-color: #b39460;
+    background: linear-gradient(180deg, #927649, #695332);
+    color: #fff0d3;
+    box-shadow: inset 0 1px rgba(255, 238, 203, .22);
+}
+
+.game-button.secondary { background: #211f1a; }

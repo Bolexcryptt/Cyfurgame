@@ -17,6 +17,8 @@ const {
     verifyFinalizedDeposit
 } = require("../server/lib/solana-deposit");
 
+const CREDIT_DELAY_MS = 5_000;
+
 function respondNotReady(response, error, message) {
     return sendJson(response, 503, {
         error,
@@ -212,6 +214,7 @@ module.exports = async function deposits(request, response) {
             }
             throw error;
         }
+        await new Promise((resolve) => setTimeout(resolve, CREDIT_DELAY_MS));
         const [ledgerResult] = await serviceRequest("rpc/process_verified_payment_intent", {
             method: "POST",
             headers: { "Content-Type": "application/json" },

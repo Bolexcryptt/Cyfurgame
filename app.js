@@ -1129,7 +1129,6 @@ async function refreshWallet() {
         address.textContent = result.treasuryAddress || "Treasury unavailable";
         document.getElementById("wallet-network-label").textContent =
             `CYFUR TREASURY · ${typeof result.network === "string" ? result.network.toUpperCase() : "NETWORK NOT VERIFIED"}`;
-        copyButton.disabled = !result.treasuryAddress;
         walletStatusSnapshot = result;
         renderLevels();
         const depositConfigurationReady = result.depositsEnabled === true &&
@@ -1139,15 +1138,16 @@ async function refreshWallet() {
             Number.isInteger(result.tokenDecimals) &&
             Boolean(result.treasuryTokenAccountAddress);
         const depositReady = depositConfigurationReady;
+        copyButton.disabled = !depositReady;
         createIntentButton.disabled = !depositReady;
         signatureInput.disabled = !depositReady;
         signatureSubmit.disabled = !depositReady;
         balance.textContent = result.balanceCredits === null
-            ? "Unavailable"
+            ? "—"
             : formatCredits(result.balanceCredits);
         document.getElementById("wallet-balance-state").textContent =
             result.balanceVerified === true ? "CREDITS · BACKEND VERIFIED" : "CREDITS · NOT VERIFIED";
-        status.textContent = result.depositsEnabled === true
+        status.textContent = depositReady
             ? `READY${result.network ? ` · ${result.network.toUpperCase()}` : ""}`
             : "DISABLED";
         renderWalletHistory(result.deposits);
