@@ -900,12 +900,18 @@ test("deposit UI creates an account-bound payment memo before accepting a transa
     assert.match(html, /Minimum deposit: 1 CYFUR/);
     assert.match(html, /id="wallet-address">6KTSpvxGR2xvje3BG42QvmFjg2XLnFneCCSyVXhSKvys<\/code>/);
     assert.match(html, /id="wallet-copy-address"[^>]*>COPY ADDRESS<\/button>/);
+    assert.match(html, /id="home-treasury-address">6KTSpvxGR2xvje3BG42QvmFjg2XLnFneCCSyVXhSKvys<\/code>/);
+    assert.match(html, /id="home-copy-treasury"/);
+    assert.match(html, /id="home-open-deposit"/);
     assert.match(html, /id="deposit-create-intent"/);
     assert.match(html, /id="deposit-intent-memo"/);
     assert.match(html, /include the memo exactly/i);
     assert.match(html, /VERIFY PAYMENT/);
     assert.match(html, /Paste signature or Solana Explorer\/Solscan link/);
+    assert.match(html, /id="deposit-signature"[^>]*required>/);
+    assert.match(html, /id="deposit-verify-button"[^>]*disabled/);
     const app = readFileSync(new URL("../app.js", import.meta.url), "utf8");
+    assert.match(app, /home-open-deposit[\s\S]*?deposit-signature"\)\.focus/);
     assert.match(app, /copyButton\.disabled = false/);
     assert.match(app, /status\.textContent = depositReady/);
     assert.match(app, /apiUrl\("payment-intent"\)/);

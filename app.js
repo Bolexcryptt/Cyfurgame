@@ -1055,7 +1055,6 @@ async function refreshWallet() {
     const address = document.getElementById("wallet-address");
     const copyButton = document.getElementById("wallet-copy-address");
     const createIntentButton = document.getElementById("deposit-create-intent");
-    const signatureInput = document.getElementById("deposit-signature");
     const signatureSubmit = document.getElementById("deposit-verify-button");
     const balance = document.getElementById("wallet-balance");
     const balanceState = document.getElementById("wallet-balance-state");
@@ -1075,7 +1074,6 @@ async function refreshWallet() {
     balanceState.textContent = "CHECKING ACCOUNT BALANCE…";
     walletRequirement.textContent = "Checking deposit readiness…";
     createIntentButton.disabled = true;
-    signatureInput.disabled = true;
     signatureSubmit.disabled = true;
     renderWalletHistory(null);
 
@@ -1146,7 +1144,6 @@ async function refreshWallet() {
             ? `01 · VERIFIED CYFUR TREASURY · ${result.network.toUpperCase()}`
             : "01 · PUBLIC SHARED CYFUR TREASURY · FUNDING SETUP REQUIRED";
         createIntentButton.disabled = !depositReady;
-        signatureInput.disabled = !depositReady;
         signatureSubmit.disabled = !depositReady;
         balance.textContent = result.balanceCredits === null
             ? "—"
@@ -2192,6 +2189,21 @@ document.getElementById("wallet-copy-address").addEventListener("click", async (
         document.getElementById("wallet-address-copy-status").textContent = "Copy failed. Select the address to copy it.";
         setWalletMessage(`Address copy failed. Select and copy it manually. ${error.message}`, "error");
     }
+});
+document.getElementById("home-copy-treasury").addEventListener("click", async () => {
+    const address = document.getElementById("home-treasury-address").textContent.trim();
+    try {
+        await navigator.clipboard.writeText(address);
+        document.getElementById("home-copy-treasury").textContent = "COPIED";
+    } catch (error) {
+        console.error("Homepage treasury address could not be copied.", error);
+        document.getElementById("home-copy-treasury").textContent = "SELECT ADDRESS";
+        setWalletMessage(`Address copy failed. Select and copy the address manually. ${error.message}`, "error");
+    }
+});
+document.getElementById("home-open-deposit").addEventListener("click", () => {
+    document.getElementById("wallet-card").scrollIntoView({ behavior: "smooth", block: "start" });
+    document.getElementById("deposit-signature").focus({ preventScroll: true });
 });
 document.getElementById("deposit-create-intent").addEventListener("click", async () => {
     const button = document.getElementById("deposit-create-intent");

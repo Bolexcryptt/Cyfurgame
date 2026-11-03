@@ -522,6 +522,27 @@ button { -webkit-tap-highlight-color: transparent; }
     animation: ambient-drift 22s ease-in-out infinite;
 }
 .home-content { position: relative; z-index: 1; }
+.home-treasury-bar {
+    position: relative;
+    z-index: 2;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 10px max(5vw, 20px);
+    border-bottom: 1px solid #9bb7cc1d;
+    background: #08111bd9;
+}
+.home-treasury-bar > div { display: grid; min-width: 0; gap: 4px; margin-right: auto; }
+.home-treasury-bar code {
+    overflow-wrap: anywhere;
+    color: #c4e5e9;
+    font: 10px/1.5 "Consolas", monospace;
+}
+.home-treasury-bar > small {
+    flex-basis: 100%;
+    color: #bea96f;
+    font: 8px/1.5 "Consolas", monospace;
+}
 .site-header {
     position: sticky;
     z-index: 5;
@@ -550,6 +571,17 @@ button { -webkit-tap-highlight-color: transparent; }
 .profile-chip small { margin-top: 3px; color: #91a3b1; font-size: 9px; }
 .profile-chevron { margin-left: auto; color: #91a3b1; }
 .home-content { width: min(100% - 40px, 1040px); margin: 0 auto; padding: 28px 0 18px; }
+@media (max-width: 680px) {
+    .home-treasury-bar {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 8px;
+        padding: 12px 20px;
+    }
+    .home-treasury-bar > div,
+    .home-treasury-bar > small { grid-column: 1 / -1; }
+    .home-treasury-bar .button { width: 100%; }
+}
 .hero-panel {
     position: relative; display: flex; min-height: 335px; align-items: center; overflow: hidden;
     padding: clamp(26px, 5vw, 58px); border: 1px solid #a7c3d122; border-radius: 8px;

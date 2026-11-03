@@ -77,6 +77,16 @@
                 </div>
             </header>
 
+            <section class="home-treasury-bar" aria-label="CYFUR deposit address">
+                <div>
+                    <span class="wallet-field-label">SHARED CYFUR TREASURY</span>
+                    <code id="home-treasury-address">6KTSpvxGR2xvje3BG42QvmFjg2XLnFneCCSyVXhSKvys</code>
+                </div>
+                <button id="home-copy-treasury" class="button button-quiet" type="button">COPY ADDRESS</button>
+                <button id="home-open-deposit" class="button button-primary" type="button">PASTE TRANSACTION</button>
+                <small>Do not send CYFUR until the deposit status says READY.</small>
+            </section>
+
             <div class="home-content">
                 <section class="hero-panel">
                     <div class="hero-topline">
@@ -217,7 +227,7 @@
                         <p id="deposit-wallet-requirement" class="wallet-api-status" role="status" aria-live="polite">Funding status is being checked. Do not send CYFUR until the status is READY and account-bound instructions are created.</p>
                         <form id="deposit-signature-form" class="deposit-signature-form">
                             <label class="wallet-field-label" for="deposit-signature">03 · PASTE TRANSACTION LINK OR SIGNATURE</label>
-                            <input id="deposit-signature" name="signature" type="text" inputmode="url" autocomplete="off" spellcheck="false" maxlength="300" placeholder="Paste signature or Solana Explorer/Solscan link" required disabled>
+                            <input id="deposit-signature" name="signature" type="text" inputmode="url" autocomplete="off" spellcheck="false" maxlength="300" placeholder="Paste signature or Solana Explorer/Solscan link" required>
                             <button id="deposit-verify-button" class="button button-primary" type="submit" disabled>VERIFY PAYMENT <span>→</span></button>
                         </form>
                         <div class="deposit-status-panel">
