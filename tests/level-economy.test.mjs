@@ -909,13 +909,16 @@ test("deposit UI creates an account-bound payment memo before accepting a transa
     assert.match(app, /copyButton\.disabled = !depositReady/);
     assert.match(app, /status\.textContent = depositReady/);
     assert.match(app, /apiUrl\("payment-intent"\)/);
-    assert.match(app, /Unavailable: \$\{readinessMessage\}/);
+    assert.match(app, /Funding is not ready\. \$\{readinessMessage\}/);
+    assert.match(app, /address\.textContent = depositReady\s*\?\s*result\.treasuryAddress\s*:\s*"Funding setup is not ready"/);
+    assert.match(app, /balanceState\.textContent = "SIGN IN TO VIEW BALANCE"/);
     assert.match(app, /typeof result\.disabledMessage === "string"/);
     assert.doesNotMatch(app, /SOLANA_TREASURY_ADDRESS must exactly match Supabase treasury_address/);
     assert.doesNotMatch(app, /wallet_system_config\.deposits_enabled/);
     assert.match(app, /Deposits are temporarily unavailable\. Please check back later\./);
     assert.doesNotMatch(html, /id="wallet-transfer-amount"|id="wallet-transfer-form"|id="wallet-preflight-button"/);
-    assert.match(app, /address\.textContent = result\.treasuryAddress \|\| "Treasury unavailable"/);
+    assert.match(html, /FUNDING STATUS · CHECKING/);
+    assert.match(html, /Paste signature or Solana Explorer\/Solscan link/);
     assert.match(app, /body: JSON\.stringify\(\{ signature: signatureOrLink \}\)/);
     assert.match(app, /Deposit not detected yet\. Please wait and check again/);
     const depositApi = readFileSync(new URL("../api/deposits.js", import.meta.url), "utf8");

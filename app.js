@@ -1058,6 +1058,7 @@ async function refreshWallet() {
     const signatureInput = document.getElementById("deposit-signature");
     const signatureSubmit = document.getElementById("deposit-verify-button");
     const balance = document.getElementById("wallet-balance");
+    const balanceState = document.getElementById("wallet-balance-state");
     const status = document.getElementById("wallet-status-value");
     const refreshButton = document.getElementById("wallet-refresh");
     const balanceRefreshButton = document.getElementById("wallet-balance-refresh");
@@ -1068,11 +1069,11 @@ async function refreshWallet() {
     balanceRefreshButton.disabled = true;
     balanceRefreshButton.textContent = "CHECKING BALANCE…";
     copyButton.disabled = true;
-    address.textContent = "Loading verified treasury…";
+    address.textContent = "Checking funding readiness…";
     status.textContent = "DISABLED";
     status.dataset.state = "disabled";
-    balance.textContent = "Unavailable";
-    document.getElementById("wallet-balance-state").textContent = "CREDITS · NOT VERIFIED";
+    balance.textContent = "—";
+    balanceState.textContent = "CHECKING ACCOUNT BALANCE…";
     walletRequirement.textContent = "Checking deposit readiness…";
     createIntentButton.disabled = true;
     signatureInput.disabled = true;
@@ -1081,16 +1082,20 @@ async function refreshWallet() {
 
     try {
         if (!supabaseConfigured || !supabase) {
-            walletRequirement.textContent = "Unavailable: Supabase is not configured.";
-            setWalletMessage("Supabase is not configured; wallet data is unavailable and deposits remain disabled.", "error");
+            address.textContent = "Account service is not configured";
+            balanceState.textContent = "ACCOUNT SERVICE NOT CONFIGURED";
+            walletRequirement.textContent = "Funding cannot start until the account service is configured.";
+            setWalletMessage("The account service is not configured. Funding is disabled.", "error");
             return;
         }
         const { data, error } = await supabase.auth.getSession();
         if (error) throw error;
         const accessToken = data.session?.access_token;
         if (!accessToken) {
-            walletRequirement.textContent = "Unavailable: sign in to your RelicGrid account first.";
-            setWalletMessage("Sign in to view wallet data. Deposits remain disabled.", "error");
+            address.textContent = "Sign in to view the verified treasury";
+            balanceState.textContent = "SIGN IN TO VIEW BALANCE";
+            walletRequirement.textContent = "Sign in to your RelicGrid account to load your balance and create account-bound deposit instructions.";
+            setWalletMessage("Sign in to view your balance and deposit options. No wallet connection is required.", "error");
             return;
         }
 
@@ -1101,43 +1106,55 @@ async function refreshWallet() {
         const result = await response.json().catch(() => ({}));
         if (!response.ok) {
             if (result.error === "wallet_schema_not_installed") {
-                walletRequirement.textContent = "Wallet database setup is incomplete.";
-                setWalletMessage("Deposits are temporarily unavailable. Please check back later.", "disabled");
+                address.textContent = "Wallet database setup is incomplete";
+                balanceState.textContent = "DATABASE SETUP INCOMPLETE";
+                walletRequirement.textContent = "The wallet database migrations must be applied before funding can be used.";
+                setWalletMessage(walletRequirement.textContent, "disabled");
                 return;
             }
             if (result.error === "wallet_api_not_configured") {
-                walletRequirement.textContent = "Wallet server configuration is incomplete.";
-                setWalletMessage("Deposits are temporarily unavailable. Please check back later.", "disabled");
+                address.textContent = "Wallet server setup is incomplete";
+                balanceState.textContent = "SERVER SETUP INCOMPLETE";
+                walletRequirement.textContent = "The Vercel wallet API environment is incomplete. Ask the project owner to configure it.";
+                setWalletMessage(walletRequirement.textContent, "disabled");
                 return;
             }
             if (result.error === "authentication_required") {
-                walletRequirement.textContent = "Unavailable: your session could not be authenticated.";
-                setWalletMessage("Your RelicGrid identity could not be authenticated by the wallet API.", "error");
+                address.textContent = "Sign in again to view the verified treasury";
+                balanceState.textContent = "SIGN-IN EXPIRED";
+                walletRequirement.textContent = "Your RelicGrid sign-in expired. Sign in again to load account funding.";
+                setWalletMessage(walletRequirement.textContent, "error");
                 return;
             }
             if (response.status === 404 || response.status === 501) {
-                walletRequirement.textContent = "Deposit service is unavailable.";
-                setWalletMessage("Deposits are temporarily unavailable. Please check back later.", "disabled");
+                address.textContent = "Wallet API is missing from this deployment";
+                balanceState.textContent = "WALLET API NOT DEPLOYED";
+                walletRequirement.textContent = "The wallet API route is missing from this deployment. Redeploy the current main branch.";
+                setWalletMessage(walletRequirement.textContent, "disabled");
                 return;
             }
             if (response.status >= 500) {
-                throw new Error("Deposits are temporarily unavailable. Please try again later.");
+                throw new Error("The wallet service returned a server error. Try refreshing, or contact the project owner.");
             }
             throw new Error(result.error || `Wallet request failed (${response.status}).`);
         }
 
-        address.textContent = result.treasuryAddress || "Treasury unavailable";
-        document.getElementById("wallet-network-label").textContent =
-            `CYFUR TREASURY · ${typeof result.network === "string" ? result.network.toUpperCase() : "NETWORK NOT VERIFIED"}`;
         walletStatusSnapshot = result;
         renderLevels();
         const depositConfigurationReady = result.depositsEnabled === true &&
+            typeof result.network === "string" &&
             Boolean(result.treasuryAddress) &&
             Boolean(result.officialMintAddress) &&
             Boolean(result.tokenProgramId) &&
             Number.isInteger(result.tokenDecimals) &&
             Boolean(result.treasuryTokenAccountAddress);
         const depositReady = depositConfigurationReady;
+        address.textContent = depositReady
+            ? result.treasuryAddress
+            : "Funding setup is not ready";
+        document.getElementById("wallet-network-label").textContent = depositReady
+            ? `01 · VERIFIED CYFUR TREASURY · ${result.network.toUpperCase()}`
+            : "FUNDING STATUS · SETUP REQUIRED";
         copyButton.disabled = !depositReady;
         createIntentButton.disabled = !depositReady;
         signatureInput.disabled = !depositReady;
@@ -1145,8 +1162,9 @@ async function refreshWallet() {
         balance.textContent = result.balanceCredits === null
             ? "—"
             : formatCredits(result.balanceCredits);
-        document.getElementById("wallet-balance-state").textContent =
+        balanceState.textContent =
             result.balanceVerified === true ? "CREDITS · BACKEND VERIFIED" : "CREDITS · NOT VERIFIED";
+        if (result.balanceVerified !== true) balance.textContent = "—";
         status.textContent = depositReady
             ? `READY${result.network ? ` · ${result.network.toUpperCase()}` : ""}`
             : "DISABLED";
@@ -1161,14 +1179,17 @@ async function refreshWallet() {
                 result.disabledMessage.trim()
                 ? result.disabledMessage
                 : "Deposits are temporarily unavailable. Please check back later.";
-            walletRequirement.textContent = `Unavailable: ${readinessMessage}`;
+            walletRequirement.textContent = `Funding is not ready. ${readinessMessage}`;
             setWalletMessage(readinessMessage, "disabled");
         }
         await refreshWithdrawalStatus();
     } catch (error) {
         console.error("Wallet data could not be refreshed.", error);
-        walletRequirement.textContent = "Deposit status could not be loaded.";
-        setWalletMessage("Deposits are temporarily unavailable. Please try again later.", "disabled");
+        address.textContent = "Funding readiness could not be checked";
+        balance.textContent = "—";
+        balanceState.textContent = "BALANCE LOAD FAILED · RETRY";
+        walletRequirement.textContent = error.message || "Funding readiness could not be checked. Try refreshing.";
+        setWalletMessage(walletRequirement.textContent, "error");
     } finally {
         refreshButton.disabled = false;
         refreshButton.textContent = "REFRESH";

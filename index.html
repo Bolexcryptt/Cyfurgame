@@ -183,7 +183,7 @@
                         <div class="wallet-data-panel wallet-balance-panel">
                             <span class="wallet-field-label">VERIFIED IN-GAME BALANCE</span>
                             <b id="wallet-balance">—</b>
-                            <small id="wallet-balance-state">CREDITS · NOT VERIFIED</small>
+                            <small id="wallet-balance-state">SIGN IN TO VIEW BALANCE</small>
                             <button id="wallet-balance-refresh" class="wallet-refresh" type="button">REFRESH BALANCE</button>
                         </div>
                     </div>
@@ -194,7 +194,7 @@
                             <p>Minimum deposit: 1 CYFUR. Confirmed deposits convert at 1 CYFUR = 10,000 credits.</p>
                         </header>
                         <div class="wallet-data-panel wallet-address-panel">
-                            <span id="wallet-network-label" class="wallet-field-label">01 · COPY THE VERIFIED CYFUR TREASURY ADDRESS</span>
+                            <span id="wallet-network-label" class="wallet-field-label">FUNDING STATUS · CHECKING</span>
                             <code id="wallet-address">Checking treasury setup…</code>
                             <button id="wallet-copy-address" class="button button-quiet" type="button" disabled>COPY ADDRESS</button>
                             <span id="wallet-address-copy-status" class="copy-confirmation" role="status" aria-live="polite">Copying is enabled only when deposit readiness is verified.</span>
@@ -214,7 +214,7 @@
                             <span id="deposit-memo-copy-status" class="copy-confirmation" role="status" aria-live="polite"></span>
                             <small id="deposit-intent-expiry"></small>
                         </section>
-                        <p id="deposit-wallet-requirement" class="wallet-api-status" role="status" aria-live="polite">Create deposit instructions first. Do not send CYFUR while deposit verification is unavailable.</p>
+                        <p id="deposit-wallet-requirement" class="wallet-api-status" role="status" aria-live="polite">Funding status is being checked. Do not send CYFUR until the status is READY and account-bound instructions are created.</p>
                         <form id="deposit-signature-form" class="deposit-signature-form">
                             <label class="wallet-field-label" for="deposit-signature">03 · PASTE TRANSACTION LINK OR SIGNATURE</label>
                             <input id="deposit-signature" name="signature" type="text" inputmode="url" autocomplete="off" spellcheck="false" maxlength="300" placeholder="Paste signature or Solana Explorer/Solscan link" required disabled>
@@ -222,7 +222,7 @@
                         </form>
                         <div class="deposit-status-panel">
                             <span id="wallet-status-value" class="deposit-status-badge" data-state="disabled">DISABLED</span>
-                            <p id="wallet-api-status" tabindex="-1" role="status" aria-live="polite">Deposit verification is currently unavailable. Do not send CYFUR until the treasury is verified and deposits are enabled.</p>
+                            <p id="wallet-api-status" tabindex="-1" role="status" aria-live="polite">Funding status is being checked. Do not send CYFUR until the treasury and verification service are confirmed READY.</p>
                             <small>Credits are awarded only after the backend verifies a successful finalized transfer against this account's active payment instructions, including its unique memo. A signature or screenshot alone is never proof of payment.</small>
                         </div>
                         <p id="deposit-transaction-result" class="wallet-api-status" hidden><a id="deposit-transaction-link" href="#" target="_blank" rel="noopener noreferrer">View transaction on Solana Explorer</a></p>
