@@ -1068,8 +1068,7 @@ async function refreshWallet() {
     refreshButton.textContent = "LOADING";
     balanceRefreshButton.disabled = true;
     balanceRefreshButton.textContent = "CHECKING BALANCE…";
-    copyButton.disabled = true;
-    address.textContent = "Checking funding readiness…";
+    copyButton.disabled = false;
     status.textContent = "DISABLED";
     status.dataset.state = "disabled";
     balance.textContent = "—";
@@ -1082,7 +1081,6 @@ async function refreshWallet() {
 
     try {
         if (!supabaseConfigured || !supabase) {
-            address.textContent = "Account service is not configured";
             balanceState.textContent = "ACCOUNT SERVICE NOT CONFIGURED";
             walletRequirement.textContent = "Funding cannot start until the account service is configured.";
             setWalletMessage("The account service is not configured. Funding is disabled.", "error");
@@ -1092,7 +1090,6 @@ async function refreshWallet() {
         if (error) throw error;
         const accessToken = data.session?.access_token;
         if (!accessToken) {
-            address.textContent = "Sign in to view the verified treasury";
             balanceState.textContent = "SIGN IN TO VIEW BALANCE";
             walletRequirement.textContent = "Sign in to your RelicGrid account to load your balance and create account-bound deposit instructions.";
             setWalletMessage("Sign in to view your balance and deposit options. No wallet connection is required.", "error");
@@ -1106,28 +1103,24 @@ async function refreshWallet() {
         const result = await response.json().catch(() => ({}));
         if (!response.ok) {
             if (result.error === "wallet_schema_not_installed") {
-                address.textContent = "Wallet database setup is incomplete";
                 balanceState.textContent = "DATABASE SETUP INCOMPLETE";
                 walletRequirement.textContent = "The wallet database migrations must be applied before funding can be used.";
                 setWalletMessage(walletRequirement.textContent, "disabled");
                 return;
             }
             if (result.error === "wallet_api_not_configured") {
-                address.textContent = "Wallet server setup is incomplete";
                 balanceState.textContent = "SERVER SETUP INCOMPLETE";
                 walletRequirement.textContent = "The Vercel wallet API environment is incomplete. Ask the project owner to configure it.";
                 setWalletMessage(walletRequirement.textContent, "disabled");
                 return;
             }
             if (result.error === "authentication_required") {
-                address.textContent = "Sign in again to view the verified treasury";
                 balanceState.textContent = "SIGN-IN EXPIRED";
                 walletRequirement.textContent = "Your RelicGrid sign-in expired. Sign in again to load account funding.";
                 setWalletMessage(walletRequirement.textContent, "error");
                 return;
             }
             if (response.status === 404 || response.status === 501) {
-                address.textContent = "Wallet API is missing from this deployment";
                 balanceState.textContent = "WALLET API NOT DEPLOYED";
                 walletRequirement.textContent = "The wallet API route is missing from this deployment. Redeploy the current main branch.";
                 setWalletMessage(walletRequirement.textContent, "disabled");
@@ -1149,13 +1142,9 @@ async function refreshWallet() {
             Number.isInteger(result.tokenDecimals) &&
             Boolean(result.treasuryTokenAccountAddress);
         const depositReady = depositConfigurationReady;
-        address.textContent = depositReady
-            ? result.treasuryAddress
-            : "Funding setup is not ready";
         document.getElementById("wallet-network-label").textContent = depositReady
             ? `01 · VERIFIED CYFUR TREASURY · ${result.network.toUpperCase()}`
-            : "FUNDING STATUS · SETUP REQUIRED";
-        copyButton.disabled = !depositReady;
+            : "01 · PUBLIC SHARED CYFUR TREASURY · FUNDING SETUP REQUIRED";
         createIntentButton.disabled = !depositReady;
         signatureInput.disabled = !depositReady;
         signatureSubmit.disabled = !depositReady;
@@ -1185,7 +1174,6 @@ async function refreshWallet() {
         await refreshWithdrawalStatus();
     } catch (error) {
         console.error("Wallet data could not be refreshed.", error);
-        address.textContent = "Funding readiness could not be checked";
         balance.textContent = "—";
         balanceState.textContent = "BALANCE LOAD FAILED · RETRY";
         walletRequirement.textContent = error.message || "Funding readiness could not be checked. Try refreshing.";
