@@ -935,7 +935,7 @@ test("deposit UI creates an account-bound payment memo before accepting a transa
     assert.doesNotMatch(depositApi, /process_verified_treasury_deposit/);
 });
 
-test("deposit backend requires owner-approved mint configuration and migration keeps deposits disabled", () => {
+test("deposit backend requires owner-approved mint configuration and treasury migration enables deposits only", () => {
     const treasury = "6KTSpvxGR2xvje3BG42QvmFjg2XLnFneCCSyVXhSKvys";
     const mint = "9F4hLLngEAhepsH2HLTH6kBYmmq6dzm4GXRrcpME3uam";
     assert.equal(RELICGRID_CYFUR_MINT_ADDRESS, mint);
@@ -963,7 +963,7 @@ test("deposit backend requires owner-approved mint configuration and migration k
     assert.match(verifier, new RegExp(`RELICGRID_TREASURY_ADDRESS = "${treasury}"`));
     assert.match(verifier, /WALLET_APPROVED_CYFUR_MINT_ADDRESS/);
     assert.match(migration, new RegExp(`treasury_address = '${treasury}'`));
-    assert.match(migration, /deposits_enabled = false/);
+    assert.match(migration, /deposits_enabled = true/);
     assert.match(migration, /paid_gameplay_enabled = false/);
     for (const apiFile of ["wallet.js", "deposits.js"]) {
         const api = readFileSync(new URL(`../api/${apiFile}`, import.meta.url), "utf8");
