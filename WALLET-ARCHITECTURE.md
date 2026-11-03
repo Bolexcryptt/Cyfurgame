@@ -38,25 +38,21 @@ The direct-treasury migration adds the treasury address and service-only RPCs. T
 
 The level-entry safety migration replaces only `start_wallet_level`. Under the existing per-player profile lock, it reuses an active session for the same level (including retries with a new request ID) without charging again, and rejects a different level while that session is active. The all-level access migration then removes only the completion-order restriction: it retains the active-session check, verified-balance check, and atomic entry debit. Neither migration changes existing balances, ledger rows, level progress, scores, or leaderboard data, enables paid gameplay, or changes treasury settings. Apply both after the wallet processing migration; code changes alone do not update a live Supabase function.
 
-Configure these Vercel **server-side** variables:
+Configure these Vercel variables in the project that hosts the API:
 
 - `SUPABASE_URL` — the existing Supabase project URL.
 - `SUPABASE_PUBLISHABLE_KEY` — the Supabase publishable key used with the player's bearer token and RLS.
 - `SUPABASE_SERVICE_ROLE_KEY` — secret service-role key, used only by API routes for trusted reads and RPCs.
-- `SOLANA_RPC_URL` — trusted HTTPS Solana RPC endpoint.
-- `SOLANA_NETWORK` — `devnet` for isolated testing; `mainnet-beta` only for production review.
-- `WALLET_APPROVED_CYFUR_MINT_ADDRESS` — server-only approved mint. On mainnet it must equal the application’s fixed CYFUR mint; on devnet it must match the test mint in `wallet_system_config`.
-- `WITHDRAWAL_TREASURY_PRIVATE_KEY` — the one server-side treasury signing key used for withdrawals. Accepted formats are a base58-encoded 64-byte Solana secret key, base64-encoded 64-byte key, or JSON array of 64 byte values. The server verifies that its public key matches the configured treasury before submitting a payout. Do not use a client-prefixed variable, commit it, log it, or send it to the browser. `TREASURY_PRIVATE_KEY` is supported only as a legacy fallback; a second key is not required.
+- `WITHDRAWAL_TREASURY_PRIVATE_KEY` — optional and only for withdrawals. Deposits never use a treasury private key. Do not configure this until withdrawals have separately passed server-signing and confirmation tests. Never use a client-prefixed variable, commit, log, or send this key to the browser.
 - `WITHDRAWAL_ENABLED` — leave unset or `false` until the signer, owner-approved mint, live Supabase row, token account and funding, and a separately authorized small test are verified.
 - `wallet_system_config.withdrawals_enabled` — remains false by default; only the owner/operator should enable it after the same review. Both this DB gate and `WITHDRAWAL_ENABLED=true` are required for an actual payout.
 - `WITHDRAWAL_DIAGNOSTIC_SECRET` — optional strong server-only secret protecting `GET /api/withdrawal-diagnostics`; required to run that deployment-only diagnostic.
-- `WALLET_DIRECT_TREASURY_READY=true` — owner/operator acknowledgment that the treasury address, ownership, monitoring, and reconciliation process are reviewed. Leave unset until confirmed.
-- `WALLET_DEPOSITS_ENABLED=true` — global deposit verification switch; leave unset until all tests and reviews pass.
-- `WALLET_MAINNET_DEPOSITS_ENABLED=true` — additional production-only switch; leave unset unless the mainnet launch is explicitly approved.
 
-The authenticated `GET /api/wallet` readiness response gives a user-facing reason when any required gate is missing. Vercel function logs record only non-secret readiness check IDs (for example, `server_deposits_flag_disabled` or `treasury_token_account_invalid`) and the Solana network. RPC failures are logged separately with the operation and safe error code; RPC URLs, credentials, and private keys are never logged. Check the Production environment specifically and redeploy after changing variables.
+Deposit verification defaults in code to Solana mainnet, the supported CYFUR mint, and `https://api.mainnet-beta.solana.com`; the network and RPC URL can still be overridden for isolated testing or an operator-selected provider. The public RPC may be rate-limited or unavailable. Any RPC failure fails closed and cannot award credits. Deposit readiness switches default on in code, but the Supabase `wallet_system_config.deposits_enabled` setting remains false in the treasury migration, so this code change does not enable live deposits. Keep that database switch off until the deployed verifier, treasury token account, migrations, attribution, and duplicate-credit behavior are tested and approved.
+
+The authenticated `GET /api/wallet` readiness response gives a user-facing reason when any required database or chain check fails. Vercel function logs record only non-secret readiness check IDs and the Solana network. RPC failures are logged separately with the operation and safe error code; RPC URLs, credentials, and private keys are never logged. Redeploy after changing API environment variables.
 - `GAME_FRONTEND_ORIGIN` — exact HTTPS browser origin allowed to call the API cross-origin (for example, the GitHub Pages origin); never use a wildcard.
-- `GAME_API_BASE_URL` — frontend build-time/public config in `supabase-config.js`, set to the deployed HTTPS API origin when the game and API use different origins. Leave empty only when `/api` is served from the same origin.
+- `GAME_API_BASE_URL` — frontend build-time/public config in `supabase-config.js`, set to the deployed HTTPS API origin when the game and API use different origins. Leave empty only when `/api` is served from the same origin. This is a code setting, not a Vercel secret.
 
 Never set a variable beginning with `NEXT_PUBLIC_` for private or server-only values. Deposits are player-signed transfers to the treasury and do not use the treasury private key. Withdrawals use that single key for server-side signing. No second treasury signer is needed by the current implementation.
 

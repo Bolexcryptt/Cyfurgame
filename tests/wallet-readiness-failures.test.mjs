@@ -1,18 +1,55 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-const { getApprovedCyfurMintAddress } = await import('../server/lib/solana-deposit.js');
+const {
+  getApprovedCyfurMintAddress,
+  getSolanaNetwork,
+  getSolanaRpcUrl,
+  isDepositSettingEnabled,
+  RELICGRID_CYFUR_MINT_ADDRESS
+} = await import('../server/lib/solana-deposit.js');
 const { serviceRequest } = await import('../server/lib/wallet.js');
+
+test('deposit verification defaults to the supported mainnet settings without extra environment variables', () => {
+  const names = [
+    'SOLANA_NETWORK',
+    'SOLANA_RPC_URL',
+    'WALLET_APPROVED_CYFUR_MINT_ADDRESS',
+    'WALLET_DIRECT_TREASURY_READY',
+    'WALLET_DEPOSITS_ENABLED',
+    'WALLET_MAINNET_DEPOSITS_ENABLED'
+  ];
+  const previous = Object.fromEntries(names.map((name) => [name, process.env[name]]));
+  for (const name of names) delete process.env[name];
+
+  try {
+    assert.equal(getSolanaNetwork(), 'mainnet-beta');
+    assert.equal(getSolanaRpcUrl(), 'https://api.mainnet-beta.solana.com');
+    assert.equal(getApprovedCyfurMintAddress(), RELICGRID_CYFUR_MINT_ADDRESS);
+    for (const name of names.slice(3)) assert.equal(isDepositSettingEnabled(name), true);
+    process.env.WALLET_DEPOSITS_ENABLED = 'false';
+    assert.equal(isDepositSettingEnabled('WALLET_DEPOSITS_ENABLED'), false);
+  } finally {
+    for (const [name, value] of Object.entries(previous)) {
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
+  }
+});
 
 test('missing approved CYFUR mint is treated as unconfigured', () => {
   const original = process.env.WALLET_APPROVED_CYFUR_MINT_ADDRESS;
+  const originalNetwork = process.env.SOLANA_NETWORK;
   delete process.env.WALLET_APPROVED_CYFUR_MINT_ADDRESS;
+  process.env.SOLANA_NETWORK = 'devnet';
 
   try {
     assert.equal(getApprovedCyfurMintAddress(), null);
   } finally {
     if (original === undefined) delete process.env.WALLET_APPROVED_CYFUR_MINT_ADDRESS;
     else process.env.WALLET_APPROVED_CYFUR_MINT_ADDRESS = original;
+    if (originalNetwork === undefined) delete process.env.SOLANA_NETWORK;
+    else process.env.SOLANA_NETWORK = originalNetwork;
   }
 });
 

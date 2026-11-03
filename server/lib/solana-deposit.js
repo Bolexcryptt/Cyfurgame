@@ -6,6 +6,8 @@ const TOKEN_PROGRAM_IDS = new Set([
 ]);
 const RELICGRID_CYFUR_MINT_ADDRESS = "9F4hLLngEAhepsH2HLTH6kBYmmq6dzm4GXRrcpME3uam";
 const RELICGRID_TREASURY_ADDRESS = "6KTSpvxGR2xvje3BG42QvmFjg2XLnFneCCSyVXhSKvys";
+const DEFAULT_SOLANA_NETWORK = "mainnet-beta";
+const DEFAULT_SOLANA_RPC_URL = "https://api.mainnet-beta.solana.com";
 const GENESIS_HASHES = {
     "mainnet-beta": "5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d",
     devnet: "EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG"
@@ -30,8 +32,24 @@ function isBase58(value, expectedBytes) {
 }
 
 function getApprovedCyfurMintAddress() {
-    const approvedMint = process.env.WALLET_APPROVED_CYFUR_MINT_ADDRESS?.trim();
-    return isBase58(approvedMint, 32) ? approvedMint : null;
+    const configuredMint = process.env.WALLET_APPROVED_CYFUR_MINT_ADDRESS?.trim();
+    if (configuredMint) return isBase58(configuredMint, 32) ? configuredMint : null;
+    return getSolanaNetwork() === DEFAULT_SOLANA_NETWORK
+        ? RELICGRID_CYFUR_MINT_ADDRESS
+        : null;
+}
+
+function getSolanaNetwork() {
+    return process.env.SOLANA_NETWORK?.trim() || DEFAULT_SOLANA_NETWORK;
+}
+
+function getSolanaRpcUrl() {
+    return process.env.SOLANA_RPC_URL?.trim() || DEFAULT_SOLANA_RPC_URL;
+}
+
+function isDepositSettingEnabled(name) {
+    const value = process.env[name]?.trim();
+    return value === undefined || value === "" || value === "true";
 }
 
 function deriveAssociatedTokenAccount(ownerAddress, mintAddress, tokenProgramId) {
@@ -460,6 +478,9 @@ module.exports = {
     RELICGRID_TREASURY_ADDRESS,
     TOKEN_PROGRAM_IDS,
     deriveAssociatedTokenAccount,
+    getSolanaNetwork,
+    getSolanaRpcUrl,
+    isDepositSettingEnabled,
     decodeBase58,
     getApprovedCyfurMintAddress,
     isOfficialCyfurMintAccount,

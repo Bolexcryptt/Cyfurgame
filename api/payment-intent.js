@@ -11,6 +11,9 @@ const {
     deriveAssociatedTokenAccount,
     getApprovedCyfurMintAddress,
     GENESIS_HASHES,
+    getSolanaNetwork,
+    getSolanaRpcUrl,
+    isDepositSettingEnabled,
     isOfficialCyfurMintAccount,
     isBase58,
     RELICGRID_CYFUR_MINT_ADDRESS,
@@ -35,11 +38,7 @@ module.exports = async function paymentIntent(request, response) {
         const user = await authenticate(request);
         if (!user) return sendJson(response, 401, { error: "authentication_required" });
 
-        const requiredEnvironment = [
-            "SUPABASE_SERVICE_ROLE_KEY",
-            "SOLANA_RPC_URL",
-            "SOLANA_NETWORK"
-        ];
+        const requiredEnvironment = ["SUPABASE_SERVICE_ROLE_KEY"];
         const missing = requiredEnvironment.filter((name) => !process.env[name]?.trim());
         if (missing.length) {
             return sendJson(response, 503, {
@@ -48,7 +47,7 @@ module.exports = async function paymentIntent(request, response) {
                 readinessChecks: missing.map((name) => `${name} is missing.`)
             });
         }
-        const network = process.env.SOLANA_NETWORK;
+        const network = getSolanaNetwork();
         const approvedMintAddress = getApprovedCyfurMintAddress();
         const readinessChecks = [];
         if (!approvedMintAddress ||
@@ -56,18 +55,18 @@ module.exports = async function paymentIntent(request, response) {
                 approvedMintAddress !== RELICGRID_CYFUR_MINT_ADDRESS)) {
             readinessChecks.push("WALLET_APPROVED_CYFUR_MINT_ADDRESS does not match the supported mint for this network.");
         }
-        if (process.env.WALLET_DIRECT_TREASURY_READY !== "true") {
-            readinessChecks.push("WALLET_DIRECT_TREASURY_READY must be true.");
+        if (!isDepositSettingEnabled("WALLET_DIRECT_TREASURY_READY")) {
+            readinessChecks.push("Direct-to-treasury deposits have been disabled by a server override.");
         }
-        if (process.env.WALLET_DEPOSITS_ENABLED !== "true") {
-            readinessChecks.push("WALLET_DEPOSITS_ENABLED must be true.");
+        if (!isDepositSettingEnabled("WALLET_DEPOSITS_ENABLED")) {
+            readinessChecks.push("Deposit verification has been disabled by a server override.");
         }
         if (!["devnet", "mainnet-beta"].includes(network)) {
             readinessChecks.push("SOLANA_NETWORK must be devnet or mainnet-beta.");
         }
         if (network === "mainnet-beta" &&
-            process.env.WALLET_MAINNET_DEPOSITS_ENABLED !== "true") {
-            readinessChecks.push("WALLET_MAINNET_DEPOSITS_ENABLED must be true for mainnet.");
+            !isDepositSettingEnabled("WALLET_MAINNET_DEPOSITS_ENABLED")) {
+            readinessChecks.push("Mainnet deposit verification has been disabled by a server override.");
         }
         if (readinessChecks.length > 0) {
             return sendJson(response, 503, {
@@ -105,16 +104,16 @@ module.exports = async function paymentIntent(request, response) {
         );
         const [genesisHash, treasuryAccount, mintAccount, treasuryTokenAccountInfo] =
             await Promise.all([
-                solanaRpc(process.env.SOLANA_RPC_URL, "getGenesisHash", []),
-                solanaRpc(process.env.SOLANA_RPC_URL, "getAccountInfo", [
+                solanaRpc(getSolanaRpcUrl(), "getGenesisHash", []),
+                solanaRpc(getSolanaRpcUrl(), "getAccountInfo", [
                     config.treasury_address,
                     { commitment: "finalized", encoding: "base64" }
                 ]),
-                solanaRpc(process.env.SOLANA_RPC_URL, "getAccountInfo", [
+                solanaRpc(getSolanaRpcUrl(), "getAccountInfo", [
                     config.official_mint_address,
                     { commitment: "finalized", encoding: "jsonParsed" }
                 ]),
-                solanaRpc(process.env.SOLANA_RPC_URL, "getAccountInfo", [
+                solanaRpc(getSolanaRpcUrl(), "getAccountInfo", [
                     treasuryTokenAccount,
                     { commitment: "finalized", encoding: "jsonParsed" }
                 ])

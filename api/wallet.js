@@ -15,6 +15,9 @@ const {
     isBase58,
     RELICGRID_CYFUR_MINT_ADDRESS,
     RELICGRID_TREASURY_ADDRESS,
+    getSolanaNetwork,
+    getSolanaRpcUrl,
+    isDepositSettingEnabled,
     solanaRpc
 } = require("../server/lib/solana-deposit");
 
@@ -64,7 +67,7 @@ module.exports = async function wallet(request, response) {
                 linkedWalletAddress = linkedWallets[0].wallet_address;
             }
         }
-        const network = process.env.SOLANA_NETWORK;
+        const network = getSolanaNetwork();
         const approvedMintAddress = getApprovedCyfurMintAddress();
         const approvedTreasuryAddress = RELICGRID_TREASURY_ADDRESS;
         let treasuryAddress = null;
@@ -119,13 +122,7 @@ module.exports = async function wallet(request, response) {
                 "The server-side wallet database connection is not configured."
             );
         }
-        if (!process.env.SOLANA_RPC_URL?.trim()) {
-            addReadinessCheck(
-                "solana_rpc_url_missing",
-                "The server-side Solana RPC connection is not configured."
-            );
-        }
-        if (process.env.SOLANA_RPC_URL?.trim() &&
+        if (
             GENESIS_HASHES[network] &&
             config?.network === network &&
             isBase58(approvedTreasuryAddress, 32) &&
@@ -135,12 +132,12 @@ module.exports = async function wallet(request, response) {
             let mintAccount;
             try {
                 [genesisHash, treasuryAccount, mintAccount] = await Promise.all([
-                    solanaRpc(process.env.SOLANA_RPC_URL, "getGenesisHash", []),
-                    solanaRpc(process.env.SOLANA_RPC_URL, "getAccountInfo", [approvedTreasuryAddress, {
+                    solanaRpc(getSolanaRpcUrl(), "getGenesisHash", []),
+                    solanaRpc(getSolanaRpcUrl(), "getAccountInfo", [approvedTreasuryAddress, {
                         commitment: "finalized",
                         encoding: "base64"
                     }]),
-                    solanaRpc(process.env.SOLANA_RPC_URL, "getAccountInfo", [config.official_mint_address, {
+                    solanaRpc(getSolanaRpcUrl(), "getAccountInfo", [config.official_mint_address, {
                         commitment: "finalized",
                         encoding: "jsonParsed"
                     }])
@@ -184,7 +181,7 @@ module.exports = async function wallet(request, response) {
                         config.token_program_id
                     );
                     const treasuryTokenAccount = await solanaRpc(
-                        process.env.SOLANA_RPC_URL,
+                        getSolanaRpcUrl(),
                         "getAccountInfo",
                         [treasuryTokenAccountAddress, {
                             commitment: "finalized",
@@ -218,10 +215,10 @@ module.exports = async function wallet(request, response) {
                 }
             }
         }
-        if (process.env.WALLET_DIRECT_TREASURY_READY !== "true") {
+        if (!isDepositSettingEnabled("WALLET_DIRECT_TREASURY_READY")) {
             addReadinessCheck(
                 "direct_treasury_acknowledgement_missing",
-                "Direct-to-treasury deposits have not passed the server readiness gate."
+                "Direct-to-treasury deposits are disabled by a server override."
             );
         }
         if (config?.deposits_enabled !== true) {
@@ -230,17 +227,17 @@ module.exports = async function wallet(request, response) {
                 "Deposits are disabled in the wallet database configuration."
             );
         }
-        if (process.env.WALLET_DEPOSITS_ENABLED !== "true") {
+        if (!isDepositSettingEnabled("WALLET_DEPOSITS_ENABLED")) {
             addReadinessCheck(
                 "server_deposits_flag_disabled",
-                "The server deposit feature flag is disabled."
+                "Deposit verification is disabled by a server override."
             );
         }
         if (network === "mainnet-beta" &&
-            process.env.WALLET_MAINNET_DEPOSITS_ENABLED !== "true") {
+            !isDepositSettingEnabled("WALLET_MAINNET_DEPOSITS_ENABLED")) {
             addReadinessCheck(
                 "server_mainnet_deposits_flag_disabled",
-                "The mainnet deposit feature flag is disabled."
+                "Mainnet deposit verification is disabled by a server override."
             );
         }
         const depositsEnabled = readinessChecks.length === 0;

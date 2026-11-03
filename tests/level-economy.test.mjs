@@ -644,8 +644,8 @@ test("wallet API publishes the same exchange rate and keeps deposits disabled", 
             ["Wallet deposit readiness checks failed."]
         );
         assert.ok(readinessLogs[0].details.failedChecks.includes("service_database_key_missing"));
-        assert.ok(readinessLogs[0].details.failedChecks.includes("server_deposits_flag_disabled"));
-        assert.ok(readinessLogs[0].details.failedChecks.includes("approved_mint_unconfigured"));
+        assert.equal(readinessLogs[0].details.failedChecks.includes("server_deposits_flag_disabled"), false);
+        assert.equal(readinessLogs[0].details.failedChecks.includes("approved_mint_unconfigured"), false);
         assert.equal(response.payload.treasuryAddress, null);
         assert.equal(response.payload.linkedWalletAddress, null);
         assert.equal(requestedUrls.some((target) => target.includes("player_solana_wallets")), false);
@@ -966,9 +966,11 @@ test("deposit backend requires owner-approved mint configuration and migration k
         assert.doesNotMatch(api, /SOLANA_TREASURY_ADDRESS/);
     }
     const paymentIntentApi = readFileSync(new URL("../api/payment-intent.js", import.meta.url), "utf8");
-    assert.match(paymentIntentApi, /WALLET_DIRECT_TREASURY_READY must be true/);
-    assert.match(paymentIntentApi, /WALLET_DEPOSITS_ENABLED must be true/);
-    assert.match(paymentIntentApi, /WALLET_MAINNET_DEPOSITS_ENABLED must be true for mainnet/);
+    assert.match(paymentIntentApi, /isDepositSettingEnabled\("WALLET_DIRECT_TREASURY_READY"\)/);
+    assert.match(paymentIntentApi, /isDepositSettingEnabled\("WALLET_DEPOSITS_ENABLED"\)/);
+    assert.match(paymentIntentApi, /isDepositSettingEnabled\("WALLET_MAINNET_DEPOSITS_ENABLED"\)/);
+    assert.match(verifier, /DEFAULT_SOLANA_NETWORK = "mainnet-beta"/);
+    assert.match(verifier, /DEFAULT_SOLANA_RPC_URL = "https:\/\/api\.mainnet-beta\.solana\.com"/);
     assert.doesNotMatch(app, new RegExp(treasury));
     assert.match(html, new RegExp(treasury));
     assert.doesNotMatch(paymentIntentApi, /readinessChecks,/);
@@ -2489,7 +2491,7 @@ test("deposit API refuses to process deposits until trusted server configuration
     }
 });
 
-test("deposit API requires explicit direct-treasury readiness", async () => {
+test("deposit API can be explicitly disabled by the direct-treasury readiness override", async () => {
     const names = [
         "SUPABASE_URL",
         "SUPABASE_PUBLISHABLE_KEY",
@@ -2509,9 +2511,9 @@ test("deposit API requires explicit direct-treasury readiness", async () => {
         SOLANA_RPC_URL: "https://solana.example/rpc",
         SOLANA_NETWORK: "devnet",
         SOLANA_TREASURY_ADDRESS: "11111111111111111111111111111111",
-        WALLET_DEPOSITS_ENABLED: "true"
+        WALLET_DEPOSITS_ENABLED: "true",
+        WALLET_DIRECT_TREASURY_READY: "false"
     });
-    delete process.env.WALLET_DIRECT_TREASURY_READY;
     const originalFetch = globalThis.fetch;
     globalThis.fetch = async (url) => {
         if (String(url).includes("/auth/v1/user")) {
@@ -2545,7 +2547,7 @@ test("deposit API requires explicit direct-treasury readiness", async () => {
     }
 });
 
-test("deposit API remains disabled unless the explicit server flag is enabled", async () => {
+test("deposit API honors an explicit server-side deposits-off override", async () => {
     const envNames = [
         "SUPABASE_URL",
         "SUPABASE_PUBLISHABLE_KEY",
@@ -2567,7 +2569,7 @@ test("deposit API remains disabled unless the explicit server flag is enabled", 
         SOLANA_TREASURY_ADDRESS: "11111111111111111111111111111111",
         WALLET_DIRECT_TREASURY_READY: "true"
     })) process.env[name] = value;
-    delete process.env.WALLET_DEPOSITS_ENABLED;
+    process.env.WALLET_DEPOSITS_ENABLED = "false";
 
     const originalFetch = globalThis.fetch;
     globalThis.fetch = async (url) => {

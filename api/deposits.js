@@ -9,6 +9,9 @@ const {
 const {
     deriveAssociatedTokenAccount,
     getApprovedCyfurMintAddress,
+    getSolanaNetwork,
+    getSolanaRpcUrl,
+    isDepositSettingEnabled,
     normalizeTransactionSignature,
     isBase58,
     RELICGRID_CYFUR_MINT_ADDRESS,
@@ -41,10 +44,8 @@ module.exports = async function deposits(request, response) {
         const user = await authenticate(request);
         if (!user) return sendJson(response, 401, { error: "authentication_required" });
 
-        const missing = [
-            "SUPABASE_SERVICE_ROLE_KEY",
-            "SOLANA_RPC_URL"
-        ].filter((name) => !process.env[name]?.trim());
+        const missing = ["SUPABASE_SERVICE_ROLE_KEY"]
+            .filter((name) => !process.env[name]?.trim());
         if (missing.length) {
             return respondNotReady(
                 response,
@@ -52,28 +53,28 @@ module.exports = async function deposits(request, response) {
                 `Deposit verification is disabled. Configure server-only ${missing.join(", ")}. Do not send CYFUR.`
             );
         }
-        if (process.env.WALLET_DIRECT_TREASURY_READY !== "true") {
+        if (!isDepositSettingEnabled("WALLET_DIRECT_TREASURY_READY")) {
             return respondNotReady(
                 response,
                 "direct_treasury_not_ready",
                 "Direct-to-treasury deposits are disabled until the owner-controlled treasury and reconciliation process are reviewed and approved. Do not send CYFUR."
             );
         }
-        const configuredNetwork = process.env.SOLANA_NETWORK;
-        if (process.env.WALLET_DEPOSITS_ENABLED !== "true" ||
+        const configuredNetwork = getSolanaNetwork();
+        if (!isDepositSettingEnabled("WALLET_DEPOSITS_ENABLED") ||
             !["devnet", "mainnet-beta"].includes(configuredNetwork)) {
             return respondNotReady(
                 response,
                 "deposits_disabled",
-                "Deposit verification is disabled. Set an explicit Solana network and keep the deposit flag off until the owner-controlled treasury and verifier are approved and tested. Do not send CYFUR."
+                "Deposit verification is disabled by configuration or the selected Solana network is unsupported. Do not send CYFUR."
             );
         }
         if (configuredNetwork === "mainnet-beta" &&
-            process.env.WALLET_MAINNET_DEPOSITS_ENABLED !== "true") {
+            !isDepositSettingEnabled("WALLET_MAINNET_DEPOSITS_ENABLED")) {
             return respondNotReady(
                 response,
                 "mainnet_deposits_disabled",
-                "Mainnet deposits have not been explicitly enabled after production review. Do not send CYFUR."
+                "Mainnet deposits are disabled by a server override. Do not send CYFUR."
             );
         }
 
@@ -87,7 +88,7 @@ module.exports = async function deposits(request, response) {
             return respondNotReady(
                 response,
                 "owner_approved_mint_not_configured",
-                "Deposit verification is disabled until WALLET_APPROVED_CYFUR_MINT_ADDRESS is set to the owner-confirmed official mint."
+                "Deposit verification is disabled because no valid CYFUR mint is configured for this network."
             );
         }
         const transactionUrl =
@@ -127,7 +128,7 @@ module.exports = async function deposits(request, response) {
             tokenProgramId: config.token_program_id,
             tokenDecimals: config.token_decimals,
             network: config.network,
-            rpcUrl: process.env.SOLANA_RPC_URL,
+            rpcUrl: getSolanaRpcUrl(),
             requirePaymentIntentMemo: true
         });
         if (verified.state === "pending") {
