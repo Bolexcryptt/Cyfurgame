@@ -197,6 +197,12 @@ test("chain diagnostics classify authentication, endpoint, timeout, and provider
             httpStatus: 404
         },
         {
+            name: "non-JSON-RPC endpoint",
+            fetch: async () => new Response("method not allowed", { status: 405 }),
+            reason: /HTTP 405 to a JSON-RPC POST.*HTTPS Solana mainnet RPC endpoint/,
+            httpStatus: 405
+        },
+        {
             name: "provider error",
             fetch: async () => new Response("unavailable", { status: 503 }),
             reason: /provider returned HTTP 503/,

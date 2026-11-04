@@ -323,6 +323,12 @@ test("withdrawal migration preserves existing data and enforces service-only ato
     assert.match(migration, /Insufficient credits for withdrawal/);
     assert.match(migration, /p_chain_failure_verified is distinct from true/);
     assert.match(migration, /to service_role/);
+    assert.match(migration, /create or replace function public\.reserve_wallet_withdrawal\(\s*p_player_id uuid,\s*p_wallet_address text,\s*p_network text,\s*p_mint_address text,\s*p_token_program_id text,\s*p_treasury_address text,\s*p_amount_raw bigint,\s*p_token_decimals integer,\s*p_amount_credits bigint,\s*p_idempotency_key text,\s*p_memo text default ''/i);
+    assert.match(migration, /create or replace function public\.mark_wallet_withdrawal_submitted\(\s*p_withdrawal_id uuid,\s*p_transaction_signature text/i);
+    assert.match(migration, /create or replace function public\.confirm_wallet_withdrawal\(\s*p_withdrawal_id uuid,\s*p_transaction_signature text/i);
+    assert.match(migration, /create or replace function public\.release_wallet_withdrawal\(\s*p_withdrawal_id uuid,\s*p_failure_reason text,\s*p_chain_failure_verified boolean default false,\s*p_transaction_signature text default null/i);
     assert.match(migration, /drop function if exists public\.process_verified_withdrawal/);
+    assert.match(migration, /notify pgrst,\s*'reload schema'/i);
+    assert.doesNotMatch(migration, /set withdrawals_enabled\s*=\s*false/i);
     assert.doesNotMatch(migration, /truncate|delete from public\.wallet_credit_accounts|delete from public\.player_profiles/i);
 });

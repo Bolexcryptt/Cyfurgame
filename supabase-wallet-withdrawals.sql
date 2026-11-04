@@ -5,11 +5,6 @@
 alter table public.wallet_system_config
     add column if not exists withdrawals_enabled boolean not null default false;
 
-update public.wallet_system_config
-set withdrawals_enabled = false,
-    updated_at = now()
-where id = 1;
-
 create table if not exists public.wallet_withdrawals (
     id uuid primary key default gen_random_uuid(),
     player_id uuid not null references public.player_profiles (id) on delete cascade,
@@ -434,3 +429,5 @@ grant execute on function public.release_wallet_withdrawal(uuid, text, boolean, 
     to service_role;
 
 drop function if exists public.process_verified_withdrawal(uuid, text, text, text, text, text, bigint, integer, bigint, text, text);
+
+notify pgrst, 'reload schema';

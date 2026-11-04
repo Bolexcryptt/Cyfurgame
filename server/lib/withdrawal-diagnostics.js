@@ -273,6 +273,9 @@ async function verifyChainConfiguration(config) {
         } else if (error?.httpStatus === 404) {
             result.rpcHttpStatus = 404;
             result.reason = "Solana RPC returned HTTP 404. The Production SOLANA_RPC_URL path is invalid or does not expose the Solana JSON-RPC endpoint.";
+        } else if (error?.httpStatus === 405) {
+            result.rpcHttpStatus = 405;
+            result.reason = "Solana RPC returned HTTP 405 to a JSON-RPC POST. The configured URL is not accepting Solana JSON-RPC requests; use the provider's HTTPS Solana mainnet RPC endpoint, not its dashboard, REST, or WebSocket URL.";
         } else if (error?.httpStatus === 429) {
             result.rpcHttpStatus = 429;
             result.reason = "Solana RPC returned HTTP 429. The provider rate limit or quota has been exceeded.";
