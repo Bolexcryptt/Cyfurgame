@@ -179,7 +179,7 @@ async function executeCyfurWithdrawal({
     }
     const treasuryTokenInfo = treasuryTokenAccountInfo.value?.data?.parsed?.info;
     const treasuryTokenBalance = treasuryTokenInfo?.tokenAmount?.amount;
-    if (treasuryTokenAccountInfo.value?.owner !== tokenProgramKey.toBase58() ||
+    if (!treasuryTokenAccountInfo.value?.owner?.equals?.(tokenProgramKey) ||
         treasuryTokenAccountInfo.value.data?.parsed?.type !== "account" ||
         treasuryTokenInfo?.mint !== mintAddress ||
         treasuryTokenInfo?.owner !== treasuryAddress ||

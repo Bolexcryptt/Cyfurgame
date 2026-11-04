@@ -68,7 +68,10 @@ function deriveAssociatedTokenAccount(ownerAddress, mintAddress, tokenProgramId)
 
 function isOfficialCyfurMintAccount(account) {
     const info = account?.value?.data?.parsed?.info;
-    return account?.value?.owner === "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA" &&
+    const owner = typeof account?.value?.owner === "string"
+        ? account.value.owner
+        : account?.value?.owner?.toBase58?.();
+    return owner === "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA" &&
         account.value.data?.parsed?.type === "mint" &&
         info?.decimals === 8 &&
         info.mintAuthority === null &&

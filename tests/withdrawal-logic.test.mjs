@@ -9,7 +9,7 @@ const {
     executeCyfurWithdrawal,
     parseWithdrawalSecret
 } = require("../server/lib/withdrawals.js");
-const { Keypair } = require("@solana/web3.js");
+const { Keypair, PublicKey } = require("@solana/web3.js");
 const { RELICGRID_CYFUR_MINT_ADDRESS, RELICGRID_TREASURY_ADDRESS } = require("../server/lib/solana-deposit.js");
 const originalSolanaNetwork = process.env.SOLANA_NETWORK;
 
@@ -186,4 +186,45 @@ test("withdrawal requires finalized official mint, treasury account, and suffici
         /does not match the configured treasury network/i
     );
     assert.equal(wrongNetwork.wasTransactionBuilt(), false);
+});
+
+test("withdrawal preflight accepts web3 PublicKey owners returned by parsed-account RPC", async () => {
+    const tokenProgram = new PublicKey("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA");
+    const mintValue = {
+        owner: tokenProgram,
+        data: {
+            parsed: {
+                type: "mint",
+                info: { decimals: 8, mintAuthority: null, freezeAuthority: null }
+            }
+        }
+    };
+    const treasuryValue = {
+        owner: tokenProgram,
+        data: {
+            parsed: {
+                type: "account",
+                info: {
+                    mint: RELICGRID_CYFUR_MINT_ADDRESS,
+                    owner: RELICGRID_TREASURY_ADDRESS,
+                    tokenAmount: { amount: "100000000" }
+                }
+            }
+        }
+    };
+    const preflight = makePreflightConnection({ mintValue, treasuryValue });
+
+    await assert.rejects(
+        executeCyfurWithdrawal({
+            rpcUrl: "https://rpc.example",
+            playerWalletAddress: Keypair.generate().publicKey.toBase58(),
+            treasurySigner: {
+                publicKey: { toBase58: () => RELICGRID_TREASURY_ADDRESS }
+            },
+            amountRaw: "100000000",
+            connectionFactory: () => preflight.connection
+        }),
+        /Preflight should reject before building a transaction/
+    );
+    assert.equal(preflight.wasTransactionBuilt(), true);
 });
