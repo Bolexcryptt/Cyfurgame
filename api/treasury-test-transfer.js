@@ -16,6 +16,9 @@ const {
     TOKEN_PROGRAM_ADDRESS,
     executeCyfurTreasuryTestTransfer
 } = require("../server/lib/treasury-test-transfer");
+const {
+    createTreasuryTestTransferPreflightHandler
+} = require("../server/lib/treasury-test-transfer-preflight");
 
 const TRANSFER_ID = "cyfur-mainnet-one-cyfur-v1";
 const CONFIRMATION_PHRASE = "SEND EXACTLY 1 CYFUR TO APPROVED TEST WALLET";
@@ -52,9 +55,11 @@ function createTreasuryTestTransferHandler({
     databaseConfigured = hasServiceDatabaseEnvironment,
     requestDatabase = serviceRequest,
     getSigner = getWithdrawalSignerFromEnvironment,
-    executeTransfer = executeCyfurTreasuryTestTransfer
+    executeTransfer = executeCyfurTreasuryTestTransfer,
+    preflightHandler = createTreasuryTestTransferPreflightHandler()
 } = {}) {
     return async function treasuryTestTransfer(request, response) {
+        if (request.method === "GET") return preflightHandler(request, response);
         if (handleApiCors(request, response)) return;
         if (request.method !== "POST") {
             response.setHeader("Allow", "POST");

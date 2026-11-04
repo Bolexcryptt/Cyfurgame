@@ -20,7 +20,7 @@ const {
 const { encodeBase58 } = require("../server/lib/withdrawals.js");
 const {
     createTreasuryTestTransferPreflightHandler
-} = require("../api/treasury-test-transfer-preflight.js");
+} = require("../server/lib/treasury-test-transfer-preflight.js");
 const solana = require("../server/lib/solana-deposit.js");
 
 const ownerToken = "A".repeat(43);
@@ -483,6 +483,28 @@ test("production preflight validates owner token, enabled flag, Supabase reads, 
     assert.equal(response.payload.checks.oneTimeTransferRecordExists, false);
     assert.equal(databaseWrites, 0);
     assert.equal(transferCalls, 1);
+});
+
+test("treasury test-transfer route sends GET to read-only preflight and keeps POST separate", async () => {
+    let preflightCalls = 0;
+    let transferCalls = 0;
+    const handler = createTreasuryTestTransferHandler({
+        preflightHandler: async (_request, response) => {
+            preflightCalls += 1;
+            response.status(200);
+            response.json({ readOnly: true, transactionSubmitted: false });
+        },
+        executeTransfer: async () => {
+            transferCalls += 1;
+            throw new Error("POST transfer must not be used by GET.");
+        }
+    });
+    const response = makeHandlerResponse();
+    await handler({ method: "GET", headers: {} }, response);
+    assert.equal(response.statusCode, 200);
+    assert.deepEqual(response.payload, { readOnly: true, transactionSubmitted: false });
+    assert.equal(preflightCalls, 1);
+    assert.equal(transferCalls, 0);
 });
 
 test("production preflight cannot proceed when disabled, unauthorized, or already reserved", async () => {

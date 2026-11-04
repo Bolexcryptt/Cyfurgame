@@ -22,7 +22,7 @@ The request must use the exact approved recipient and amount, include the confir
 
 Apply `supabase-cyfur-treasury-test-transfer.sql` to the same Supabase project used by the API before enabling the route. Configure the owner token and `CYFUR_TEST_TRANSFER_ENABLED` only for the short, owner-approved test window. The route is not invoked during deployment and this repository does not submit a mainnet transfer.
 
-`GET /api/treasury-test-transfer-preflight` is a separate read-only check. It requires the same owner token but does not reserve the one-time transfer, sign, create accounts, or submit transactions. It verifies the configured gates, signer address, Supabase service-role access and existing reservation, then reads finalized mainnet balances, mint, recipient ATA, current rent, and estimated fee. It reports `readyToExecute` only when every required gate passes and no one-time record exists.
+`GET /api/treasury-test-transfer` is a read-only check on the dedicated test-transfer route. It requires the same owner token but does not reserve the one-time transfer, sign, create accounts, or submit transactions. It verifies the configured gates, signer address, Supabase service-role access and existing reservation, then reads finalized mainnet balances, mint, recipient ATA, current rent, and estimated fee. It reports `readyToExecute` only when every required gate passes and no one-time record exists. `POST` remains the separate owner-authorized transfer operation and retains its fixed recipient, amount, and idempotency safeguards.
 
 ## Campaign access
 

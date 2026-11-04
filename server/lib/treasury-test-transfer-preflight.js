@@ -4,18 +4,18 @@ const {
     hasServiceDatabaseEnvironment,
     serviceRequest,
     sendJson
-} = require("../server/lib/wallet");
-const { getWithdrawalSignerFromEnvironment } = require("../server/lib/withdrawals");
+} = require("./wallet");
+const { getWithdrawalSignerFromEnvironment } = require("./withdrawals");
 const {
     RELICGRID_CYFUR_MINT_ADDRESS,
     RELICGRID_TREASURY_ADDRESS
-} = require("../server/lib/solana-deposit");
+} = require("./solana-deposit");
 const {
     CYFUR_TEST_AMOUNT_RAW,
     CYFUR_TEST_RECIPIENT,
     TOKEN_PROGRAM_ADDRESS,
     readCyfurTreasuryTestPreflight
-} = require("../server/lib/treasury-test-transfer");
+} = require("./treasury-test-transfer");
 
 const TRANSFER_ID = "cyfur-mainnet-one-cyfur-v1";
 
@@ -173,6 +173,5 @@ function createTreasuryTestTransferPreflightHandler({
     };
 }
 
-module.exports = createTreasuryTestTransferPreflightHandler();
 module.exports.createTreasuryTestTransferPreflightHandler = createTreasuryTestTransferPreflightHandler;
 module.exports.isAuthorizedOwner = isAuthorizedOwner;
