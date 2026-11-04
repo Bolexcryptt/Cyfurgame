@@ -10,14 +10,16 @@ const withdrawalLibrary = require("../server/lib/withdrawals.js");
 const originalFetch = globalThis.fetch;
 const originalEnv = { ...process.env };
 const testTreasury = Keypair.generate();
-const playerWallet = Keypair.generate().publicKey.toBase58();
+const playerWallet = "4bSjz5zdgReegh9TwCgiPWn7BH1nUhfY3s1DwZdK3UT1";
 const signature = withdrawalLibrary.encodeBase58(
     Uint8Array.from({ length: 64 }, (_, index) => (index + 1) % 256)
 );
 
 solanaConfig.RELICGRID_TREASURY_ADDRESS = testTreasury.publicKey.toBase58();
 withdrawalLibrary.getWithdrawalSignerFromEnvironment = () => testTreasury;
-withdrawalLibrary.executeCyfurWithdrawal = async ({ onSubmitted }) => {
+withdrawalLibrary.executeCyfurWithdrawal = async ({ onSubmitted, amountRaw, playerWalletAddress }) => {
+    scenario.sendCount += 1;
+    scenario.transferRequest = { amountRaw, playerWalletAddress };
     await onSubmitted(signature);
     if (scenario.transferOutcome === "failed") {
         const error = new Error("On-chain transaction failed.");
@@ -44,7 +46,8 @@ function resetScenario({ balance = 10000n, transferOutcome = "success", readBala
         transferOutcome,
         records: new Map(),
         ledger: [],
-        sendCount: 0
+        sendCount: 0,
+        transferRequest: null
     };
     process.env.SUPABASE_URL = "https://supabase.example";
     process.env.SUPABASE_PUBLISHABLE_KEY = "test-publishable-key";
@@ -68,7 +71,10 @@ function installFakeFetch() {
             return dbResponse(200, { id: "00000000-0000-4000-8000-000000000001" });
         }
         if (path.startsWith("player_solana_wallets")) {
-            return dbResponse(200, [{ wallet_address: playerWallet }]);
+            return dbResponse(200, [{
+                wallet_address: playerWallet,
+                verified_at: "2026-01-01T00:00:00Z"
+            }]);
         }
         if (path.startsWith("wallet_credit_accounts")) {
             const balance = scenario.readBalanceOverride ?? scenario.actualBalance;
@@ -179,7 +185,11 @@ function installFakeFetch() {
     };
 }
 
-async function submitWithdrawal({ amount = "5000", requestId = "00000000-0000-4000-8000-000000000002" } = {}) {
+async function submitWithdrawal({
+    amount = "5000",
+    requestId = "00000000-0000-4000-8000-000000000002",
+    walletAddress = playerWallet
+} = {}) {
     const response = {
         headers: {},
         statusCode: 200,
@@ -191,7 +201,7 @@ async function submitWithdrawal({ amount = "5000", requestId = "00000000-0000-40
     await withdrawalsHandler({
         method: "POST",
         headers: { authorization: "Bearer test-access-token" },
-        body: { action: "submit", amountCredits: amount, idempotencyKey: requestId }
+        body: { action: "submit", amountCredits: amount, walletAddress, idempotencyKey: requestId }
     }, response);
     return response;
 }
@@ -220,6 +230,31 @@ test("successful withdrawal reserves credits once and confirms without a second 
         ["withdrawal_reserve", -5000n]
     ]);
     assert.equal([...scenario.records.values()][0].status, "confirmed");
+    assert.equal(scenario.sendCount, 1);
+});
+
+test("one CYFUR withdrawal uses exactly 100000000 raw units for the verified recipient", async () => {
+    const response = await submitWithdrawal({ amount: "10000" });
+
+    assert.equal(response.statusCode, 200);
+    assert.equal(response.payload.amountRaw, "100000000");
+    assert.equal(response.payload.walletAddress, playerWallet);
+    assert.deepEqual(scenario.transferRequest, {
+        amountRaw: "100000000",
+        playerWalletAddress: playerWallet
+    });
+    assert.equal(scenario.sendCount, 1);
+});
+
+test("a requested recipient different from the verified linked wallet is rejected before reservation", async () => {
+    const otherWallet = Keypair.generate().publicKey.toBase58();
+    const response = await submitWithdrawal({ amount: "10000", walletAddress: otherWallet });
+
+    assert.equal(response.statusCode, 400);
+    assert.equal(response.payload.error, "withdrawal_wallet_mismatch");
+    assert.equal(scenario.records.size, 0);
+    assert.equal(scenario.ledger.length, 0);
+    assert.equal(scenario.sendCount, 0);
 });
 
 test("confirmed on-chain failure releases the reservation and restores the exact balance", async () => {
@@ -260,6 +295,7 @@ test("replaying the same request idempotency key never submits or deducts twice"
     assert.equal(scenario.records.size, 1);
     assert.equal(scenario.actualBalance, 5000n);
     assert.equal(scenario.ledger.length, 1);
+    assert.equal(scenario.sendCount, 1);
 });
 
 test("ambiguous submitted transfers keep the balance reserved and block a second request", async () => {

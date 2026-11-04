@@ -11,7 +11,7 @@ const {
     executeCyfurWithdrawal,
     getWithdrawalSignerFromEnvironment
 } = require("../server/lib/withdrawals");
-const { RELICGRID_CYFUR_MINT_ADDRESS, RELICGRID_TREASURY_ADDRESS, isBase58, TOKEN_PROGRAM_IDS } = require("../server/lib/solana-deposit");
+const { RELICGRID_CYFUR_MINT_ADDRESS, RELICGRID_TREASURY_ADDRESS, isBase58 } = require("../server/lib/solana-deposit");
 
 function safeBigInt(value) {
     if (typeof value !== "string" || !/^\d+$/.test(value)) return null;
@@ -75,14 +75,14 @@ module.exports = async function withdrawals(request, response) {
         if (action !== "preview" && action !== "submit") {
             return sendJson(response, 400, { error: "invalid_withdrawal_action" });
         }
-        if (!linkedWallet?.wallet_address || !isBase58(linkedWallet.wallet_address, 32)) {
-            return sendJson(response, 400, { error: "wallet_not_linked" });
+        if (!linkedWallet?.wallet_address || !isBase58(linkedWallet.wallet_address, 32) ||
+            !linkedWallet.verified_at) {
+            return sendJson(response, 400, { error: "wallet_not_verified" });
         }
         if (!configs || configs.official_mint_address !== RELICGRID_CYFUR_MINT_ADDRESS ||
             configs.treasury_address !== RELICGRID_TREASURY_ADDRESS ||
-            !TOKEN_PROGRAM_IDS.has(configs.token_program_id) ||
-            !Number.isInteger(configs.token_decimals) ||
-            configs.token_decimals < 0 || configs.token_decimals > 18 ||
+            configs.token_program_id !== "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA" ||
+            configs.token_decimals !== 8 ||
             String(configs.credits_per_token) !== "10000" ||
             configs.network !== process.env.SOLANA_NETWORK ||
             !["devnet", "mainnet-beta"].includes(configs.network)) {
@@ -99,6 +99,15 @@ module.exports = async function withdrawals(request, response) {
         }
 
         const amountCredits = request.body?.amountCredits;
+        const requestedWalletAddress = request.body?.walletAddress;
+        if (action === "submit" && (typeof requestedWalletAddress !== "string" ||
+            !isBase58(requestedWalletAddress.trim(), 32) ||
+            requestedWalletAddress.trim() !== linkedWallet.wallet_address)) {
+            return sendJson(response, 400, {
+                error: "withdrawal_wallet_mismatch",
+                message: "The receiving wallet must exactly match the verified wallet linked to this game account."
+            });
+        }
         const amountCreditsString = typeof amountCredits === "string" ? amountCredits : String(amountCredits ?? "");
         if (!/^\d+$/.test(amountCreditsString)) {
             return sendJson(response, 400, { error: "invalid_amount_credits" });

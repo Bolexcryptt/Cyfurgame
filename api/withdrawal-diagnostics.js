@@ -1,6 +1,7 @@
 const {
     getSupabaseWithdrawalConfig,
     getTreasuryDiagnosticSummary,
+    getWithdrawalGateSummary,
     verifyChainConfiguration,
     verifyWithdrawalRpc
 } = require("../server/lib/withdrawal-diagnostics");
@@ -32,6 +33,7 @@ module.exports = async function withdrawalDiagnostics(request, response) {
     const rpcResult = await verifyWithdrawalRpc();
 
     const configData = configResult.config ?? null;
+    const withdrawalGates = getWithdrawalGateSummary(configData);
     const signerMatchesConfig = Boolean(treasurySummary.publicAddress) &&
         treasurySummary.publicAddress === configData?.treasury_address;
     const signerMatchesExpected = treasurySummary.publicAddress === RELICGRID_TREASURY_ADDRESS;
@@ -49,7 +51,7 @@ module.exports = async function withdrawalDiagnostics(request, response) {
         signerMatchesExpected && configResult.connected && rpcResult.available &&
         treasuryMatches && mintMatches && networkMatches &&
         chainResult.networkVerified && chainResult.mintVerified &&
-        chainResult.treasuryTokenAccountVerified;
+        chainResult.treasuryTokenAccountVerified && withdrawalGates.enabled;
 
     return sendJson(response, 200, {
         ok: overallReady,
@@ -71,6 +73,7 @@ module.exports = async function withdrawalDiagnostics(request, response) {
             tokenDecimals: configData?.token_decimals ?? null,
             tokenProgramId: configData?.token_program_id ?? null,
             depositsEnabled: configData?.deposits_enabled ?? null,
+            withdrawalsEnabled: withdrawalGates.supabaseEnabled,
             paidGameplayEnabled: configData?.paid_gameplay_enabled ?? null,
             creditsPerToken: configData?.credits_per_token ?? null,
             roundingPolicy: configData?.rounding_policy ?? null,
@@ -97,7 +100,10 @@ module.exports = async function withdrawalDiagnostics(request, response) {
             mintVerifiedOnChain: chainResult.mintVerified,
             treasuryTokenAccountVerified: chainResult.treasuryTokenAccountVerified,
             supabaseConnected: configResult.connected,
-            withdrawalRpcAvailable: rpcResult.available
+            withdrawalRpcAvailable: rpcResult.available,
+            vercelWithdrawalEnabled: withdrawalGates.vercelEnabled,
+            supabaseWithdrawalsEnabled: withdrawalGates.supabaseEnabled,
+            withdrawalsEnabled: withdrawalGates.enabled
         },
         notes: [
             "The private key itself is never returned in the response.",

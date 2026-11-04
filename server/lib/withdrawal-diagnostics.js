@@ -37,6 +37,16 @@ function getTreasuryDiagnosticSummary() {
     }
 }
 
+function getWithdrawalGateSummary(config) {
+    const vercelEnabled = process.env.WITHDRAWAL_ENABLED === "true";
+    const supabaseEnabled = config?.withdrawals_enabled === true;
+    return {
+        vercelEnabled,
+        supabaseEnabled,
+        enabled: vercelEnabled && supabaseEnabled
+    };
+}
+
 async function getSupabaseWithdrawalConfig() {
     const supabaseUrl = process.env.SUPABASE_URL?.trim();
     const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY?.trim();
@@ -48,7 +58,7 @@ async function getSupabaseWithdrawalConfig() {
     }
 
     try {
-        const response = await fetch(`${supabaseUrl.replace(/\/+$/, "")}/rest/v1/wallet_system_config?select=network,official_mint_address,treasury_address,token_program_id,token_decimals,credits_per_token,rounding_policy,deposits_enabled,paid_gameplay_enabled&id=eq.1`, {
+        const response = await fetch(`${supabaseUrl.replace(/\/+$/, "")}/rest/v1/wallet_system_config?select=network,official_mint_address,treasury_address,token_program_id,token_decimals,credits_per_token,rounding_policy,deposits_enabled,withdrawals_enabled,paid_gameplay_enabled&id=eq.1`, {
             method: "GET",
             headers: {
                 apikey: serviceRoleKey,
@@ -209,6 +219,7 @@ async function verifyChainConfiguration(config) {
 module.exports = {
     getSupabaseWithdrawalConfig,
     getTreasuryDiagnosticSummary,
+    getWithdrawalGateSummary,
     verifyChainConfiguration,
     parseTreasurySecret: parseWithdrawalSecret,
     verifyWithdrawalRpc

@@ -11,6 +11,7 @@ const {
     GENESIS_HASHES,
     decodeBase58,
     isBase58,
+    isOfficialCyfurMintAccount,
     RELICGRID_CYFUR_MINT_ADDRESS,
     RELICGRID_TREASURY_ADDRESS
 } = require("./solana-deposit");
@@ -119,7 +120,8 @@ async function executeCyfurWithdrawal({
     tokenDecimals = 8,
     amountRaw,
     treasurySigner = getWithdrawalSignerFromEnvironment(),
-    onSubmitted
+    onSubmitted,
+    connectionFactory = (url, options) => new Connection(url, options)
 }) {
     if (!isBase58(playerWalletAddress, 32)) {
         throw new TypeError("Player wallet address must be a valid Solana public key.");
@@ -131,15 +133,18 @@ async function executeCyfurWithdrawal({
         treasurySigner.publicKey.toBase58() !== treasuryAddress) {
         throw new Error("The configured withdrawal signer does not match the authorized treasury address.");
     }
-    if (!Number.isInteger(tokenDecimals) || tokenDecimals < 0 || tokenDecimals > 18) {
-        throw new TypeError("The configured CYFUR token decimals are invalid.");
+    if (treasuryAddress !== RELICGRID_TREASURY_ADDRESS ||
+        mintAddress !== RELICGRID_CYFUR_MINT_ADDRESS ||
+        tokenProgramId !== TOKEN_PROGRAM_ID.toBase58() ||
+        tokenDecimals !== 8) {
+        throw new Error("The withdrawal configuration does not match the official CYFUR mint, token program, and decimals.");
     }
     const rawAmount = parseAmountToUnsignedBigInt(amountRaw, "Withdrawal token amount");
     if (rawAmount <= 0n) {
         throw new RangeError("The withdrawal amount must be greater than zero.");
     }
 
-    const connection = new Connection(rpcUrl, {
+    const connection = connectionFactory(rpcUrl, {
         commitment: "finalized",
         confirmTransactionInitialTimeout: 60000
     });
@@ -164,7 +169,26 @@ async function executeCyfurWithdrawal({
         tokenProgramKey
     );
 
-    const existingReceiverAccount = await connection.getAccountInfo(playerTokenAccount);
+    const [mintAccount, treasuryTokenAccountInfo, existingReceiverAccount] = await Promise.all([
+        connection.getParsedAccountInfo(mintPublicKey, "finalized"),
+        connection.getParsedAccountInfo(treasuryTokenAccount, "finalized"),
+        connection.getAccountInfo(playerTokenAccount, "finalized")
+    ]);
+    if (!isOfficialCyfurMintAccount({ value: mintAccount.value })) {
+        throw new Error("The configured CYFUR mint failed finalized on-chain verification.");
+    }
+    const treasuryTokenInfo = treasuryTokenAccountInfo.value?.data?.parsed?.info;
+    const treasuryTokenBalance = treasuryTokenInfo?.tokenAmount?.amount;
+    if (treasuryTokenAccountInfo.value?.owner !== tokenProgramKey.toBase58() ||
+        treasuryTokenAccountInfo.value.data?.parsed?.type !== "account" ||
+        treasuryTokenInfo?.mint !== mintAddress ||
+        treasuryTokenInfo?.owner !== treasuryAddress ||
+        typeof treasuryTokenBalance !== "string" ||
+        !/^\d+$/.test(treasuryTokenBalance) ||
+        BigInt(treasuryTokenBalance) < rawAmount) {
+        throw new Error("The finalized treasury CYFUR token account is missing, mismatched, or underfunded.");
+    }
+
     const transaction = new Transaction();
     if (!existingReceiverAccount) {
         transaction.add(

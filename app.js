@@ -828,14 +828,18 @@ function renderWithdrawalHistory(withdrawals) {
         amount.textContent = `${formatTokenAmount((withdrawal.amount_raw ?? "0").toString(), Number(withdrawal.token_decimals ?? 8))} CYFUR`;
         const info = document.createElement("small");
         info.textContent = typeof withdrawal.transaction_signature === "string"
-            ? `SIG ${withdrawal.transaction_signature.slice(0, 8)}…${withdrawal.transaction_signature.slice(-8)}`
+            ? `SIG ${history.id === "withdrawal-history"
+                ? withdrawal.transaction_signature
+                : `${withdrawal.transaction_signature.slice(0, 8)}…${withdrawal.transaction_signature.slice(-8)}`}`
             : `Status: ${withdrawal.status || "unknown"}`;
         detail.append(amount, info);
 
         const state = document.createElement("span");
         state.className = "wallet-history-state";
         const normalized = (withdrawal.status || "unknown").toLowerCase();
-        state.dataset.state = ["pending", "confirmed", "failed"].includes(normalized) ? normalized : "unknown";
+        state.dataset.state = ["pending", "submitted", "confirmed", "failed"].includes(normalized)
+            ? normalized === "submitted" ? "pending" : normalized
+            : "unknown";
         state.textContent = state.dataset.state.toUpperCase();
         item.append(detail, state);
         fragment.append(item);
@@ -1013,6 +1017,7 @@ async function submitWithdrawalRequest(event) {
             },
             body: JSON.stringify({
                 action: "submit",
+                walletAddress,
                 amountCredits,
                 idempotencyKey: requestData.idempotencyKey
             }),
@@ -1041,9 +1046,12 @@ async function submitWithdrawalRequest(event) {
             await refreshWithdrawalStatus();
             return;
         }
-        setWithdrawalStatus(result.message || "The server accepted the request but the final transfer status is pending.", "pending");
+        const pendingMessage = result.signature
+            ? `Withdrawal ${result.status || "pending"}. Transaction signature: ${result.signature}`
+            : result.message || "The server accepted the request but the final transfer status is pending.";
+        setWithdrawalStatus(pendingMessage, "pending");
         if (statusNode) {
-            statusNode.textContent = result.message || "Withdrawal is pending verification.";
+            statusNode.textContent = pendingMessage;
             statusNode.dataset.state = "pending";
         }
         await refreshWithdrawalStatus();

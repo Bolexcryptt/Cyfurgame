@@ -1330,6 +1330,7 @@ button { -webkit-tap-highlight-color: transparent; }
 .wallet-history-detail { display: grid; min-width: 0; gap: 3px; }
 .wallet-history-detail b { overflow: hidden; color: #d6e9ed; font: 700 9px "Consolas",monospace; text-overflow: ellipsis; }
 .wallet-history-detail small { overflow: hidden; color: #748b98; font: 7px "Consolas",monospace; text-overflow: ellipsis; }
+#withdrawal-history .wallet-history-detail small { overflow-wrap: anywhere; overflow: visible; text-overflow: clip; }
 .wallet-history-state {
     flex: 0 0 auto;
     padding: 5px 6px;
