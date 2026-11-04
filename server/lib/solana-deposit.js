@@ -187,6 +187,8 @@ async function solanaRpc(rpcUrl, method, params, fetchImpl = fetch) {
             cache: "no-store"
         });
     } catch (error) {
+        const connectionError = new Error(`Solana RPC ${method} connection failed.`);
+        connectionError.transportCode = error?.cause?.code || error?.code || null;
         console.error("Solana RPC connection failed.", {
             method,
             errorName: error?.name || "Error",
@@ -196,7 +198,7 @@ async function solanaRpc(rpcUrl, method, params, fetchImpl = fetch) {
                 : null,
             errorCode: error?.cause?.code || null
         });
-        throw new Error(`Solana RPC ${method} connection failed.`);
+        throw connectionError;
     }
 
     if (!response.ok) {
@@ -204,7 +206,9 @@ async function solanaRpc(rpcUrl, method, params, fetchImpl = fetch) {
             method,
             status: response.status
         });
-        throw new Error(`Solana RPC request failed (${response.status}).`);
+        const httpError = new Error(`Solana RPC request failed (${response.status}).`);
+        httpError.httpStatus = response.status;
+        throw httpError;
     }
 
     let payload;
@@ -213,7 +217,9 @@ async function solanaRpc(rpcUrl, method, params, fetchImpl = fetch) {
         payload = await response.json();
     } catch {
         console.error("Solana RPC returned invalid JSON.", { method });
-        throw new Error(`Solana RPC ${method} returned invalid JSON.`);
+        const invalidJsonError = new Error(`Solana RPC ${method} returned invalid JSON.`);
+        invalidJsonError.invalidJson = true;
+        throw invalidJsonError;
     }
 
     if (payload?.error) {

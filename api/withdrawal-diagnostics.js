@@ -101,10 +101,13 @@ module.exports = async function withdrawalDiagnostics(request, response) {
             reason: chainResult.reason
         },
         rpc: {
-            available: rpcResult.available,
-            httpStatus: rpcResult.httpStatus ?? null,
-            databaseCode: rpcResult.code ?? null,
-            reason: rpcResult.reason ?? null
+            available: chainResult.available,
+            healthCheckAvailable: chainResult.healthCheckAvailable,
+            health: chainResult.health,
+            network: chainResult.rpcNetwork,
+            httpStatus: chainResult.rpcHttpStatus ?? null,
+            jsonRpcErrorCode: chainResult.rpcErrorCode ?? null,
+            reason: chainResult.reason
         },
         supabaseWithdrawalRpc: {
             available: rpcResult.available,

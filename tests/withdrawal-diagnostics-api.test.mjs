@@ -24,6 +24,10 @@ diagnostics.getTreasuryDiagnosticSummary = () => ({
     publicAddress: solanaConfig.RELICGRID_TREASURY_ADDRESS
 });
 diagnostics.verifyChainConfiguration = async () => ({
+    available: true,
+    healthCheckAvailable: true,
+    health: "ok",
+    rpcNetwork: "mainnet-beta",
     networkVerified: true,
     mintVerified: true,
     treasuryTokenAccountVerified: true,
@@ -88,6 +92,10 @@ test("withdrawal readiness requires both Vercel and Supabase withdrawal flags", 
     assert.equal(response.payload.checks.vercelWithdrawalEnabled, true);
     assert.equal(response.payload.checks.supabaseWithdrawalsEnabled, true);
     assert.equal(response.payload.checks.withdrawalsEnabled, true);
+    assert.equal(response.payload.rpc.available, true);
+    assert.equal(response.payload.rpc.healthCheckAvailable, true);
+    assert.equal(response.payload.rpc.network, "mainnet-beta");
+    assert.equal(response.payload.supabaseWithdrawalRpc.available, true);
     assert.equal(response.payload.ok, true);
 
     process.env.WITHDRAWAL_ENABLED = "false";

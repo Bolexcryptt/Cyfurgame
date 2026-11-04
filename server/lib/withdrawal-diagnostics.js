@@ -183,6 +183,8 @@ async function verifyChainConfiguration(config) {
     const configNetwork = config?.network ?? null;
     const result = {
         available: false,
+        healthCheckAvailable: false,
+        health: null,
         networkVerified: false,
         mintVerified: false,
         treasuryTokenAccountVerified: false,
@@ -211,6 +213,14 @@ async function verifyChainConfiguration(config) {
     }
 
     try {
+        const health = await solanaRpc(rpcUrl, "getHealth", []);
+        result.health = typeof health === "string" ? health : "unexpected-response";
+        result.healthCheckAvailable = health === "ok";
+        if (!result.healthCheckAvailable) {
+            result.reason = `Solana RPC getHealth returned "${result.health}" instead of "ok". Check provider health and Production endpoint configuration.`;
+            return result;
+        }
+
         const genesisHash = await solanaRpc(rpcUrl, "getGenesisHash", []);
         result.available = true;
         result.rpcNetwork = Object.entries(GENESIS_HASHES)
@@ -255,19 +265,38 @@ async function verifyChainConfiguration(config) {
         }
         return result;
     } catch (error) {
-        if (Number.isInteger(error?.rpcCode)) {
+        if (Number.isInteger(error?.httpStatus)) {
+            result.rpcHttpStatus = error.httpStatus;
+        }
+        if (error?.httpStatus === 401 || error?.httpStatus === 403) {
+            result.reason = `Solana RPC returned HTTP ${error.httpStatus}; provider authentication was rejected. Check the Production RPC URL and provider API-key configuration.`;
+        } else if (error?.httpStatus === 404) {
+            result.rpcHttpStatus = 404;
+            result.reason = "Solana RPC returned HTTP 404. The Production SOLANA_RPC_URL path is invalid or does not expose the Solana JSON-RPC endpoint.";
+        } else if (error?.httpStatus === 429) {
+            result.rpcHttpStatus = 429;
+            result.reason = "Solana RPC returned HTTP 429. The provider rate limit or quota has been exceeded.";
+        } else if (error?.httpStatus >= 500) {
+            result.rpcHttpStatus = error.httpStatus;
+            result.reason = `Solana RPC provider returned HTTP ${error.httpStatus}. Check the provider's service status.`;
+        } else if (Number.isInteger(error?.httpStatus)) {
+            result.rpcHttpStatus = error.httpStatus;
+            result.reason = `Solana RPC returned unexpected HTTP ${error.httpStatus}. Check that SOLANA_RPC_URL points to a JSON-RPC endpoint.`;
+        } else if (error?.transportCode && /TIMEOUT|TIMEDOUT|ETIMEDOUT|ABORT/i.test(error.transportCode)) {
+            result.transportCode = error.transportCode;
+            result.reason = "The Solana RPC request timed out. Check provider availability, latency, and Vercel Production egress.";
+        } else if (error?.transportCode && /ENOTFOUND|EAI_AGAIN|ECONNREFUSED|ECONNRESET|CERT|TLS/i.test(error.transportCode)) {
+            result.transportCode = error.transportCode;
+            result.reason = "The Solana RPC hostname could not be resolved or its HTTPS connection failed. Check the Production endpoint hostname, DNS, and TLS configuration.";
+        } else if (error?.invalidJson) {
+            result.reason = "Solana RPC returned non-JSON data. Check the Production URL path and provider response format.";
+        } else if (Number.isInteger(error?.rpcCode)) {
             result.rpcErrorCode = error.rpcCode;
-            result.reason = `Solana RPC getGenesisHash returned JSON-RPC error ${error.rpcCode}. Check the provider endpoint and method access.`;
+            result.reason = `Solana RPC JSON-RPC error ${error.rpcCode} occurred during ${result.health === null ? "getHealth" : "getGenesisHash"}. Check provider access to standard Solana RPC methods.`;
+        } else if (/connection failed/i.test(error?.message || "")) {
+            result.reason = "Could not connect to the configured Solana RPC. Check the Production RPC URL, DNS/TLS access, and provider availability.";
         } else {
-            const httpStatus = String(error?.message || "").match(/request failed \((\d{3})\)/)?.[1];
-            if (httpStatus) {
-                result.rpcHttpStatus = Number(httpStatus);
-                result.reason = `Solana RPC returned HTTP ${httpStatus}. Check the provider endpoint, Production environment access, and rate limits.`;
-            } else if (/connection failed/i.test(error?.message || "")) {
-                result.reason = "Could not connect to the configured Solana RPC. Check the Production RPC URL, DNS/TLS access, and provider availability.";
-            } else {
-                result.reason = "The configured Solana RPC returned an invalid response. Check provider compatibility and Production environment configuration.";
-            }
+            result.reason = "The configured Solana RPC returned an invalid response. Check provider compatibility and Production environment configuration.";
         }
         return result;
     }
