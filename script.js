@@ -5,6 +5,7 @@ import { UnrealBloomPass } from "three/addons/postprocessing/UnrealBloomPass.js"
 import { OutputPass } from "three/addons/postprocessing/OutputPass.js";
 import {
     levels,
+    formatCyfurCredits,
     calculateSolveTimeMilliseconds,
     evaluateLevelStars,
     traceLaserRoute
@@ -48,7 +49,7 @@ function startScene() {
     });
     renderer.setClearColor(0x000000, 0);
     renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, mobileQuality ? 1.5 : 2));
-    renderer.shadowMap.enabled = !mobileQuality;
+    renderer.shadowMap.enabled = true;
     renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
     renderer.toneMappingExposure = 0.78;
@@ -68,8 +69,8 @@ function startScene() {
 
     const moonLight = new THREE.DirectionalLight(0xffdfbd, 2.25);
     moonLight.position.set(-7, 15, -4);
-    moonLight.castShadow = window.innerWidth >= 620;
-    moonLight.shadow.mapSize.set(2048, 2048);
+    moonLight.castShadow = true;
+    moonLight.shadow.mapSize.set(mobileQuality ? 1024 : 2048, mobileQuality ? 1024 : 2048);
     moonLight.shadow.camera.left = -14;
     moonLight.shadow.camera.right = 14;
     moonLight.shadow.camera.top = 14;
@@ -180,6 +181,7 @@ function startScene() {
     let corePulse = null;
     let corePowered = false;
     let coreActivatedAt = null;
+    let pendingLevelCompletion = null;
     let tracing = false;
     let launchDirection = 1;
     let firstLevelTutorial = false;
@@ -445,7 +447,8 @@ function startScene() {
         bumpMap.needsUpdate = true;
         const material = makeMaterial(color, 0.96, 0.015, {
             map,
-            ...(!mobileQuality ? { bumpMap, bumpScale: 0.15 } : {}),
+            bumpMap,
+            bumpScale: mobileQuality ? 0.06 : 0.15,
             ...extra
         });
         material.userData.pbrRepeat = { x: repeatX, y: repeatY };
@@ -1438,6 +1441,14 @@ function startScene() {
             const crystalGroup = new THREE.Group();
             crystalGroup.position.set(gridX(definition.col), 0.2, gridZ(definition.row));
             levelObjectGroup.add(crystalGroup);
+            const crystalLight = new THREE.PointLight(
+                crystalColors[definition.inputColor],
+                mobileQuality ? 2.2 : 4.5,
+                mobileQuality ? 3.2 : 4.5,
+                2
+            );
+            crystalLight.position.set(0, 0.58, 0);
+            crystalGroup.add(crystalLight);
             addContactShadow(crystalGroup, 0.95, 0.95, 0.006);
 
             const pedestalMetal = materials.metal.clone();
@@ -1519,6 +1530,7 @@ function startScene() {
                 definition: { ...definition, index },
                 material,
                 ringMaterial: ring.material,
+                light: crystalLight,
                 prism,
                 activated: false
             });
@@ -1531,6 +1543,7 @@ function startScene() {
             crystal.material.emissiveIntensity = 0.68;
             crystal.material.color.setHex(crystalColors[crystal.definition.inputColor]);
             crystal.ringMaterial.color.setHex(crystalColors[crystal.definition.inputColor]);
+            crystal.light.color.setHex(crystalColors[crystal.definition.inputColor]);
             crystal.prism.scale.setScalar(1);
         }
     }
@@ -1755,6 +1768,11 @@ function startScene() {
         const stars = result.stars;
         document.getElementById("completion-stars").textContent = `${stars} / 3`;
         document.getElementById("completion-star-icons").textContent = `${"★".repeat(stars)}${"☆".repeat(3 - stars)}`;
+        document.getElementById("completion-level").textContent = `Level ${String(level.number).padStart(2, "0")}`;
+        document.getElementById("completion-points").textContent = walletLevelSessionId ? "Pending" : "0";
+        document.getElementById("completion-points-note").textContent = walletLevelSessionId
+            ? "Awaiting server confirmation"
+            : "Practice clear · not saved";
         document.getElementById("completion-time").textContent = `${(elapsedMilliseconds / 1000).toFixed(1)} s`;
         document.getElementById("completion-time-thresholds").textContent =
             `3★ ≤ ${timeTargets.threeSeconds}s · 2★ ≤ ${timeTargets.twoSeconds}s`;
@@ -1771,6 +1789,11 @@ function startScene() {
         rewardLabel.textContent = "ESTIMATED REWARD";
         reward.textContent = `${result.rewardCredits.toLocaleString("en-US")} credits`;
         rewardNote.textContent = "Pending server validation; not yet credited";
+        document.getElementById("completion-token-reward").textContent =
+            `${formatCyfurCredits(result.rewardCredits)} CYFUR equivalent`;
+        document.getElementById("completion-balance").textContent = "Not confirmed";
+        document.getElementById("completion-balance-note").textContent =
+            "Refreshes only after backend confirmation";
         const nextLevelButton = document.getElementById("next-level");
         nextLevelButton.hidden = false;
         nextLevelButton.disabled = true;
@@ -1778,6 +1801,23 @@ function startScene() {
         nextLevelButton.textContent = level.number >= levels.length ? "CAMPAIGN COMPLETE" : "NEXT LEVEL →";
         completionSummary.hidden = false;
         gameHud.dataset.completed = "true";
+    }
+
+    function finishLevelCompletion(pending) {
+        if (pendingLevelCompletion !== pending) return;
+        pendingLevelCompletion = null;
+        showCompletionSummary(pending.level, pending.elapsedMilliseconds, pending.result);
+        const starLabel = pending.result.stars === 3
+            ? "3 stars"
+            : pending.result.stars === 2
+                ? "2 stars"
+                : "1 star";
+        setStatus(
+            "Battery connected",
+            `Level ${String(pending.level.number).padStart(2, "0")} complete. Rating: ${starLabel}. Reward pending server verification.`,
+            "success"
+        );
+        window.dispatchEvent(new CustomEvent("fluxgrid:level-complete", { detail: pending.detail }));
     }
 
     function placeOrRotateMirror(row, col) {
@@ -1910,6 +1950,10 @@ function startScene() {
     function resetGame() {
         tracing = false;
         traceResult = null;
+        if (pendingLevelCompletion) {
+            window.dispatchEvent(new CustomEvent("fluxgrid:core-activation-cancel"));
+        }
+        pendingLevelCompletion = null;
         previewRoute = null;
         levelStartedAt = null;
         powerSourceSoundPlayed = false;
@@ -2659,8 +2703,8 @@ function startScene() {
         cameraState.elevation = cameraState.defaultElevation;
         const narrowFrame = canvas.clientWidth / Math.max(canvas.clientHeight, 1) < 1.25;
         cameraState.distance = window.innerWidth < 620
-            ? (narrowFrame ? 24.5 : 21)
-            : (narrowFrame ? 25 : 22.5);
+            ? (narrowFrame ? 18 : 19.5)
+            : (narrowFrame ? 20 : 19);
         setupCamera();
     }
 
@@ -2670,8 +2714,9 @@ function startScene() {
         const mobileQuality = width < 620;
         const pixelRatio = Math.min(window.devicePixelRatio || 1, mobileQuality ? 1.5 : 2);
         if (renderer.getPixelRatio() !== pixelRatio) renderer.setPixelRatio(pixelRatio);
-        renderer.shadowMap.enabled = !mobileQuality;
-        moonLight.castShadow = !mobileQuality;
+        renderer.shadowMap.enabled = true;
+        moonLight.castShadow = true;
+        moonLight.shadow.mapSize.set(mobileQuality ? 1024 : 2048, mobileQuality ? 1024 : 2048);
         renderer.setSize(width, height, false);
         composer.setSize(width, height);
         camera.aspect = width / height;
@@ -2811,6 +2856,7 @@ function startScene() {
                 crystal.material.emissiveIntensity = 1.65;
                 crystal.material.color.setHex(outputColor);
                 crystal.ringMaterial.color.setHex(outputColor);
+                crystal.light.color.setHex(outputColor);
                 crystal.prism.scale.setScalar(1.16);
                 setFeedback(
                     `Crystal ${String(crystal.definition.index + 1).padStart(2, "0")} / ${String(activeLevel.crystals.length).padStart(2, "0")} charged. Following the beam to the battery…`,
@@ -2853,14 +2899,10 @@ function startScene() {
                         return;
                     }
                     const starResult = evaluateLevelStars(activeLevel, elapsedMilliseconds, true);
-                    const starLabel = starResult.stars === 3
-                        ? "3 stars"
-                        : starResult.stars === 2
-                            ? "2 stars"
-                            : "1 star";
-                    showCompletionSummary(activeLevel, elapsedMilliseconds, starResult);
-                    setStatus("Battery connected", `Level ${String(activeLevel.number).padStart(2, "0")} complete. Rating: ${starLabel}. Credit reward pending server verification.`, "success");
-                    window.dispatchEvent(new CustomEvent("fluxgrid:level-complete", {
+                    pendingLevelCompletion = {
+                        level: activeLevel,
+                        elapsedMilliseconds,
+                        result: starResult,
                         detail: {
                             number: activeLevel.number,
                             stars: starResult.stars,
@@ -2869,7 +2911,9 @@ function startScene() {
                             launchDirection,
                             mirrors: [...placedMirrors.values()].map(({ row, col, slash }) => ({ row, col, slash }))
                         }
-                    }));
+                    };
+                    window.dispatchEvent(new CustomEvent("fluxgrid:core-activation-start"));
+                    setStatus("Core energizing", "The battery is powering up. Mission results will appear after the activation sequence.", "success");
                 } else {
                     coreLight.intensity = 14;
                     if (sourcePylon?.userData.beaconLight) sourcePylon.userData.beaconLight.intensity = 7;
@@ -2906,6 +2950,9 @@ function startScene() {
             activationRingMaterials.forEach((material, index) => {
                 material.opacity = Math.max(0, 0.46 * (1 - activationProgress) - index * 0.035);
             });
+            if (activationProgress >= 1 && pendingLevelCompletion) {
+                finishLevelCompletion(pendingLevelCompletion);
+            }
         } else {
             coreLight.intensity = 14;
             coreActivationGroup.visible = false;

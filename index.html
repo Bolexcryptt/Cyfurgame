@@ -465,14 +465,24 @@
                     <div class="completion-heading">
                         <span class="hud-kicker">MISSION RESULT</span>
                         <strong>Battery connected</strong>
-                        <small>Route the beam through every crystal, then reach the battery. Rewards are credited only after server validation.</small>
+                        <small>Route the beam through every crystal, then reach the battery. Points and CYFUR-equivalent credits are confirmed separately by the server.</small>
                         <button id="next-level" class="game-button primary next-level-button" type="button" hidden>NEXT LEVEL →</button>
                     </div>
                     <div class="completion-metrics">
+                        <div class="completion-metric">
+                            <span>LEVEL COMPLETED</span>
+                            <strong id="completion-level">—</strong>
+                            <small>Campaign sector</small>
+                        </div>
                         <div class="completion-metric completion-rating">
                             <span>STAR RATING</span>
                             <strong id="completion-stars">—</strong>
                             <small id="completion-star-icons" aria-hidden="true"></small>
+                        </div>
+                        <div class="completion-metric">
+                            <span>GAME POINTS</span>
+                            <strong id="completion-points">Pending</strong>
+                            <small id="completion-points-note">Awaiting server confirmation</small>
                         </div>
                         <div class="completion-metric">
                             <span>SOLVE TIME</span>
@@ -488,6 +498,16 @@
                             <span id="completion-reward-label">PAYOUT / REFUND</span>
                             <strong id="completion-reward">—</strong>
                             <small id="completion-reward-note">Preview · not credited</small>
+                        </div>
+                        <div class="completion-metric completion-token">
+                            <span>CYFUR TOKEN REWARD</span>
+                            <strong id="completion-token-reward">—</strong>
+                            <small>Off-chain equivalent · reward shown separately from points</small>
+                        </div>
+                        <div class="completion-metric completion-balance">
+                            <span>AVAILABLE CYFUR BALANCE</span>
+                            <strong id="completion-balance">Not confirmed</strong>
+                            <small id="completion-balance-note">Refreshes only after backend confirmation</small>
                         </div>
                     </div>
                 </section>

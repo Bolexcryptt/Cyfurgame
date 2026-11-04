@@ -24,7 +24,18 @@ import {
     startPhantomMobileConnect,
     waitForPhantomProvider
 } from "../wallet-provider.mjs";
-import { calculateSolveTimeMilliseconds, claimLevelCompletion, CYFUR_CREDITS_PER_TOKEN, evaluateLevelStars, getLevelEconomy, getLevelStarTimeTargets, levels } from "../levels.js";
+import {
+    calculateSolveTimeMilliseconds,
+    claimLevelCompletion,
+    CYFUR_CREDITS_PER_TOKEN,
+    evaluateLevelStars,
+    formatCyfurCredits,
+    getCampaignStartLevel,
+    getLevelEconomy,
+    getLevelStarTimeTargets,
+    mergeCompletedLevels,
+    levels
+} from "../levels.js";
 
 const require = createRequire(import.meta.url);
 const nacl = require("tweetnacl");
@@ -587,6 +598,54 @@ test("Level 1 economy keeps star ratings separate from credit amounts", () => {
     });
 });
 
+test("intro launch selects a current or next unlocked level and formats ledger credits separately", () => {
+    assert.equal(getCampaignStartLevel([], 1, 1), 1);
+    assert.equal(getCampaignStartLevel([1, 2], 3, 5), 3);
+    assert.equal(getCampaignStartLevel([1, 2, 3], 3, 4), 4);
+    assert.equal(getCampaignStartLevel([1, 2, 3], 99, 99), 99);
+    assert.deepEqual(mergeCompletedLevels([1, 2], [], true), [1, 2]);
+    assert.deepEqual(mergeCompletedLevels([1, 2], [2, 3], true), [1, 2, 3]);
+    assert.deepEqual(mergeCompletedLevels([1, 2], [2, 3], false), [2, 3]);
+    assert.equal(formatCyfurCredits("0"), "0");
+    assert.equal(formatCyfurCredits("10000"), "1");
+    assert.equal(formatCyfurCredits("12345"), "1.2345");
+    assert.equal(formatCyfurCredits("0009"), "0.0009");
+    assert.equal(formatCyfurCredits("invalid"), "Unavailable");
+});
+
+test("intro navigation is guarded, starts after a new callsign, and delays completion until core activation", () => {
+    const app = readFileSync(new URL("../app.js", import.meta.url), "utf8");
+    assert.match(app, /function startCampaignFromIntro\(\)/);
+    assert.match(app, /if \(initialNavigationStarted\) return/);
+    assert.match(app, /if \(startLevelAfterNameEntry\)[\s\S]*?void startInitialLevel\(\)/);
+    assert.match(app, /await refreshOwnProgress\(\)/);
+    assert.match(app, /mergeCompletedLevels\([\s\S]*?!player\.playerId \|\| player\.playerId === authUser\.id/);
+    const initializeBackend = app.slice(app.indexOf("async function initializeBackend"), app.indexOf("\nfunction showScreen"));
+    assert.ok(initializeBackend.indexOf("await refreshOwnProgress();") < initializeBackend.indexOf("player.playerId = authUser.id;"));
+    assert.match(app, /await startLevel\(getContinueLevel\(\), true\)/);
+    assert.doesNotMatch(app, /function beginGameIntro\(\)/);
+    assert.match(app, /async function startLevel\(number, resumeMusic = false\) \{\s*if \(levelStartInProgress\) return/);
+    assert.match(app, /window\.addEventListener\("fluxgrid:core-activation-start", pauseMusic\)/);
+    assert.match(app, /window\.addEventListener\("fluxgrid:core-activation-cancel", startMusic\)/);
+
+    const html = readFileSync(new URL("../index.html", import.meta.url), "utf8");
+    assert.match(html, /id="background-music" src="music\.mp3"[^>]*loop/);
+    assert.doesNotMatch(html, /music\.wav/);
+    assert.match(html, /id="completion-points"/);
+    assert.match(html, /id="completion-token-reward"/);
+    assert.match(html, /id="completion-balance"/);
+
+    const scene = readFileSync(new URL("../script.js", import.meta.url), "utf8");
+    const activationFinish = scene.indexOf("if (activationProgress >= 1 && pendingLevelCompletion)");
+    const finishCall = scene.indexOf("finishLevelCompletion(pendingLevelCompletion)", activationFinish);
+    assert.ok(activationFinish >= 0);
+    assert.ok(finishCall > activationFinish);
+    assert.match(scene, /window\.dispatchEvent\(new CustomEvent\("fluxgrid:level-complete", \{ detail: pending\.detail \}\)\)/);
+    assert.match(scene, /if \(pendingLevelCompletion\) \{\s*window\.dispatchEvent\(new CustomEvent\("fluxgrid:core-activation-cancel"\)\)/);
+    assert.match(scene, /renderer\.shadowMap\.enabled = true/);
+    assert.match(scene, /new THREE\.PointLight\(\s*crystalColors\[definition\.inputColor\]/);
+});
+
 test("wallet API publishes the same exchange rate and keeps deposits disabled", async () => {
     const envNames = [
         "SUPABASE_URL",
@@ -873,7 +932,8 @@ test("RelicGrid branding is used in the game and hidden scenes stop rendering", 
     assert.match(app, /videoOrientationQuery = window\.matchMedia\("\(max-width: 900px\) and \(orientation: portrait\)"\)/);
     assert.match(app, /function playVideoInLandscape\(video, onError\)/);
     assert.match(app, /videoAction\.textContent = "Play Now  →"/);
-    assert.match(app, /transitionVideo\.onended = \(\) => \{[\s\S]*?showNameOrHome\(\);/);
+    assert.match(app, /function startCampaignFromIntro\(\)/);
+    assert.match(app, /videoSkip\.onclick = continueAfterIntro/);
     assert.doesNotMatch(app, /videoAction\.textContent = "CONTINUE  →"/);
     assert.match(html, /id="video-action-button"[^>]*>Play Now/);
     assert.match(html, /id="rotate-device-prompt"/);
@@ -881,11 +941,9 @@ test("RelicGrid branding is used in the game and hidden scenes stop rendering", 
     assert.match(app, /videoAction\.onclick = continueAfterIntro/);
     assert.match(app, /function fitVideoFrame\(video\)/);
     assert.match(html, /id="intro-video"[^>]+src="intro\.mp4"/);
-    assert.match(app, /transitionVideo\.src = "gamevideo\.mp4"/);
     assert.match(app, /function playCampaignEnding\(\)/);
-    assert.match(app, /if \(number === 99\) playCampaignEnding\(\)/);
     assert.match(app, /transitionVideo\.src = "theend\.mp4"/);
-    assert.equal(existsSync(new URL("../gamevideo.mp4", import.meta.url)), true);
+    assert.doesNotMatch(app, /if \(number === 99\) playCampaignEnding\(\)/);
     assert.equal(existsSync(new URL("../levels.mp4", import.meta.url)), true);
     assert.equal(existsSync(new URL("../levels2.mp4", import.meta.url)), true);
     assert.equal(existsSync(new URL("../theend.mp4", import.meta.url)), true);

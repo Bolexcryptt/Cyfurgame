@@ -1,4 +1,11 @@
-import { CYFUR_CREDITS_PER_TOKEN, getLevelEconomy, levels } from "./levels.js";
+import {
+    CYFUR_CREDITS_PER_TOKEN,
+    formatCyfurCredits,
+    getCampaignStartLevel,
+    getLevelEconomy,
+    mergeCompletedLevels,
+    levels
+} from "./levels.js";
 import { supabase, supabaseConfigured } from "./supabase.js";
 import { GAME_API_BASE_URL } from "./supabase-config.js";
 import {
@@ -118,6 +125,10 @@ let walletStatusSnapshot = null;
 let currentDepositIntent = null;
 let solanaWeb3ModulePromise = null;
 let activeLevelEntryCostCredits = null;
+let levelStartInProgress = false;
+let initialNavigationStarted = false;
+let startLevelAfterNameEntry = false;
+let initialLevelLaunchInProgress = false;
 
 function savePlayer() {
     localStorage.setItem(storageKey, JSON.stringify(player));
@@ -185,9 +196,7 @@ function nextUnlockedLevel(completedLevels) {
 }
 
 function getContinueLevel() {
-    return player.completedLevels.includes(player.lastLevel)
-        ? player.unlockedLevel
-        : Math.min(player.lastLevel, player.unlockedLevel);
+    return getCampaignStartLevel(player.completedLevels, player.lastLevel, player.unlockedLevel);
 }
 
 async function refreshOwnProgress() {
@@ -196,7 +205,11 @@ async function refreshOwnProgress() {
         .select("level_number")
         .eq("player_id", authUser.id);
     if (error) throw error;
-    player.completedLevels = [...new Set(data.map((record) => record.level_number))].sort((a, b) => a - b);
+    player.completedLevels = mergeCompletedLevels(
+        player.completedLevels,
+        data.map((record) => record.level_number),
+        !player.playerId || player.playerId === authUser.id
+    );
     player.unlockedLevel = nextUnlockedLevel(player.completedLevels);
     if (interstitialScheduleNeedsSync) {
         nextInterstitialAt = player.completedLevels.length + randomTransitionInterval();
@@ -222,7 +235,6 @@ async function initializeBackend() {
         }
         if (!authUser) throw new Error("Supabase did not return an authenticated player.");
 
-        player.playerId = authUser.id;
         const { data: profile, error: profileError } = await supabase
             .from("player_profiles")
             .select("display_name")
@@ -241,6 +253,7 @@ async function initializeBackend() {
         }
 
         await refreshOwnProgress();
+        player.playerId = authUser.id;
         backendStatus = "Connected to the RelicGrid leaderboard.";
         savePlayer();
         renderProfile();
@@ -258,9 +271,13 @@ function showScreen(id) {
 }
 
 function stopMusic() {
-    backgroundMusic.pause();
+    pauseMusic();
     backgroundMusic.currentTime = 0;
     musicStarted = false;
+}
+
+function pauseMusic() {
+    backgroundMusic.pause();
     if (musicRetryHandler) {
         document.removeEventListener("pointerdown", musicRetryHandler, true);
         document.removeEventListener("keydown", musicRetryHandler, true);
@@ -557,6 +574,13 @@ function formatCredits(value) {
         console.error("Wallet API returned an invalid credit balance.", error);
         return "Unavailable";
     }
+}
+
+function formatCreditsAsCyfur(value) {
+    if (typeof value !== "string" && typeof value !== "number") {
+        return "Unavailable";
+    }
+    return formatCyfurCredits(value);
 }
 
 function setLevelEntryMessage(message, state = "disabled") {
@@ -1823,6 +1847,52 @@ function showNameOrHome() {
     }
 }
 
+async function startInitialLevel() {
+    if (initialLevelLaunchInProgress) return;
+    initialLevelLaunchInProgress = true;
+    try {
+        const backendAvailable = await backendReady;
+        if (backendAvailable && authUser) {
+            try {
+                await refreshOwnProgress();
+            } catch (error) {
+                console.error("Latest player progress could not be refreshed before starting.", error);
+            }
+        }
+        await startLevel(getContinueLevel(), true);
+    } catch (error) {
+        console.error("The starting level could not be opened.", error);
+        renderHome();
+    } finally {
+        initialLevelLaunchInProgress = false;
+    }
+}
+
+function startCampaignFromIntro() {
+    if (initialNavigationStarted) return;
+    initialNavigationStarted = true;
+    player.watchedGameIntro = true;
+    savePlayer();
+    stopVideoPlayback(introVideo);
+    stopVideoPlayback(transitionVideo);
+    introVideo.pause();
+    transitionVideo.pause();
+    introVideo.hidden = true;
+    transitionVideo.hidden = true;
+    videoAction.hidden = true;
+    videoSkip.textContent = "SKIP VIDEO  →";
+    videoSkip.hidden = false;
+
+    if (!player.name) {
+        startLevelAfterNameEntry = true;
+        showScreen("name-screen");
+        playerNameInput.focus();
+        return;
+    }
+    startMusic();
+    void startInitialLevel();
+}
+
 function playCampaignEnding() {
     let finished = false;
     const finish = () => {
@@ -1926,73 +1996,8 @@ function playLevelTransition(nextLevel) {
     playVideoInLandscape(transitionVideo, offerContinue);
 }
 
-function beginGameIntro() {
-    stopVideoPlayback(introVideo);
-    introVideo.pause();
-    introVideo.hidden = true;
-    transitionVideo.hidden = false;
-    transitionVideo.src = "gamevideo.mp4";
-    transitionVideo.currentTime = 0;
-    transitionVideo.muted = false;
-    if (transitionVideo.readyState >= HTMLMediaElement.HAVE_METADATA) {
-        fitVideoFrame(transitionVideo);
-    } else {
-        transitionVideo.addEventListener("loadedmetadata", () => fitVideoFrame(transitionVideo), { once: true });
-    }
-    videoSkip.hidden = false;
-    videoSkip.onclick = () => {
-        transitionVideo.pause();
-        stopVideoPlayback(transitionVideo);
-        transitionVideo.hidden = true;
-        videoSkip.hidden = true;
-        showNameOrHome();
-    };
-    transitionVideo.onended = () => {
-        player.watchedGameIntro = true;
-        savePlayer();
-        stopVideoPlayback(transitionVideo);
-        transitionVideo.pause();
-        transitionVideo.hidden = true;
-        videoSkip.hidden = true;
-        videoCaption.textContent = "Welcome, pilot.";
-        showNameOrHome();
-    };
-    transitionVideo.onerror = () => {
-        console.error("Gameplay introduction video could not be decoded.", transitionVideo.error);
-        videoCaption.textContent = "This browser could not play the introduction video.";
-        videoAction.textContent = "CONTINUE WITHOUT VIDEO  →";
-        videoAction.hidden = false;
-        videoAction.onclick = () => {
-            stopVideoPlayback(transitionVideo);
-            transitionVideo.hidden = true;
-            videoSkip.hidden = true;
-            showNameOrHome();
-        };
-    };
-    videoAction.hidden = true;
-    videoCaption.textContent = "Initializing your first mission…";
-    playVideoInLandscape(transitionVideo, (error) => {
-        console.warn("Gameplay introduction video could not start.", error);
-        videoCaption.textContent = "Tap to play the gameplay introduction with sound.";
-        videoAction.textContent = "PLAY VIDEO WITH SOUND  →";
-        videoAction.hidden = false;
-        videoAction.onclick = () => playVideoInLandscape(transitionVideo, (retryError) => {
-            console.error("Gameplay introduction video could not start after interaction.", retryError);
-            videoCaption.textContent = "The gameplay introduction could not be played.";
-            videoAction.textContent = "CONTINUE WITHOUT VIDEO  →";
-            videoAction.hidden = false;
-            videoAction.onclick = () => {
-                stopVideoPlayback(transitionVideo);
-                transitionVideo.hidden = true;
-                videoSkip.hidden = true;
-                showNameOrHome();
-            };
-        });
-    });
-}
-
 function continueAfterIntro() {
-    beginGameIntro();
+    startCampaignFromIntro();
 }
 
 function showOpeningIntro() {
@@ -2013,16 +2018,9 @@ function showOpeningIntro() {
     if (introVideo.readyState < HTMLMediaElement.HAVE_METADATA) {
         introVideo.addEventListener("loadedmetadata", () => fitVideoFrame(introVideo), { once: true });
     }
-    videoSkip.hidden = true;
-    videoSkip.onclick = () => {
-        stopVideoPlayback(introVideo);
-        introVideo.pause();
-        transitionVideo.pause();
-        introVideo.hidden = true;
-        transitionVideo.hidden = true;
-        videoSkip.hidden = true;
-        showNameOrHome();
-    };
+    videoSkip.textContent = "SKIP VIDEO  →";
+    videoSkip.hidden = false;
+    videoSkip.onclick = continueAfterIntro;
     videoAction.textContent = "Play Now  →";
     videoAction.hidden = false;
     videoAction.onclick = continueAfterIntro;
@@ -2032,14 +2030,15 @@ function showOpeningIntro() {
     };
     introVideo.onerror = () => {
         console.error("Opening introduction video could not be decoded.", introVideo.error);
-        videoCaption.textContent = "This browser could not play the opening video.";
-        videoAction.textContent = "CONTINUE WITHOUT VIDEO  →";
+        videoCaption.textContent = "Your first signal is ready.";
+        videoAction.textContent = "PLAY NOW  →";
         videoAction.hidden = false;
-        videoAction.onclick = continueAfterIntro;
     };
     playVideoInLandscape(introVideo, (error) => {
         console.warn("Opening introduction video could not autoplay.", error);
-        videoCaption.textContent = "Your first signal is ready.";
+        videoCaption.textContent = "The introduction could not autoplay. Continue when ready.";
+        videoAction.textContent = "PLAY NOW  →";
+        videoAction.hidden = false;
     });
 }
 
@@ -2054,56 +2053,65 @@ function fitVideoFrame(video) {
 }
 
 async function startLevel(number, resumeMusic = false) {
+    if (levelStartInProgress) return;
     const level = levels[number - 1];
     if (!level) return;
+    levelStartInProgress = true;
     const musicWasPlaying = musicStarted && !backgroundMusic.paused;
     if (resumeMusic || !musicStarted || backgroundMusic.paused) startMusic();
     const stopNewMusic = () => {
         if (!musicWasPlaying) stopMusic();
     };
-    const entry = await requestLevelEntry(number);
-    if (!entry) {
+    try {
+        const entry = await requestLevelEntry(number);
+        if (!entry) {
+            stopNewMusic();
+            return;
+        }
+        const gameGuide = document.getElementById("game-guide");
+        const showTutorial = number === 1 && !player.tutorialSeen;
+        gameGuide.hidden = !showTutorial;
+        document.getElementById("first-level-tutorial").hidden = !showTutorial;
+        document.getElementById("game-guide-toggle").setAttribute("aria-expanded", String(showTutorial));
+        activeWalletLevelSessionId = entry.sessionId;
+        activeLevelEntryCostCredits = entry.practice ? null : Number(entry.entryCostCredits);
+        walletTimerStartPromise = Promise.resolve(false);
+        if (!entry.practice) {
+            document.getElementById("wallet-balance").textContent = formatCredits(entry.balanceCredits);
+            document.getElementById("wallet-balance-state").textContent = "CREDITS · BACKEND VERIFIED";
+            walletStatusSnapshot = {
+                ...walletStatusSnapshot,
+                balanceCredits: String(entry.balanceCredits),
+                balanceVerified: true
+            };
+        }
+        setLevelEntryMessage(entry.practice
+            ? `Level ${String(number).padStart(2, "0")} started in free practice. No credits were charged; progress and rewards will not be saved.`
+            : `Level ${String(number).padStart(2, "0")} started. ${formatCredits(entry.entryCostCredits)} credits deducted; verified balance ${formatCredits(entry.balanceCredits)}.`,
+        entry.practice ? "ready" : "success");
+        player.lastLevel = number;
+        pendingLevel = level;
+        savePlayer();
+        document.getElementById("play-level").textContent = `LEVEL ${String(number).padStart(2, "0")}`;
+        document.getElementById("play-level-title").textContent = level.title;
+        showScreen("play-screen");
+        window.setTimeout(() => {
+            window.fluxGridSceneResize?.();
+            window.dispatchEvent(new CustomEvent("fluxgrid:load-level", {
+                detail: {
+                    level,
+                    walletSessionId: activeWalletLevelSessionId,
+                    entryCostCredits: activeLevelEntryCostCredits,
+                    tutorial: showTutorial
+                }
+            }));
+        }, 0);
+    } catch (error) {
         stopNewMusic();
-        return;
+        throw error;
+    } finally {
+        levelStartInProgress = false;
     }
-    const gameGuide = document.getElementById("game-guide");
-    const showTutorial = number === 1 && !player.tutorialSeen;
-    gameGuide.hidden = !showTutorial;
-    document.getElementById("first-level-tutorial").hidden = !showTutorial;
-    document.getElementById("game-guide-toggle").setAttribute("aria-expanded", String(showTutorial));
-    activeWalletLevelSessionId = entry.sessionId;
-    activeLevelEntryCostCredits = entry.practice ? null : Number(entry.entryCostCredits);
-    walletTimerStartPromise = Promise.resolve(false);
-    if (!entry.practice) {
-        document.getElementById("wallet-balance").textContent = formatCredits(entry.balanceCredits);
-        document.getElementById("wallet-balance-state").textContent = "CREDITS · BACKEND VERIFIED";
-        walletStatusSnapshot = {
-            ...walletStatusSnapshot,
-            balanceCredits: String(entry.balanceCredits),
-            balanceVerified: true
-        };
-    }
-    setLevelEntryMessage(entry.practice
-        ? `Level ${String(number).padStart(2, "0")} started in free practice. No credits were charged; progress and rewards will not be saved.`
-        : `Level ${String(number).padStart(2, "0")} started. ${formatCredits(entry.entryCostCredits)} credits deducted; verified balance ${formatCredits(entry.balanceCredits)}.`,
-    entry.practice ? "ready" : "success");
-    player.lastLevel = number;
-    pendingLevel = level;
-    savePlayer();
-    document.getElementById("play-level").textContent = `LEVEL ${String(number).padStart(2, "0")}`;
-    document.getElementById("play-level-title").textContent = level.title;
-    showScreen("play-screen");
-    window.setTimeout(() => {
-        window.fluxGridSceneResize?.();
-        window.dispatchEvent(new CustomEvent("fluxgrid:load-level", {
-            detail: {
-                level,
-                walletSessionId: activeWalletLevelSessionId,
-                entryCostCredits: activeLevelEntryCostCredits,
-                tutorial: showTutorial
-            }
-        }));
-    }, 0);
 }
 
 function leaveGameplay(toHome = true) {
@@ -2111,10 +2119,14 @@ function leaveGameplay(toHome = true) {
     if (toHome) renderHome();
 }
 
+window.addEventListener("fluxgrid:core-activation-start", pauseMusic);
+window.addEventListener("fluxgrid:core-activation-cancel", startMusic);
+
 document.getElementById("name-form").addEventListener("submit", async (event) => {
     event.preventDefault();
     const name = playerNameInput.value.trim();
     if (!name) return;
+    if (startLevelAfterNameEntry) startMusic();
     if (supabaseConfigured) {
         await backendReady;
         if (authUser) {
@@ -2130,7 +2142,12 @@ document.getElementById("name-form").addEventListener("submit", async (event) =>
     player.name = name.slice(0, 20);
     savePlayer();
     renderProfile();
-    renderHome();
+    if (startLevelAfterNameEntry) {
+        startLevelAfterNameEntry = false;
+        void startInitialLevel();
+    } else {
+        renderHome();
+    }
 });
 
 document.getElementById("continue-game").addEventListener("click", () => {
@@ -2336,6 +2353,10 @@ async function saveWalletLevelCompletion(detail) {
     }
     document.getElementById("wallet-balance").textContent = formatCredits(result.balanceCredits);
     document.getElementById("wallet-balance-state").textContent = "CREDITS · BACKEND VERIFIED";
+    document.getElementById("completion-points").textContent = result.duplicate ? "0" : "1";
+    document.getElementById("completion-points-note").textContent = result.duplicate
+        ? "Repeat clear · leaderboard score unchanged"
+        : "Unique campaign clear · leaderboard score";
     const rewardLabel = document.getElementById("completion-reward-label");
     const reward = document.getElementById("completion-reward");
     const rewardNote = document.getElementById("completion-reward-note");
@@ -2344,8 +2365,12 @@ async function saveWalletLevelCompletion(detail) {
     rewardNote.textContent = result.duplicate
         ? "Level already cleared · repeat reward prevented"
         : "Verified and credited by the server";
-    document.getElementById("wallet-balance").textContent = formatCredits(result.balanceCredits);
-    document.getElementById("wallet-balance-state").textContent = "CREDITS · BACKEND VERIFIED";
+    document.getElementById("completion-token-reward").textContent =
+        `${formatCreditsAsCyfur(result.rewardCredits)} CYFUR equivalent`;
+    document.getElementById("completion-balance").textContent =
+        `${formatCreditsAsCyfur(result.balanceCredits)} CYFUR`;
+    document.getElementById("completion-balance-note").textContent =
+        `${formatCredits(result.balanceCredits)} off-chain credits · backend verified`;
 
     await refreshOwnProgress();
     backendStatus = "Connected to the RelicGrid leaderboard.";
@@ -2455,7 +2480,6 @@ window.addEventListener("fluxgrid:level-complete", async (event) => {
         nextLevelButton.textContent = number >= 99 ? "CAMPAIGN COMPLETE" : "NEXT LEVEL →";
     }
     renderProfile();
-    if (number === 99) playCampaignEnding();
 });
 
 backendReady = initializeBackend();

@@ -336,6 +336,31 @@ export function evaluateLevelStars(level, elapsedMilliseconds, connected = true)
     return { stars, rewardCredits, status: "completed" };
 }
 
+export function getCampaignStartLevel(completedLevels, lastLevel, unlockedLevel) {
+    const completed = new Set(completedLevels);
+    return completed.has(lastLevel)
+        ? unlockedLevel
+        : Math.min(lastLevel, unlockedLevel);
+}
+
+export function mergeCompletedLevels(localLevels, serverLevels, preserveLocal) {
+    return [...new Set([
+        ...serverLevels,
+        ...(preserveLocal ? localLevels : [])
+    ])].sort((a, b) => a - b);
+}
+
+export function formatCyfurCredits(value) {
+    if (!/^\d+$/.test(String(value))) return "Unavailable";
+    const credits = BigInt(value);
+    const whole = credits / BigInt(CYFUR_CREDITS_PER_TOKEN);
+    const fraction = (credits % BigInt(CYFUR_CREDITS_PER_TOKEN))
+        .toString()
+        .padStart(4, "0")
+        .replace(/0+$/, "");
+    return fraction ? `${whole}.${fraction}` : whole.toString();
+}
+
 export function calculateSolveTimeMilliseconds(startedAt, connectedAt, batteryConnected) {
     if (!batteryConnected || !Number.isFinite(startedAt) || !Number.isFinite(connectedAt) || connectedAt < startedAt) {
         return null;

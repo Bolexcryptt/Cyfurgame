@@ -578,6 +578,7 @@ button { -webkit-tap-highlight-color: transparent; }
         gap: 8px;
         padding: 12px 20px;
     }
+
     .home-treasury-bar > div,
     .home-treasury-bar > small { grid-column: 1 / -1; }
     .home-treasury-bar .button { width: 100%; }
@@ -5368,3 +5369,16 @@ body {
 }
 
 .game-button.secondary { background: #211f1a; }
+
+.completion-token {
+    border-color: #efc36b66;
+    background: linear-gradient(145deg, #2b2415, #171b20);
+}
+.completion-token > span,
+.completion-token > strong { color: #f3d48f; }
+.completion-balance {
+    border-color: #7de8c866;
+    background: linear-gradient(145deg, #102720, #101c20);
+}
+.completion-balance > span,
+.completion-balance > strong { color: #a4f0cf; }
