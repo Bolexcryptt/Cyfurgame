@@ -22,6 +22,8 @@ The request must use the exact approved recipient and amount, include the confir
 
 Apply `supabase-cyfur-treasury-test-transfer.sql` to the same Supabase project used by the API before enabling the route. Configure the owner token and `CYFUR_TEST_TRANSFER_ENABLED` only for the short, owner-approved test window. The route is not invoked during deployment and this repository does not submit a mainnet transfer.
 
+`GET /api/treasury-test-transfer-preflight` is a separate read-only check. It requires the same owner token but does not reserve the one-time transfer, sign, create accounts, or submit transactions. It verifies the configured gates, signer address, Supabase service-role access and existing reservation, then reads finalized mainnet balances, mint, recipient ATA, current rent, and estimated fee. It reports `readyToExecute` only when every required gate passes and no one-time record exists.
+
 ## Campaign access
 
 All 99 levels can be selected in any order. Free practice is available even when authentication, wallet APIs, paid gameplay, or entry credits are unavailable; practice does not charge credits or save leaderboard progress/rewards. When paid gameplay is enabled and a player has enough verified credits, the server may still authorize a paid entry and record its verified completion. The obsolete `LEVELS_LOCKED` environment variable is ignored so a stale deployment setting cannot lock the game.

@@ -9,7 +9,8 @@ const { TOKEN_PROGRAM_ID, getAssociatedTokenAddressSync } = require("@solana/spl
 const {
     CYFUR_TEST_AMOUNT_RAW,
     CYFUR_TEST_RECIPIENT,
-    executeCyfurTreasuryTestTransfer
+    executeCyfurTreasuryTestTransfer,
+    readCyfurTreasuryTestPreflight
 } = require("../server/lib/treasury-test-transfer.js");
 const {
     createTreasuryTestTransferHandler,
@@ -17,6 +18,9 @@ const {
     isAuthorizedOwner
 } = require("../api/treasury-test-transfer.js");
 const { encodeBase58 } = require("../server/lib/withdrawals.js");
+const {
+    createTreasuryTestTransferPreflightHandler
+} = require("../api/treasury-test-transfer-preflight.js");
 const solana = require("../server/lib/solana-deposit.js");
 
 const ownerToken = "A".repeat(43);
@@ -231,6 +235,23 @@ function makeChainScenario({
     };
 }
 
+function makeHandlerResponse() {
+    return {
+        statusCode: 200,
+        headers: {},
+        payload: null,
+        status(code) {
+            this.statusCode = code;
+        },
+        setHeader(name, value) {
+            this.headers[name] = value;
+        },
+        json(payload) {
+            this.payload = payload;
+        }
+    };
+}
+
 test("owner authorization requires a long exact bearer token and fixed transfer parameters", () => {
     configureEnvironment();
     assert.equal(isAuthorizedOwner(makeRequest({}, ownerToken), ownerToken), true);
@@ -383,6 +404,127 @@ test("Solana executor rejects non-mainnet RPC and a mismatched finalized recipie
     );
     assert.equal(wrongBalance.state.confirmed, true);
     assert.equal(wrongBalance.state.sent, 1);
+});
+
+test("read-only chain preflight reports live checks without signing or sending", async () => {
+    process.env.SOLANA_NETWORK = "mainnet-beta";
+    const scenario = makeChainScenario();
+    const result = await readCyfurTreasuryTestPreflight({
+        ...scenario,
+        validateSigner: () => true
+    });
+    assert.equal(result.network, "mainnet-beta");
+    assert.equal(result.currentAtaRentLamports, 2000000);
+    assert.equal(result.recipientTokenAccountExists, false);
+    assert.equal(result.enoughCyfur, true);
+    assert.equal(result.enoughSol, true);
+    assert.equal(scenario.state.sent, 0);
+    assert.equal(scenario.state.signed, 0);
+});
+
+test("production preflight validates owner token, enabled flag, Supabase reads, signer, and chain readiness without writes", async () => {
+    configureEnvironment();
+    let databaseWrites = 0;
+    let transferCalls = 0;
+    const signer = { publicKey: { toBase58: () => solana.RELICGRID_TREASURY_ADDRESS } };
+    const handler = createTreasuryTestTransferPreflightHandler({
+        databaseConfigured: () => true,
+        getSigner: () => signer,
+        requestDatabase: async (path, options = {}) => {
+            if (options.method && options.method !== "GET") databaseWrites += 1;
+            if (path.startsWith("wallet_system_config")) {
+                return [{
+                    network: "mainnet-beta",
+                    official_mint_address: solana.RELICGRID_CYFUR_MINT_ADDRESS,
+                    token_program_id: "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+                    token_decimals: 8,
+                    treasury_address: solana.RELICGRID_TREASURY_ADDRESS
+                }];
+            }
+            return [];
+        },
+        readChain: async () => {
+            transferCalls += 1;
+            return {
+                network: "mainnet-beta",
+                genesisHash: "5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d",
+                treasuryAddress: solana.RELICGRID_TREASURY_ADDRESS,
+                treasurySolLamports: 10000000,
+                treasuryCyfurAmountRaw: "500000000",
+                treasuryTokenAccount: "TreasuryAta",
+                mintAddress: solana.RELICGRID_CYFUR_MINT_ADDRESS,
+                tokenProgramAddress: "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+                tokenDecimals: 8,
+                recipient: CYFUR_TEST_RECIPIENT,
+                recipientTokenAccount: "RecipientAta",
+                recipientTokenAccountExists: false,
+                recipientCyfurAmountRaw: "0",
+                currentAtaRentLamports: 1488440,
+                estimatedFeeLamports: 5000,
+                requiredSolLamports: 1493440,
+                enoughCyfur: true,
+                enoughSol: true
+            };
+        }
+    });
+    const response = makeHandlerResponse();
+    await handler({
+        method: "GET",
+        headers: { authorization: `Bearer ${ownerToken}` }
+    }, response);
+    assert.equal(response.statusCode, 200);
+    assert.equal(response.payload.readyToExecute, true);
+    assert.equal(response.payload.readOnly, true);
+    assert.equal(response.payload.transactionSubmitted, false);
+    assert.equal(response.payload.checks.ownerTokenVerified, true);
+    assert.equal(response.payload.checks.testTransferEnabled, true);
+    assert.equal(response.payload.checks.signerMatchesTreasury, true);
+    assert.equal(response.payload.checks.supabaseTestTableAccessible, true);
+    assert.equal(response.payload.checks.oneTimeTransferRecordExists, false);
+    assert.equal(databaseWrites, 0);
+    assert.equal(transferCalls, 1);
+});
+
+test("production preflight cannot proceed when disabled, unauthorized, or already reserved", async () => {
+    configureEnvironment();
+    let signerReads = 0;
+    const handler = createTreasuryTestTransferPreflightHandler({
+        databaseConfigured: () => true,
+        getSigner: () => {
+            signerReads += 1;
+            return { publicKey: { toBase58: () => solana.RELICGRID_TREASURY_ADDRESS } };
+        },
+        requestDatabase: async (path) => path.startsWith("wallet_system_config")
+            ? [{
+                network: "mainnet-beta",
+                official_mint_address: solana.RELICGRID_CYFUR_MINT_ADDRESS,
+                token_program_id: "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+                token_decimals: 8,
+                treasury_address: solana.RELICGRID_TREASURY_ADDRESS
+            }]
+            : [{ transfer_id: "cyfur-mainnet-one-cyfur-v1", status: "confirmed" }],
+        readChain: async () => {
+            throw new Error("Chain checks must not run for an existing reservation.");
+        }
+    });
+    process.env.CYFUR_TEST_TRANSFER_ENABLED = "false";
+    const disabled = makeHandlerResponse();
+    await handler({ method: "GET", headers: { authorization: `Bearer ${ownerToken}` } }, disabled);
+    assert.equal(disabled.payload.readyToExecute, false);
+    assert.equal(disabled.payload.checks.testTransferEnabled, false);
+    assert.equal(signerReads, 0);
+
+    process.env.CYFUR_TEST_TRANSFER_ENABLED = "true";
+    const unauthorized = makeHandlerResponse();
+    await handler({ method: "GET", headers: { authorization: "Bearer incorrect-token" } }, unauthorized);
+    assert.equal(unauthorized.statusCode, 401);
+    assert.equal(signerReads, 0);
+
+    const duplicate = makeHandlerResponse();
+    await handler({ method: "GET", headers: { authorization: `Bearer ${ownerToken}` } }, duplicate);
+    assert.equal(duplicate.payload.readyToExecute, false);
+    assert.equal(duplicate.payload.checks.oneTimeTransferRecordExists, true);
+    assert.equal(duplicate.payload.blocker, "one_time_transfer_already_reserved");
 });
 
 test.after(() => {

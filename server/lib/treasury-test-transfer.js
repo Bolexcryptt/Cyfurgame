@@ -35,6 +35,136 @@ function getTokenAccountInfo(account, expectedMint, expectedOwner, tokenProgram)
     return info;
 }
 
+async function readCyfurTreasuryTestPreflight({
+    treasurySigner = getWithdrawalSignerFromEnvironment(),
+    rpcUrl = getSolanaRpcUrl(),
+    connectionFactory = (url, options) => new Connection(url, options),
+    validateSigner = (signer) => signer instanceof Keypair
+}) {
+    if (process.env.SOLANA_NETWORK !== "mainnet-beta") {
+        throw new Error("CYFUR test transfers require SOLANA_NETWORK=mainnet-beta.");
+    }
+    if (!validateSigner(treasurySigner) ||
+        typeof treasurySigner?.publicKey?.toBase58 !== "function" ||
+        treasurySigner.publicKey.toBase58() !== RELICGRID_TREASURY_ADDRESS) {
+        throw new Error("The test-transfer signer does not match the fixed treasury.");
+    }
+
+    const connection = connectionFactory(rpcUrl, {
+        commitment: "finalized",
+        confirmTransactionInitialTimeout: 60000
+    });
+    const [genesisHash, treasurySolLamports, currentAtaRentLamports] = await Promise.all([
+        connection.getGenesisHash(),
+        connection.getBalance(treasurySigner.publicKey, "finalized"),
+        connection.getMinimumBalanceForRentExemption(AccountLayout.span, "finalized")
+    ]);
+    if (genesisHash !== GENESIS_HASHES["mainnet-beta"]) {
+        throw new Error("The configured Solana RPC endpoint is not mainnet-beta.");
+    }
+
+    const mint = new PublicKey(RELICGRID_CYFUR_MINT_ADDRESS);
+    const recipient = new PublicKey(CYFUR_TEST_RECIPIENT);
+    const tokenProgram = TOKEN_PROGRAM_ID;
+    const treasuryTokenAccount = await getAssociatedTokenAddress(
+        mint,
+        treasurySigner.publicKey,
+        false,
+        tokenProgram
+    );
+    const recipientTokenAccount = await getAssociatedTokenAddress(
+        mint,
+        recipient,
+        false,
+        tokenProgram
+    );
+    const [mintAccount, treasuryTokenAccountInfo, recipientTokenAccountInfo] = await Promise.all([
+        connection.getParsedAccountInfo(mint, "finalized"),
+        connection.getParsedAccountInfo(treasuryTokenAccount, "finalized"),
+        connection.getParsedAccountInfo(recipientTokenAccount, "finalized")
+    ]);
+    if (!isOfficialCyfurMintAccount({ value: mintAccount.value })) {
+        throw new Error("The official CYFUR mint failed finalized on-chain verification.");
+    }
+
+    const treasuryTokenInfo = getTokenAccountInfo(
+        treasuryTokenAccountInfo.value,
+        mint.toBase58(),
+        treasurySigner.publicKey.toBase58(),
+        tokenProgram
+    );
+    if (!treasuryTokenInfo) {
+        throw new Error("The finalized treasury CYFUR token account is missing or invalid.");
+    }
+    const treasuryCyfurAmountRaw = BigInt(treasuryTokenInfo.tokenAmount.amount);
+
+    const recipientTokenInfo = recipientTokenAccountInfo.value
+        ? getTokenAccountInfo(
+            recipientTokenAccountInfo.value,
+            mint.toBase58(),
+            recipient.toBase58(),
+            tokenProgram
+        )
+        : null;
+    if (recipientTokenAccountInfo.value && !recipientTokenInfo) {
+        throw new Error("The recipient associated token account failed finalized verification.");
+    }
+    const recipientCyfurAmountRaw = BigInt(recipientTokenInfo?.tokenAmount.amount ?? "0");
+
+    const transaction = new Transaction();
+    if (!recipientTokenAccountInfo.value) {
+        transaction.add(createAssociatedTokenAccountInstruction(
+            treasurySigner.publicKey,
+            recipientTokenAccount,
+            recipient,
+            mint,
+            tokenProgram,
+            ASSOCIATED_TOKEN_PROGRAM_ID
+        ));
+    }
+    transaction.add(createTransferCheckedInstruction(
+        treasuryTokenAccount,
+        mint,
+        recipientTokenAccount,
+        treasurySigner.publicKey,
+        BigInt(CYFUR_TEST_AMOUNT_RAW),
+        CYFUR_TEST_DECIMALS,
+        [],
+        tokenProgram
+    ));
+    const { blockhash } = await connection.getLatestBlockhash("finalized");
+    transaction.feePayer = treasurySigner.publicKey;
+    transaction.recentBlockhash = blockhash;
+    const feeLamports = await connection.getFeeForMessage(transaction.compileMessage(), "finalized");
+    const estimatedFeeLamports = feeLamports.value;
+    const requiredSolLamports = estimatedFeeLamports === null
+        ? null
+        : estimatedFeeLamports +
+            (recipientTokenAccountInfo.value ? 0 : currentAtaRentLamports);
+
+    return {
+        network: "mainnet-beta",
+        genesisHash,
+        treasuryAddress: RELICGRID_TREASURY_ADDRESS,
+        treasurySolLamports,
+        treasuryCyfurAmountRaw: treasuryCyfurAmountRaw.toString(),
+        treasuryTokenAccount: treasuryTokenAccount.toBase58(),
+        mintAddress: RELICGRID_CYFUR_MINT_ADDRESS,
+        tokenProgramAddress: TOKEN_PROGRAM_ADDRESS,
+        tokenDecimals: CYFUR_TEST_DECIMALS,
+        recipient: CYFUR_TEST_RECIPIENT,
+        recipientTokenAccount: recipientTokenAccount.toBase58(),
+        recipientTokenAccountExists: Boolean(recipientTokenAccountInfo.value),
+        recipientCyfurAmountRaw: recipientCyfurAmountRaw.toString(),
+        currentAtaRentLamports,
+        estimatedFeeLamports,
+        requiredSolLamports,
+        enoughCyfur: treasuryCyfurAmountRaw >= BigInt(CYFUR_TEST_AMOUNT_RAW),
+        enoughSol: requiredSolLamports !== null && treasurySolLamports >= requiredSolLamports,
+        amountRaw: CYFUR_TEST_AMOUNT_RAW
+    };
+}
+
 async function executeCyfurTreasuryTestTransfer({
     treasurySigner = getWithdrawalSignerFromEnvironment(),
     rpcUrl = getSolanaRpcUrl(),
@@ -230,5 +360,6 @@ module.exports = {
     CYFUR_TEST_DECIMALS,
     CYFUR_TEST_RECIPIENT,
     TOKEN_PROGRAM_ADDRESS,
+    readCyfurTreasuryTestPreflight,
     executeCyfurTreasuryTestTransfer
 };
