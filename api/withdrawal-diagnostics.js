@@ -40,8 +40,16 @@ module.exports = async function withdrawalDiagnostics(request, response) {
     const treasuryMatches = Boolean(configData?.treasury_address) &&
         configData.treasury_address === RELICGRID_TREASURY_ADDRESS;
     const mintMatches = Boolean(configData?.official_mint_address) && configData.official_mint_address === RELICGRID_CYFUR_MINT_ADDRESS;
-    const networkMatches = configData?.network ? configData.network === process.env.SOLANA_NETWORK : false;
+    const expectedNetwork = "mainnet-beta";
+    const environmentNetwork = process.env.SOLANA_NETWORK?.trim() || null;
+    const networkConfigurationMatches = configData?.network === expectedNetwork &&
+        environmentNetwork === expectedNetwork;
     const chainResult = configData ? await verifyChainConfiguration(configData) : {
+        available: false,
+        configured: Boolean(process.env.SOLANA_RPC_URL?.trim()),
+        environmentNetwork,
+        configNetwork: null,
+        rpcNetwork: null,
         networkVerified: false,
         mintVerified: false,
         treasuryTokenAccountVerified: false,
@@ -49,7 +57,7 @@ module.exports = async function withdrawalDiagnostics(request, response) {
     };
     const overallReady = treasurySummary.valid && signerMatchesConfig &&
         signerMatchesExpected && configResult.connected && rpcResult.available &&
-        treasuryMatches && mintMatches && networkMatches &&
+        treasuryMatches && mintMatches && networkConfigurationMatches &&
         chainResult.networkVerified && chainResult.mintVerified &&
         chainResult.treasuryTokenAccountVerified && withdrawalGates.enabled;
 
@@ -80,6 +88,13 @@ module.exports = async function withdrawalDiagnostics(request, response) {
             reason: configResult.reason ?? null
         },
         chain: {
+            available: chainResult.available,
+            rpcUrlConfigured: chainResult.configured,
+            environmentNetwork: chainResult.environmentNetwork,
+            supabaseNetwork: chainResult.configNetwork,
+            rpcNetwork: chainResult.rpcNetwork,
+            rpcHttpStatus: chainResult.rpcHttpStatus ?? null,
+            rpcErrorCode: chainResult.rpcErrorCode ?? null,
             networkVerified: chainResult.networkVerified,
             mintVerified: chainResult.mintVerified,
             treasuryTokenAccountVerified: chainResult.treasuryTokenAccountVerified,
@@ -88,7 +103,14 @@ module.exports = async function withdrawalDiagnostics(request, response) {
         rpc: {
             available: rpcResult.available,
             httpStatus: rpcResult.httpStatus ?? null,
-            message: rpcResult.message ?? rpcResult.reason ?? null
+            databaseCode: rpcResult.code ?? null,
+            reason: rpcResult.reason ?? null
+        },
+        supabaseWithdrawalRpc: {
+            available: rpcResult.available,
+            httpStatus: rpcResult.httpStatus ?? null,
+            databaseCode: rpcResult.code ?? null,
+            reason: rpcResult.reason ?? null
         },
         checks: {
             treasuryPrivateKey: treasurySummary.valid,
@@ -96,7 +118,15 @@ module.exports = async function withdrawalDiagnostics(request, response) {
             signerMatchesExpectedTreasury: signerMatchesExpected,
             configMatchesTreasury: treasuryMatches,
             configMatchesMint: mintMatches,
-            networkMatches: networkMatches && chainResult.networkVerified,
+            networkMatches: networkConfigurationMatches && chainResult.networkVerified,
+            environmentNetwork: environmentNetwork,
+            environmentNetworkMatchesExpected: environmentNetwork === expectedNetwork,
+            supabaseNetwork: configData?.network ?? null,
+            supabaseNetworkMatchesExpected: configData?.network === expectedNetwork,
+            rpcNetwork: chainResult.rpcNetwork,
+            rpcNetworkMatchesExpected: chainResult.rpcNetwork === expectedNetwork,
+            solanaRpcAvailable: chainResult.available,
+            solanaRpcUrlConfigured: chainResult.configured,
             mintVerifiedOnChain: chainResult.mintVerified,
             treasuryTokenAccountVerified: chainResult.treasuryTokenAccountVerified,
             supabaseConnected: configResult.connected,
@@ -113,7 +143,7 @@ module.exports = async function withdrawalDiagnostics(request, response) {
         expected: {
             treasuryAddress: RELICGRID_TREASURY_ADDRESS,
             officialCyfurMintAddress: RELICGRID_CYFUR_MINT_ADDRESS,
-            network: process.env.SOLANA_NETWORK || null
+            network: expectedNetwork
         }
     });
 };

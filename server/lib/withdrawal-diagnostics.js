@@ -47,6 +47,14 @@ function getWithdrawalGateSummary(config) {
     };
 }
 
+function getSupabaseError(responseText) {
+    try {
+        return JSON.parse(responseText);
+    } catch {
+        return null;
+    }
+}
+
 async function getSupabaseWithdrawalConfig() {
     const supabaseUrl = process.env.SUPABASE_URL?.trim();
     const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY?.trim();
@@ -69,11 +77,10 @@ async function getSupabaseWithdrawalConfig() {
         });
 
         if (!response.ok) {
-            const detail = await response.text();
             return {
                 connected: false,
                 status: response.status,
-                reason: `Supabase read failed: ${detail.slice(0, 200)}`
+                reason: `Supabase configuration read failed with HTTP ${response.status}.`
             };
         }
 
@@ -85,7 +92,7 @@ async function getSupabaseWithdrawalConfig() {
     } catch (error) {
         return {
             connected: false,
-            reason: error?.message || "Supabase connection check failed."
+            reason: "Unable to reach Supabase configuration. Check SUPABASE_URL, service-role configuration, and network connectivity."
         };
     }
 }
@@ -128,51 +135,92 @@ async function verifyWithdrawalRpc() {
         });
 
         const responseText = await response.text();
-        let parsed = null;
-        try {
-            parsed = JSON.parse(responseText);
-        } catch {
-            parsed = null;
+        const parsed = getSupabaseError(responseText);
+        const message = typeof parsed?.message === "string" ? parsed.message : "";
+        const responseCode = typeof parsed?.code === "string" ? parsed.code : null;
+        const code = responseCode && /^(?:PGRST\d{3}|[A-Z0-9]{5})$/.test(responseCode)
+            ? responseCode
+            : null;
+        const validationGuardHit = !response.ok &&
+            /invalid withdrawal reservation/i.test(message);
+        let reason;
+        if (validationGuardHit) {
+            reason = "The Supabase withdrawal RPC is reachable with service-role authorization; its expected invalid-input guard rejected the read-only diagnostic probe.";
+        } else if (response.status === 404 || code === "PGRST202") {
+            reason = "The Supabase withdrawal RPC was not found. Apply the withdrawal SQL migration and refresh the PostgREST schema cache.";
+        } else if ([401, 403].includes(response.status) || code === "42501" ||
+            /server authorization is required|permission denied/i.test(message)) {
+            reason = "Supabase rejected the withdrawal RPC authorization. Verify SUPABASE_SERVICE_ROLE_KEY is configured for this API deployment and the RPC grants remain service-role only.";
+        } else if (response.ok) {
+            reason = "The invalid-input diagnostic probe unexpectedly succeeded. Do not use the withdrawal endpoint until the RPC validation guard is reviewed.";
+        } else if (code === "PGRST202" || code === "PGRST205") {
+            reason = "Supabase PostgREST could not resolve the withdrawal RPC. Apply the withdrawal SQL migration and refresh the schema cache.";
+        } else if (response.status >= 500) {
+            reason = `Supabase withdrawal RPC returned a server error (HTTP ${response.status}). Check the database function and Supabase logs.`;
+        } else if (code) {
+            reason = `Supabase withdrawal RPC rejected the diagnostic probe (HTTP ${response.status}, database code ${code}). Check the withdrawal migration, function signature, and database configuration.`;
+        } else {
+            reason = `Supabase withdrawal RPC returned an unexpected response (HTTP ${response.status}). Check the withdrawal migration and Supabase logs.`;
         }
 
-        const message = parsed?.message || parsed?.details || responseText || "The RPC call returned no diagnostic details.";
-        const hitValidationGuard = !response.ok && /invalid withdrawal reservation|server authorization is required/i.test(message);
-
         return {
-            available: hitValidationGuard,
+            available: validationGuardHit,
             httpStatus: response.status,
-            message: message.slice(0, 300)
+            code,
+            reason
         };
     } catch (error) {
         return {
             available: false,
-            reason: error?.message || "Unable to reach the withdrawal RPC."
+            reason: "Unable to reach the Supabase withdrawal RPC. Check the Supabase URL, network connectivity, and service-role configuration."
         };
     }
 }
 
 async function verifyChainConfiguration(config) {
     const rpcUrl = process.env.SOLANA_RPC_URL?.trim();
-    const network = config?.network;
-    if (!rpcUrl || !GENESIS_HASHES[network]) {
-        return {
-            networkVerified: false,
-            mintVerified: false,
-            treasuryTokenAccountVerified: false,
-            reason: "SOLANA_RPC_URL or a supported configured network is missing."
-        };
+    const environmentNetwork = process.env.SOLANA_NETWORK?.trim() || null;
+    const configNetwork = config?.network ?? null;
+    const result = {
+        available: false,
+        networkVerified: false,
+        mintVerified: false,
+        treasuryTokenAccountVerified: false,
+        configured: Boolean(rpcUrl),
+        environmentNetwork,
+        configNetwork,
+        rpcNetwork: null,
+        reason: null
     };
+    if (!rpcUrl || !GENESIS_HASHES[configNetwork]) {
+        result.reason = !rpcUrl
+            ? "SOLANA_RPC_URL is not configured in this API deployment."
+            : `The Supabase network value "${configNetwork}" is unsupported; use mainnet-beta for the production CYFUR mint.`;
+        return result;
+    }
+    let rpcEndpoint;
+    try {
+        rpcEndpoint = new URL(rpcUrl);
+    } catch {
+        result.reason = "SOLANA_RPC_URL must be an absolute HTTPS URL.";
+        return result;
+    }
+    if (rpcEndpoint.protocol !== "https:" || rpcEndpoint.username || rpcEndpoint.password) {
+        result.reason = "SOLANA_RPC_URL must use HTTPS and must not contain embedded credentials.";
+        return result;
+    }
 
     try {
         const genesisHash = await solanaRpc(rpcUrl, "getGenesisHash", []);
-        const networkVerified = genesisHash === GENESIS_HASHES[network];
-        if (!networkVerified) {
-            return {
-                networkVerified: false,
-                mintVerified: false,
-                treasuryTokenAccountVerified: false,
-                reason: "SOLANA_RPC_URL is connected to a different Solana network."
-            };
+        result.available = true;
+        result.rpcNetwork = Object.entries(GENESIS_HASHES)
+            .find(([, hash]) => hash === genesisHash)?.[0] ?? "unknown";
+        result.networkVerified = result.rpcNetwork === configNetwork &&
+            result.rpcNetwork === environmentNetwork &&
+            result.rpcNetwork === "mainnet-beta";
+        if (!result.networkVerified) {
+            result.reason = `Solana RPC network is ${result.rpcNetwork}; SOLANA_NETWORK is ${environmentNetwork ?? "unset"}; Supabase network is ${configNetwork ?? "unset"}. All must be mainnet-beta.`;
+            return result;
         }
 
         const [mintAccount, treasuryTokenAccount] = await Promise.all([
@@ -189,30 +237,39 @@ async function verifyChainConfiguration(config) {
                 { commitment: "finalized", encoding: "jsonParsed" }
             ])
         ]);
-        const mintVerified = isOfficialCyfurMintAccount(mintAccount) &&
+        result.mintVerified = isOfficialCyfurMintAccount(mintAccount) &&
             config.token_program_id === "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA" &&
             config.token_decimals === 8;
         const tokenInfo = treasuryTokenAccount?.value?.data?.parsed?.info;
-        const treasuryTokenAccountVerified = Boolean(
+        result.treasuryTokenAccountVerified = Boolean(
             treasuryTokenAccount?.value &&
             treasuryTokenAccount.value.owner === config.token_program_id &&
             treasuryTokenAccount.value.data?.parsed?.type === "account" &&
             tokenInfo?.mint === config.official_mint_address &&
             tokenInfo?.owner === config.treasury_address
         );
-        return {
-            networkVerified,
-            mintVerified,
-            treasuryTokenAccountVerified,
-            reason: null
-        };
+        if (!result.mintVerified) {
+            result.reason = "The finalized RPC response does not verify the configured CYFUR mint, classic SPL Token program, and 8 decimals.";
+        } else if (!result.treasuryTokenAccountVerified) {
+            result.reason = "The finalized RPC response does not verify the treasury associated token account owner and CYFUR mint.";
+        }
+        return result;
     } catch (error) {
-        return {
-            networkVerified: false,
-            mintVerified: false,
-            treasuryTokenAccountVerified: false,
-            reason: error?.message || "Unable to verify Solana network and token configuration."
-        };
+        if (Number.isInteger(error?.rpcCode)) {
+            result.rpcErrorCode = error.rpcCode;
+            result.reason = `Solana RPC getGenesisHash returned JSON-RPC error ${error.rpcCode}. Check the provider endpoint and method access.`;
+        } else {
+            const httpStatus = String(error?.message || "").match(/request failed \((\d{3})\)/)?.[1];
+            if (httpStatus) {
+                result.rpcHttpStatus = Number(httpStatus);
+                result.reason = `Solana RPC returned HTTP ${httpStatus}. Check the provider endpoint, Production environment access, and rate limits.`;
+            } else if (/connection failed/i.test(error?.message || "")) {
+                result.reason = "Could not connect to the configured Solana RPC. Check the Production RPC URL, DNS/TLS access, and provider availability.";
+            } else {
+                result.reason = "The configured Solana RPC returned an invalid response. Check provider compatibility and Production environment configuration.";
+            }
+        }
+        return result;
     }
 }
 
