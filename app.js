@@ -1,8 +1,10 @@
 import {
     CYFUR_CREDITS_PER_TOKEN,
+    LEVEL_TRANSITION_INTERVAL,
     formatCyfurCredits,
     getCampaignStartLevel,
     getLevelEconomy,
+    getPendingLevelTransition,
     mergeCompletedLevels,
     levels
 } from "./levels.js";
@@ -76,6 +78,7 @@ function readPlayer() {
             tutorialSeen: false,
             unlockedLevel: 1,
             completedLevels: [],
+            transitionMilestonesPlayed: [],
             lastLevel: 1
         };
     }
@@ -91,6 +94,13 @@ function readPlayer() {
             completedLevels: Array.isArray(parsed.completedLevels)
                 ? [...new Set(parsed.completedLevels.filter((level) => Number.isInteger(level) && level >= 1 && level <= 99))]
                 : [],
+            transitionMilestonesPlayed: Array.isArray(parsed.transitionMilestonesPlayed)
+                ? [...new Set(parsed.transitionMilestonesPlayed.filter((milestone) =>
+                    Number.isInteger(milestone) &&
+                    milestone >= LEVEL_TRANSITION_INTERVAL &&
+                    milestone <= 99 &&
+                    milestone % LEVEL_TRANSITION_INTERVAL === 0))]
+                : [],
             lastLevel: Math.min(99, Math.max(1, Number(parsed.lastLevel) || 1))
         };
     } catch (error) {
@@ -102,6 +112,7 @@ function readPlayer() {
             tutorialSeen: false,
             unlockedLevel: 1,
             completedLevels: [],
+            transitionMilestonesPlayed: [],
             lastLevel: 1
         };
     }
@@ -109,9 +120,9 @@ function readPlayer() {
 
 let player = readPlayer();
 let activeVideoPlayback = null;
-let nextInterstitialAt = player.completedLevels.length + randomTransitionInterval();
-let interstitialScheduleNeedsSync = true;
-let interstitialClipIndex = Math.floor(Math.random() * 2);
+let transitionInProgress = false;
+let openingFlowFinished = false;
+let projectVideoInProgress = false;
 let pendingLevel = null;
 let activeWalletLevelSessionId = null;
 let walletTimerStartPromise = Promise.resolve(false);
@@ -126,16 +137,9 @@ let currentDepositIntent = null;
 let solanaWeb3ModulePromise = null;
 let activeLevelEntryCostCredits = null;
 let levelStartInProgress = false;
-let initialNavigationStarted = false;
-let startLevelAfterNameEntry = false;
-let initialLevelLaunchInProgress = false;
 
 function savePlayer() {
     localStorage.setItem(storageKey, JSON.stringify(player));
-}
-
-function randomTransitionInterval() {
-    return 10 + Math.floor(Math.random() * 6);
 }
 
 function stopVideoPlayback(video) {
@@ -211,10 +215,6 @@ async function refreshOwnProgress() {
         !player.playerId || player.playerId === authUser.id
     );
     player.unlockedLevel = nextUnlockedLevel(player.completedLevels);
-    if (interstitialScheduleNeedsSync) {
-        nextInterstitialAt = player.completedLevels.length + randomTransitionInterval();
-        interstitialScheduleNeedsSync = false;
-    }
     savePlayer();
 }
 
@@ -1855,30 +1855,9 @@ function showNameOrHome() {
     }
 }
 
-async function startInitialLevel() {
-    if (initialLevelLaunchInProgress) return;
-    initialLevelLaunchInProgress = true;
-    try {
-        const backendAvailable = await backendReady;
-        if (backendAvailable && authUser) {
-            try {
-                await refreshOwnProgress();
-            } catch (error) {
-                console.error("Latest player progress could not be refreshed before starting.", error);
-            }
-        }
-        await startLevel(getContinueLevel(), true);
-    } catch (error) {
-        console.error("The starting level could not be opened.", error);
-        renderHome();
-    } finally {
-        initialLevelLaunchInProgress = false;
-    }
-}
-
-function startCampaignFromIntro() {
-    if (initialNavigationStarted) return;
-    initialNavigationStarted = true;
+function finishOpeningFlow() {
+    if (openingFlowFinished) return;
+    openingFlowFinished = true;
     player.watchedGameIntro = true;
     savePlayer();
     stopVideoPlayback(introVideo);
@@ -1888,17 +1867,8 @@ function startCampaignFromIntro() {
     introVideo.hidden = true;
     transitionVideo.hidden = true;
     videoAction.hidden = true;
-    videoSkip.textContent = "SKIP VIDEO  →";
-    videoSkip.hidden = false;
-
-    if (!player.name) {
-        startLevelAfterNameEntry = true;
-        showScreen("name-screen");
-        playerNameInput.focus();
-        return;
-    }
-    startMusic();
-    void startInitialLevel();
+    videoSkip.hidden = true;
+    showNameOrHome();
 }
 
 function playCampaignEnding() {
@@ -1956,15 +1926,21 @@ function playCampaignEnding() {
     });
 }
 
-function playLevelTransition(nextLevel) {
-    const transitionClips = ["levels.mp4", "levels2.mp4"];
-    const clip = transitionClips[interstitialClipIndex];
-    interstitialClipIndex = (interstitialClipIndex + 1) % transitionClips.length;
-    nextInterstitialAt = player.completedLevels.length + randomTransitionInterval();
+function playLevelTransition(nextLevel, milestone) {
+    if (transitionInProgress) return;
+    transitionInProgress = true;
+    const transitionClips = ["levels1.mp4", "levels2.mp4"];
+    const clip = transitionClips[(milestone / LEVEL_TRANSITION_INTERVAL - 1) % transitionClips.length];
     let finished = false;
     const finish = () => {
         if (finished) return;
         finished = true;
+        transitionInProgress = false;
+        player.transitionMilestonesPlayed = [...new Set([
+            ...player.transitionMilestonesPlayed,
+            milestone
+        ])];
+        savePlayer();
         stopVideoPlayback(transitionVideo);
         transitionVideo.pause();
         transitionVideo.hidden = true;
@@ -2005,7 +1981,52 @@ function playLevelTransition(nextLevel) {
 }
 
 function continueAfterIntro() {
-    startCampaignFromIntro();
+    if (openingFlowFinished || projectVideoInProgress) return;
+    projectVideoInProgress = true;
+    let finished = false;
+    const finish = () => {
+        if (finished) return;
+        finished = true;
+        finishOpeningFlow();
+    };
+    const offerContinue = (error) => {
+        console.error("Project introduction video could not be played.", error);
+        videoCaption.textContent = "The project video is unavailable. Continue to the homepage when ready.";
+        videoAction.textContent = "CONTINUE TO HOMEPAGE →";
+        videoAction.classList.remove("video-action-ready");
+        videoAction.hidden = false;
+        videoAction.onclick = finish;
+    };
+
+    player.watchedGameIntro = true;
+    savePlayer();
+    stopVideoPlayback(introVideo);
+    introVideo.pause();
+    introVideo.hidden = true;
+    showScreen("video-screen");
+    transitionVideo.pause();
+    transitionVideo.src = "gamevideo.mp4";
+    transitionVideo.currentTime = 0;
+    transitionVideo.muted = false;
+    transitionVideo.hidden = false;
+    videoAction.hidden = true;
+    videoAction.classList.remove("video-action-ready");
+    videoCaption.textContent = "Your next signal is coming online…";
+    videoSkip.textContent = "SKIP VIDEO →";
+    videoSkip.hidden = false;
+    videoSkip.onclick = finish;
+    transitionVideo.onended = finish;
+    transitionVideo.onerror = () => offerContinue(transitionVideo.error);
+    playVideoInLandscape(transitionVideo, (error) => {
+        console.warn("Project introduction video could not autoplay.", error);
+        videoCaption.textContent = "Tap to play the project video.";
+        videoAction.textContent = "PLAY PROJECT VIDEO →";
+        videoAction.hidden = false;
+        videoAction.onclick = () => {
+            videoAction.hidden = true;
+            playVideoInLandscape(transitionVideo, offerContinue);
+        };
+    });
 }
 
 function showOpeningIntro() {
@@ -2028,25 +2049,38 @@ function showOpeningIntro() {
     }
     videoSkip.textContent = "SKIP VIDEO  →";
     videoSkip.hidden = false;
-    videoSkip.onclick = continueAfterIntro;
+    videoSkip.onclick = finishOpeningFlow;
     videoAction.textContent = "Play Now  →";
-    videoAction.hidden = false;
+    videoAction.classList.remove("video-action-ready");
+    videoAction.hidden = true;
     videoAction.onclick = continueAfterIntro;
     videoCaption.textContent = player.watchedGameIntro ? "Welcome back, pilot." : "Your first signal is ready.";
     introVideo.onended = () => {
-        videoCaption.textContent = "Your first signal is ready.";
+        videoCaption.textContent = player.watchedGameIntro
+            ? "Welcome back, pilot."
+            : "Your first signal is ready.";
+        videoAction.classList.remove("video-action-ready");
+        videoAction.hidden = false;
+        void videoAction.offsetWidth;
+        videoAction.classList.add("video-action-ready");
     };
     introVideo.onerror = () => {
         console.error("Opening introduction video could not be decoded.", introVideo.error);
-        videoCaption.textContent = "Your first signal is ready.";
+        videoCaption.textContent = "The opening video is unavailable. Continue to the project video.";
         videoAction.textContent = "PLAY NOW  →";
+        videoAction.classList.remove("video-action-ready");
         videoAction.hidden = false;
+        void videoAction.offsetWidth;
+        videoAction.classList.add("video-action-ready");
     };
     playVideoInLandscape(introVideo, (error) => {
         console.warn("Opening introduction video could not autoplay.", error);
         videoCaption.textContent = "The introduction could not autoplay. Continue when ready.";
         videoAction.textContent = "PLAY NOW  →";
+        videoAction.classList.remove("video-action-ready");
         videoAction.hidden = false;
+        void videoAction.offsetWidth;
+        videoAction.classList.add("video-action-ready");
     });
 }
 
@@ -2134,7 +2168,6 @@ document.getElementById("name-form").addEventListener("submit", async (event) =>
     event.preventDefault();
     const name = playerNameInput.value.trim();
     if (!name) return;
-    if (startLevelAfterNameEntry) startMusic();
     if (supabaseConfigured) {
         await backendReady;
         if (authUser) {
@@ -2150,12 +2183,7 @@ document.getElementById("name-form").addEventListener("submit", async (event) =>
     player.name = name.slice(0, 20);
     savePlayer();
     renderProfile();
-    if (startLevelAfterNameEntry) {
-        startLevelAfterNameEntry = false;
-        void startInitialLevel();
-    } else {
-        renderHome();
-    }
+    renderHome();
 });
 
 document.getElementById("continue-game").addEventListener("click", () => {
@@ -2164,8 +2192,12 @@ document.getElementById("continue-game").addEventListener("click", () => {
 document.getElementById("next-level").addEventListener("click", (event) => {
     const number = Number(event.currentTarget.dataset.nextLevel);
     if (!Number.isInteger(number) || number < 1 || number > 99) return;
-    if (player.completedLevels.length >= nextInterstitialAt) {
-        playLevelTransition(number);
+    const milestone = getPendingLevelTransition(
+        player.completedLevels.length,
+        player.transitionMilestonesPlayed
+    );
+    if (milestone !== null) {
+        playLevelTransition(number, milestone);
     } else {
         startLevel(number, true);
     }

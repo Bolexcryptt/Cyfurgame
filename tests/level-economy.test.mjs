@@ -32,7 +32,9 @@ import {
     formatCyfurCredits,
     getCampaignStartLevel,
     getLevelEconomy,
+    getPendingLevelTransition,
     getLevelStarTimeTargets,
+    LEVEL_TRANSITION_INTERVAL,
     mergeCompletedLevels,
     levels
 } from "../levels.js";
@@ -613,17 +615,31 @@ test("intro launch selects a current or next unlocked level and formats ledger c
     assert.equal(formatCyfurCredits("invalid"), "Unavailable");
 });
 
-test("intro navigation is guarded, starts after a new callsign, and delays completion until core activation", () => {
+test("level transition milestones occur every seven completed levels and are not replayed", () => {
+    assert.equal(LEVEL_TRANSITION_INTERVAL, 7);
+    assert.equal(getPendingLevelTransition(6), null);
+    assert.equal(getPendingLevelTransition(7), 7);
+    assert.equal(getPendingLevelTransition(8), 7);
+    assert.equal(getPendingLevelTransition(14, [7]), 14);
+    assert.equal(getPendingLevelTransition(20, [7, 14]), null);
+    assert.equal(getPendingLevelTransition(21, [7, 14]), 21);
+    assert.throws(() => getPendingLevelTransition(-1), TypeError);
+});
+
+test("intro navigation leads through the project video to the homepage before gameplay", () => {
     const app = readFileSync(new URL("../app.js", import.meta.url), "utf8");
-    assert.match(app, /function startCampaignFromIntro\(\)/);
-    assert.match(app, /if \(initialNavigationStarted\) return/);
-    assert.match(app, /if \(startLevelAfterNameEntry\)[\s\S]*?void startInitialLevel\(\)/);
+    assert.match(app, /function finishOpeningFlow\(\)/);
+    assert.match(app, /function continueAfterIntro\(\)/);
+    assert.match(app, /if \(openingFlowFinished \|\| projectVideoInProgress\) return/);
+    assert.match(app, /transitionVideo\.src = "gamevideo\.mp4"/);
+    assert.match(app, /transitionVideo\.onended = finish/);
+    assert.match(app, /videoAction\.onclick = continueAfterIntro/);
+    assert.match(app, /videoSkip\.onclick = finishOpeningFlow/);
+    assert.doesNotMatch(app, /function startInitialLevel\(\)/);
     assert.match(app, /await refreshOwnProgress\(\)/);
     assert.match(app, /mergeCompletedLevels\([\s\S]*?!player\.playerId \|\| player\.playerId === authUser\.id/);
     const initializeBackend = app.slice(app.indexOf("async function initializeBackend"), app.indexOf("\nfunction showScreen"));
     assert.ok(initializeBackend.indexOf("await refreshOwnProgress();") < initializeBackend.indexOf("player.playerId = authUser.id;"));
-    assert.match(app, /await startLevel\(getContinueLevel\(\), true\)/);
-    assert.doesNotMatch(app, /function beginGameIntro\(\)/);
     assert.match(app, /async function startLevel\(number, resumeMusic = false\) \{\s*if \(levelStartInProgress\) return/);
     assert.match(app, /window\.addEventListener\("fluxgrid:core-activation-start", pauseMusic\)/);
     assert.match(app, /window\.addEventListener\("fluxgrid:core-activation-cancel", startMusic\)/);
@@ -925,15 +941,18 @@ test("RelicGrid branding is used in the game and hidden scenes stop rendering", 
     assert.match(scene, /GRID\.start\.col = launchDirection === 1 \? -1 : GRID\.cols/);
     assert.match(scene, /activationRingMaterials\.forEach/);
     assert.match(app, /next-level[\s\S]*?startLevel\(number, true\)/);
-    assert.match(app, /function playLevelTransition\(nextLevel\)/);
-    assert.match(app, /10 \+ Math\.floor\(Math\.random\(\) \* 6\)/);
-    assert.match(app, /const transitionClips = \["levels\.mp4", "levels2\.mp4"\]/);
-    assert.match(app, /interstitialClipIndex = \(interstitialClipIndex \+ 1\) % transitionClips\.length/);
+    assert.match(app, /LEVEL_TRANSITION_INTERVAL/);
+    assert.match(app, /function playLevelTransition\(nextLevel, milestone\)/);
+    assert.match(app, /const transitionClips = \["levels1\.mp4", "levels2\.mp4"\]/);
+    assert.match(app, /transitionClips\[\(milestone \/ LEVEL_TRANSITION_INTERVAL - 1\) % transitionClips\.length\]/);
+    assert.match(app, /transitionMilestonesPlayed = \[\.\.\.new Set/);
+    assert.match(app, /if \(transitionInProgress\) return/);
     assert.match(app, /videoOrientationQuery = window\.matchMedia\("\(max-width: 900px\) and \(orientation: portrait\)"\)/);
     assert.match(app, /function playVideoInLandscape\(video, onError\)/);
     assert.match(app, /videoAction\.textContent = "Play Now  →"/);
-    assert.match(app, /function startCampaignFromIntro\(\)/);
-    assert.match(app, /videoSkip\.onclick = continueAfterIntro/);
+    assert.match(app, /introVideo\.onended = \(\) => \{/);
+    assert.match(app, /videoAction\.classList\.add\("video-action-ready"\)/);
+    assert.match(app, /videoSkip\.onclick = finishOpeningFlow/);
     assert.doesNotMatch(app, /videoAction\.textContent = "CONTINUE  →"/);
     assert.match(html, /id="video-action-button"[^>]*>Play Now/);
     assert.match(html, /id="rotate-device-prompt"/);
@@ -944,12 +963,14 @@ test("RelicGrid branding is used in the game and hidden scenes stop rendering", 
     assert.match(app, /function playCampaignEnding\(\)/);
     assert.match(app, /transitionVideo\.src = "theend\.mp4"/);
     assert.doesNotMatch(app, /if \(number === 99\) playCampaignEnding\(\)/);
-    assert.equal(existsSync(new URL("../levels.mp4", import.meta.url)), true);
+    assert.equal(existsSync(new URL("../gamevideo.mp4", import.meta.url)), true);
+    assert.equal(existsSync(new URL("../levels1.mp4", import.meta.url)), true);
     assert.equal(existsSync(new URL("../levels2.mp4", import.meta.url)), true);
     assert.equal(existsSync(new URL("../theend.mp4", import.meta.url)), true);
     const styles = readFileSync(new URL("../style.css", import.meta.url), "utf8");
     assert.match(styles, /\.intro-video \{[\s\S]*?object-fit: contain/);
     assert.match(styles, /video-action \.button \{[\s\S]*?font-size: clamp\(17px, 4vw, 20px\)/);
+    assert.match(styles, /@keyframes video-play-ready/);
 });
 
 test("deposit UI creates an account-bound payment memo before accepting a transaction link", () => {

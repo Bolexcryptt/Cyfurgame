@@ -457,6 +457,13 @@ button { -webkit-tap-highlight-color: transparent; }
     font-weight: 800;
     letter-spacing: .06em;
 }
+.video-action .button.video-action-ready {
+    animation: video-play-ready .55s cubic-bezier(.2,.75,.25,1) both;
+}
+@keyframes video-play-ready {
+    from { opacity: 0; transform: translateY(12px) scale(.96); }
+    to { opacity: 1; transform: translateY(0) scale(1); }
+}
 .video-skip-button {
     position: absolute;
     z-index: 3;

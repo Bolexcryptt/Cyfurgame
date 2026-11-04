@@ -3,6 +3,7 @@ const COLS = 8;
 const CLEAR_TARGET_ROWS = Object.freeze([2, 3, 4]);
 const CLEAR_TARGET_COLS = Object.freeze([2, 3, 4, 5]);
 export const CYFUR_CREDITS_PER_TOKEN = 10000;
+export const LEVEL_TRANSITION_INTERVAL = 7;
 export const STAR_TIME_CONFIG = Object.freeze({
     threeStarBaseSeconds: 25,
     threeStarSecondsPerMirror: 10,
@@ -10,6 +11,17 @@ export const STAR_TIME_CONFIG = Object.freeze({
     twoStarSecondsPerMirror: 20
 });
 export const LEVEL_STAR_TIME_OVERRIDES = Object.freeze({});
+
+export function getPendingLevelTransition(completedLevelCount, playedMilestones = []) {
+    if (!Number.isInteger(completedLevelCount) || completedLevelCount < 0 ||
+        !Array.isArray(playedMilestones)) {
+        throw new TypeError("A completed level count and played milestone list are required.");
+    }
+    const milestone = Math.floor(completedLevelCount / LEVEL_TRANSITION_INTERVAL) * LEVEL_TRANSITION_INTERVAL;
+    return milestone >= LEVEL_TRANSITION_INTERVAL && !playedMilestones.includes(milestone)
+        ? milestone
+        : null;
+}
 
 export function getLevelStarTimeTargets(level) {
     const complexity = Math.max(1, level?.par ?? 1);

@@ -21,7 +21,7 @@ const publicFiles = new Set([
     "index.html",
     "intro.mp4",
     "levels.js",
-    "levels.mp4",
+    "levels1.mp4",
     "levels2.mp4",
     "logo.png",
     "mirror.mp3",
