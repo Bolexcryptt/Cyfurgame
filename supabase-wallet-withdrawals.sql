@@ -8,6 +8,21 @@ alter table public.wallet_system_config
 alter table public.wallet_system_config
     add column if not exists withdrawal_rate_limit_per_hour integer not null default 5;
 
+do $$
+begin
+    if not exists (
+        select 1
+        from pg_constraint
+        where conrelid = 'public.wallet_system_config'::regclass
+          and conname = 'wallet_system_config_withdrawal_rate_limit_check'
+    ) then
+        alter table public.wallet_system_config
+            add constraint wallet_system_config_withdrawal_rate_limit_check
+            check (withdrawal_rate_limit_per_hour = 5);
+    end if;
+end;
+$$;
+
 create table if not exists public.wallet_withdrawals (
     id uuid primary key default gen_random_uuid(),
     player_id uuid not null references public.player_profiles (id) on delete cascade,
@@ -104,7 +119,6 @@ declare
     v_balance bigint;
     v_new_balance bigint;
     v_withdrawal_id uuid;
-    v_recent_withdrawal_count integer;
 begin
     if coalesce(auth.role(), '') <> 'service_role' then
         raise exception 'Server authorization is required.' using errcode = '42501';
@@ -182,13 +196,6 @@ begin
     ) then
         raise exception 'A withdrawal is already pending reconciliation.' using errcode = '23505';
     end if;
-    select count(*) into v_recent_withdrawal_count
-    from public.wallet_withdrawals as w
-    where w.player_id = p_player_id
-      and w.created_at > now() - interval '1 hour';
-    if v_recent_withdrawal_count >= v_config.withdrawal_rate_limit_per_hour then
-        raise exception 'Withdrawal request rate limit exceeded.' using errcode = 'P0001';
-    end if;
     if v_balance < p_amount_credits then
         raise exception 'Insufficient credits for withdrawal.' using errcode = '22023';
     end if;
@@ -223,6 +230,49 @@ begin
     return query select v_withdrawal_id, 'pending'::text, null::text, v_new_balance, false;
 end;
 $$;
+
+create or replace function public.enforce_wallet_withdrawal_rate_limit()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+    v_rate_limit integer;
+    v_recent_count integer;
+begin
+    perform pg_advisory_xact_lock(
+        hashtextextended('withdrawal-rate:' || new.player_id::text, 0)
+    );
+
+    select withdrawal_rate_limit_per_hour into v_rate_limit
+    from public.wallet_system_config
+    where id = 1
+    for share;
+    if v_rate_limit is distinct from 5 then
+        raise exception 'Withdrawal request rate limit configuration is invalid.'
+            using errcode = '22023';
+    end if;
+
+    select count(*) into v_recent_count
+    from public.wallet_withdrawals as w
+    where w.player_id = new.player_id
+      and w.created_at > now() - interval '1 hour';
+    if v_recent_count >= v_rate_limit then
+        raise exception 'Withdrawal request rate limit exceeded.' using errcode = 'P0001';
+    end if;
+    return new;
+end;
+$$;
+
+revoke all on function public.enforce_wallet_withdrawal_rate_limit()
+    from public, anon, authenticated, service_role;
+
+drop trigger if exists wallet_withdrawals_rate_limit
+    on public.wallet_withdrawals;
+create trigger wallet_withdrawals_rate_limit
+    before insert on public.wallet_withdrawals
+    for each row execute function public.enforce_wallet_withdrawal_rate_limit();
 
 create or replace function public.mark_wallet_withdrawal_submitted(
     p_withdrawal_id uuid,

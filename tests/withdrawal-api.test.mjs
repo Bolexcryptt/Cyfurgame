@@ -380,8 +380,10 @@ test("withdrawal migration preserves existing data and enforces service-only ato
     assert.match(migration, /withdrawal_reserve/);
     assert.match(migration, /withdrawal_release/);
     assert.match(migration, /Insufficient credits for withdrawal/);
-    assert.match(migration, /v_recent_withdrawal_count >= v_config\.withdrawal_rate_limit_per_hour/);
+    assert.match(migration, /create or replace function public\.enforce_wallet_withdrawal_rate_limit/i);
+    assert.match(migration, /v_recent_count >= v_rate_limit/);
     assert.match(migration, /created_at > now\(\) - interval '1 hour'/i);
+    assert.match(migration, /create trigger wallet_withdrawals_rate_limit/i);
     assert.match(migration, /p_chain_failure_verified is distinct from true/);
     assert.match(migration, /to service_role/);
     assert.match(migration, /create or replace function public\.reserve_wallet_withdrawal\(\s*p_player_id uuid,\s*p_wallet_address text,\s*p_network text,\s*p_mint_address text,\s*p_token_program_id text,\s*p_treasury_address text,\s*p_amount_raw bigint,\s*p_token_decimals integer,\s*p_amount_credits bigint,\s*p_idempotency_key text,\s*p_memo text default ''/i);
