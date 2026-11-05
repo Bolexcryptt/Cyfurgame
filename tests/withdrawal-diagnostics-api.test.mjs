@@ -48,6 +48,7 @@ function makeValidConfig(overrides = {}) {
         rounding_policy: "floor",
         deposits_enabled: false,
         withdrawals_enabled: true,
+        withdrawal_rate_limit_per_hour: 5,
         paid_gameplay_enabled: false,
         ...overrides
     };
@@ -92,6 +93,8 @@ test("withdrawal readiness requires both Vercel and Supabase withdrawal flags", 
     assert.equal(response.payload.checks.vercelWithdrawalEnabled, true);
     assert.equal(response.payload.checks.supabaseWithdrawalsEnabled, true);
     assert.equal(response.payload.checks.withdrawalsEnabled, true);
+    assert.equal(response.payload.checks.withdrawalRateLimitConfigured, true);
+    assert.equal(response.payload.checks.withdrawalRateLimitPerHour, 5);
     assert.equal(response.payload.rpc.available, true);
     assert.equal(response.payload.rpc.healthCheckAvailable, true);
     assert.equal(response.payload.rpc.network, "mainnet-beta");
@@ -112,6 +115,11 @@ test("withdrawal readiness requires both Vercel and Supabase withdrawal flags", 
     assert.equal(response.payload.checks.supabaseWithdrawalsEnabled, false);
     assert.equal(response.payload.checks.withdrawalsEnabled, false);
     assert.equal(response.payload.ok, false);
+
+    config = makeValidConfig({ withdrawal_rate_limit_per_hour: null });
+    response = await getDiagnosticResponse();
+    assert.equal(response.payload.checks.withdrawalRateLimitConfigured, false);
+    assert.equal(response.payload.ok, false);
 });
 
 test("diagnostic never returns treasury or diagnostic secrets", async () => {
@@ -130,7 +138,10 @@ test("Supabase diagnostic read requests the withdrawal flag", async () => {
     let requestUrl;
     globalThis.fetch = async (input) => {
         requestUrl = String(input);
-        return new Response(JSON.stringify([{ withdrawals_enabled: true }]), {
+        return new Response(JSON.stringify([{
+            withdrawals_enabled: true,
+            withdrawal_rate_limit_per_hour: 5
+        }]), {
             status: 200,
             headers: { "Content-Type": "application/json" }
         });
@@ -139,6 +150,7 @@ test("Supabase diagnostic read requests the withdrawal flag", async () => {
     const result = await savedFunctions.getSupabaseWithdrawalConfig();
     assert.equal(result.connected, true);
     assert.equal(result.config.withdrawals_enabled, true);
-    assert.match(requestUrl, /select=[^&]*withdrawals_enabled/);
+    assert.equal(result.config.withdrawal_rate_limit_per_hour, 5);
+    assert.match(requestUrl, /select=[^&]*withdrawals_enabled[^&]*withdrawal_rate_limit_per_hour/);
     assert.equal(requestUrl.includes("service-role-sentinel"), false);
 });

@@ -40,9 +40,12 @@ function getTreasuryDiagnosticSummary() {
 function getWithdrawalGateSummary(config) {
     const vercelEnabled = process.env.WITHDRAWAL_ENABLED === "true";
     const supabaseEnabled = config?.withdrawals_enabled === true;
+    const rateLimitPerHour = config?.withdrawal_rate_limit_per_hour ?? null;
     return {
         vercelEnabled,
         supabaseEnabled,
+        rateLimitPerHour,
+        rateLimitConfigured: rateLimitPerHour === 5,
         enabled: vercelEnabled && supabaseEnabled
     };
 }
@@ -66,7 +69,7 @@ async function getSupabaseWithdrawalConfig() {
     }
 
     try {
-        const response = await fetch(`${supabaseUrl.replace(/\/+$/, "")}/rest/v1/wallet_system_config?select=network,official_mint_address,treasury_address,token_program_id,token_decimals,credits_per_token,rounding_policy,deposits_enabled,withdrawals_enabled,paid_gameplay_enabled&id=eq.1`, {
+        const response = await fetch(`${supabaseUrl.replace(/\/+$/, "")}/rest/v1/wallet_system_config?select=network,official_mint_address,treasury_address,token_program_id,token_decimals,credits_per_token,rounding_policy,deposits_enabled,withdrawals_enabled,withdrawal_rate_limit_per_hour,paid_gameplay_enabled&id=eq.1`, {
             method: "GET",
             headers: {
                 apikey: serviceRoleKey,

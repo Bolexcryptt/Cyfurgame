@@ -59,7 +59,8 @@ module.exports = async function withdrawalDiagnostics(request, response) {
         signerMatchesExpected && configResult.connected && rpcResult.available &&
         treasuryMatches && mintMatches && networkConfigurationMatches &&
         chainResult.networkVerified && chainResult.mintVerified &&
-        chainResult.treasuryTokenAccountVerified && withdrawalGates.enabled;
+        chainResult.treasuryTokenAccountVerified && withdrawalGates.enabled &&
+        withdrawalGates.rateLimitConfigured;
 
     return sendJson(response, 200, {
         ok: overallReady,
@@ -85,6 +86,8 @@ module.exports = async function withdrawalDiagnostics(request, response) {
             paidGameplayEnabled: configData?.paid_gameplay_enabled ?? null,
             creditsPerToken: configData?.credits_per_token ?? null,
             roundingPolicy: configData?.rounding_policy ?? null,
+            withdrawalRateLimitPerHour: withdrawalGates.rateLimitPerHour,
+            withdrawalRateLimitConfigured: withdrawalGates.rateLimitConfigured,
             reason: configResult.reason ?? null
         },
         chain: {
@@ -136,6 +139,8 @@ module.exports = async function withdrawalDiagnostics(request, response) {
             withdrawalRpcAvailable: rpcResult.available,
             vercelWithdrawalEnabled: withdrawalGates.vercelEnabled,
             supabaseWithdrawalsEnabled: withdrawalGates.supabaseEnabled,
+            withdrawalRateLimitPerHour: withdrawalGates.rateLimitPerHour,
+            withdrawalRateLimitConfigured: withdrawalGates.rateLimitConfigured,
             withdrawalsEnabled: withdrawalGates.enabled
         },
         notes: [

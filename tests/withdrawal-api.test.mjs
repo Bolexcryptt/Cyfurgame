@@ -44,6 +44,7 @@ function resetScenario({ balance = 10000n, transferOutcome = "success", readBala
         actualBalance: balance,
         readBalanceOverride,
         transferOutcome,
+        rateLimited: false,
         records: new Map(),
         ledger: [],
         sendCount: 0,
@@ -54,6 +55,7 @@ function resetScenario({ balance = 10000n, transferOutcome = "success", readBala
     process.env.SUPABASE_SERVICE_ROLE_KEY = "test-service-role-key";
     process.env.WITHDRAWAL_ENABLED = "true";
     process.env.SOLANA_NETWORK = "mainnet-beta";
+    process.env.SOLANA_RPC_URL = "https://rpc.example.invalid";
 }
 
 function dbResponse(status, payload) {
@@ -89,7 +91,8 @@ function installFakeFetch() {
                 treasury_address: testTreasury.publicKey.toBase58(),
                 credits_per_token: 10000,
                 deposits_enabled: false,
-                withdrawals_enabled: true
+                withdrawals_enabled: true,
+                withdrawal_rate_limit_per_hour: 5
             }]);
         }
         if (path.startsWith("wallet_withdrawals")) {
@@ -103,6 +106,12 @@ function installFakeFetch() {
             })));
         }
         if (path === "rpc/reserve_wallet_withdrawal") {
+            if (scenario.rateLimited) {
+                return dbResponse(400, {
+                    code: "P0001",
+                    message: "Withdrawal request rate limit exceeded."
+                });
+            }
             const body = JSON.parse(options.body);
             const prior = scenario.records.get(body.p_idempotency_key);
             if (prior) {
@@ -206,6 +215,22 @@ async function submitWithdrawal({
     return response;
 }
 
+async function getWithdrawalStatus() {
+    const response = {
+        headers: {},
+        statusCode: 200,
+        payload: null,
+        status(code) { this.statusCode = code; },
+        setHeader(name, value) { this.headers[name] = value; },
+        json(payload) { this.payload = payload; }
+    };
+    await withdrawalsHandler({
+        method: "GET",
+        headers: { authorization: "Bearer test-session-token" }
+    }, response);
+    return response;
+}
+
 test.beforeEach(() => {
     resetScenario();
     installFakeFetch();
@@ -231,6 +256,28 @@ test("successful withdrawal reserves credits once and confirms without a second 
     ]);
     assert.equal([...scenario.records.values()][0].status, "confirmed");
     assert.equal(scenario.sendCount, 1);
+});
+
+test("withdrawal status reports only the authenticated player's verified wallet and balance", async () => {
+    const response = {
+        headers: {},
+        statusCode: 200,
+        payload: null,
+        status(code) { this.statusCode = code; },
+        setHeader(name, value) { this.headers[name] = value; },
+        json(payload) { this.payload = payload; }
+    };
+    await withdrawalsHandler({
+        method: "GET",
+        headers: { authorization: "Bearer test-session-token" }
+    }, response);
+    assert.equal(response.statusCode, 200);
+    assert.equal(response.payload.walletAddress, playerWallet);
+    assert.equal(response.payload.walletVerified, true);
+    assert.equal(response.payload.balanceCredits, "10000");
+    assert.equal(response.payload.availableCredits, "10000");
+    assert.equal(response.payload.withdrawalEnabled, true);
+    assert.equal(response.payload.activeWithdrawal, false);
 });
 
 test("one CYFUR withdrawal uses exactly 100000000 raw units for the verified recipient", async () => {
@@ -285,6 +332,15 @@ test("atomic reservation rejects a balance that became insufficient after the AP
     assert.equal(scenario.ledger.length, 0);
 });
 
+test("server-side withdrawal rate limit rejects the sixth request in a rolling hour", async () => {
+    scenario.rateLimited = true;
+    const response = await submitWithdrawal();
+    assert.equal(response.statusCode, 429);
+    assert.equal(response.payload.error, "withdrawal_rate_limited");
+    assert.equal(scenario.sendCount, 0);
+    assert.equal(scenario.records.size, 0);
+});
+
 test("replaying the same request idempotency key never submits or deducts twice", async () => {
     const first = await submitWithdrawal();
     const second = await submitWithdrawal();
@@ -301,12 +357,14 @@ test("replaying the same request idempotency key never submits or deducts twice"
 test("ambiguous submitted transfers keep the balance reserved and block a second request", async () => {
     scenario.transferOutcome = "ambiguous";
     const first = await submitWithdrawal();
+    const status = await getWithdrawalStatus();
     const second = await submitWithdrawal({
         requestId: "00000000-0000-4000-8000-000000000003"
     });
 
     assert.equal(first.statusCode, 202);
     assert.equal(first.payload.status, "submitted");
+    assert.equal(status.payload.activeWithdrawal, true);
     assert.equal(second.statusCode, 409);
     assert.equal(scenario.actualBalance, 5000n);
     assert.equal(scenario.ledger.length, 1);
@@ -317,10 +375,13 @@ test("withdrawal migration preserves existing data and enforces service-only ato
     const migration = readFileSync(new URL("../supabase-wallet-withdrawals.sql", import.meta.url), "utf8");
 
     assert.match(migration, /add column if not exists withdrawals_enabled boolean not null default false/);
+    assert.match(migration, /add column if not exists withdrawal_rate_limit_per_hour integer not null default 5/i);
     assert.match(migration, /for update/);
     assert.match(migration, /withdrawal_reserve/);
     assert.match(migration, /withdrawal_release/);
     assert.match(migration, /Insufficient credits for withdrawal/);
+    assert.match(migration, /v_recent_withdrawal_count >= v_config\.withdrawal_rate_limit_per_hour/);
+    assert.match(migration, /created_at > now\(\) - interval '1 hour'/i);
     assert.match(migration, /p_chain_failure_verified is distinct from true/);
     assert.match(migration, /to service_role/);
     assert.match(migration, /create or replace function public\.reserve_wallet_withdrawal\(\s*p_player_id uuid,\s*p_wallet_address text,\s*p_network text,\s*p_mint_address text,\s*p_token_program_id text,\s*p_treasury_address text,\s*p_amount_raw bigint,\s*p_token_decimals integer,\s*p_amount_credits bigint,\s*p_idempotency_key text,\s*p_memo text default ''/i);

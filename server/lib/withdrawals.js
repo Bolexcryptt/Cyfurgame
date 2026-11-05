@@ -1,7 +1,7 @@
 const { Connection, Keypair, PublicKey, Transaction } = require("@solana/web3.js");
 const {
     ASSOCIATED_TOKEN_PROGRAM_ID,
-    createAssociatedTokenAccountInstruction,
+    createAssociatedTokenAccountIdempotentInstruction,
     createTransferCheckedInstruction,
     getAssociatedTokenAddress,
     TOKEN_PROGRAM_ID
@@ -121,6 +121,7 @@ async function executeCyfurWithdrawal({
     amountRaw,
     treasurySigner = getWithdrawalSignerFromEnvironment(),
     onSubmitted,
+    transactionFactory = () => new Transaction(),
     connectionFactory = (url, options) => new Connection(url, options)
 }) {
     if (!isBase58(playerWalletAddress, 32)) {
@@ -169,10 +170,10 @@ async function executeCyfurWithdrawal({
         tokenProgramKey
     );
 
-    const [mintAccount, treasuryTokenAccountInfo, existingReceiverAccount] = await Promise.all([
+    const [mintAccount, treasuryTokenAccountInfo, receiverTokenAccountInfo] = await Promise.all([
         connection.getParsedAccountInfo(mintPublicKey, "finalized"),
         connection.getParsedAccountInfo(treasuryTokenAccount, "finalized"),
-        connection.getAccountInfo(playerTokenAccount, "finalized")
+        connection.getParsedAccountInfo(playerTokenAccount, "finalized")
     ]);
     if (!isOfficialCyfurMintAccount({ value: mintAccount.value })) {
         throw new Error("The configured CYFUR mint failed finalized on-chain verification.");
@@ -189,10 +190,26 @@ async function executeCyfurWithdrawal({
         throw new Error("The finalized treasury CYFUR token account is missing, mismatched, or underfunded.");
     }
 
-    const transaction = new Transaction();
-    if (!existingReceiverAccount) {
+    const receiverAccount = receiverTokenAccountInfo.value;
+    let receiverBalanceBeforeRaw = "0";
+    if (receiverAccount) {
+        const receiverInfo = receiverAccount.data?.parsed?.info;
+        const receiverBalance = receiverInfo?.tokenAmount?.amount;
+        if (!receiverAccount.owner?.equals?.(tokenProgramKey) ||
+            receiverAccount.data?.parsed?.type !== "account" ||
+            receiverInfo?.mint !== mintAddress ||
+            receiverInfo?.owner !== playerWalletAddress ||
+            typeof receiverBalance !== "string" ||
+            !/^\d+$/.test(receiverBalance)) {
+            throw new Error("The player's finalized CYFUR token account is invalid or mismatched.");
+        }
+        receiverBalanceBeforeRaw = receiverBalance;
+    }
+
+    const transaction = transactionFactory();
+    if (!receiverAccount) {
         transaction.add(
-            createAssociatedTokenAccountInstruction(
+            createAssociatedTokenAccountIdempotentInstruction(
                 treasuryPublicKey,
                 playerTokenAccount,
                 playerPublicKey,
@@ -218,6 +235,24 @@ async function executeCyfurWithdrawal({
     const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash("finalized");
     transaction.feePayer = treasuryPublicKey;
     transaction.recentBlockhash = blockhash;
+    const [treasurySolLamports, requiredRentLamports, feeEstimate] = await Promise.all([
+        connection.getBalance(treasuryPublicKey, "finalized"),
+        receiverAccount
+            ? Promise.resolve(0)
+            : connection.getMinimumBalanceForRentExemption(165, "finalized"),
+        connection.getFeeForMessage(transaction.compileMessage(), "finalized")
+    ]);
+    const feeLamports = feeEstimate?.value;
+    if (!Number.isSafeInteger(treasurySolLamports) ||
+        !Number.isSafeInteger(requiredRentLamports) ||
+        !Number.isSafeInteger(feeLamports) ||
+        feeLamports < 0) {
+        throw new Error("The finalized treasury fee or rent preflight could not be verified.");
+    }
+    if (treasurySolLamports < requiredRentLamports + feeLamports) {
+        throw new Error("The treasury SOL balance is insufficient for the current recipient token-account rent and transaction fee.");
+    }
+
     let signature = null;
     try {
         await transaction.sign(treasurySigner);
@@ -242,6 +277,21 @@ async function executeCyfurWithdrawal({
             chainError.chainFailed = true;
             throw chainError;
         }
+        const finalizedRecipientAccount = await connection.getParsedAccountInfo(
+            playerTokenAccount,
+            "finalized"
+        );
+        const finalizedRecipientInfo = finalizedRecipientAccount.value?.data?.parsed?.info;
+        const finalizedRecipientBalance = finalizedRecipientInfo?.tokenAmount?.amount;
+        if (!finalizedRecipientAccount.value?.owner?.equals?.(tokenProgramKey) ||
+            finalizedRecipientAccount.value.data?.parsed?.type !== "account" ||
+            finalizedRecipientInfo?.mint !== mintAddress ||
+            finalizedRecipientInfo?.owner !== playerWalletAddress ||
+            typeof finalizedRecipientBalance !== "string" ||
+            !/^\d+$/.test(finalizedRecipientBalance) ||
+            BigInt(finalizedRecipientBalance) !== BigInt(receiverBalanceBeforeRaw) + rawAmount) {
+            throw new Error("The finalized recipient token balance did not increase by exactly the withdrawal amount.");
+        }
     } catch (error) {
         if (signature) {
             error.signature = signature;
@@ -254,6 +304,10 @@ async function executeCyfurWithdrawal({
         signature,
         status: "finalized",
         amountRaw: rawAmount.toString(),
+        recipientBalanceRaw: (BigInt(receiverBalanceBeforeRaw) + rawAmount).toString(),
+        treasurySolLamports,
+        requiredRentLamports,
+        feeLamports,
         playerWalletAddress,
         treasuryAddress,
         mintAddress

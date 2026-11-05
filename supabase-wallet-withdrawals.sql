@@ -5,6 +5,9 @@
 alter table public.wallet_system_config
     add column if not exists withdrawals_enabled boolean not null default false;
 
+alter table public.wallet_system_config
+    add column if not exists withdrawal_rate_limit_per_hour integer not null default 5;
+
 create table if not exists public.wallet_withdrawals (
     id uuid primary key default gen_random_uuid(),
     player_id uuid not null references public.player_profiles (id) on delete cascade,
@@ -101,6 +104,7 @@ declare
     v_balance bigint;
     v_new_balance bigint;
     v_withdrawal_id uuid;
+    v_recent_withdrawal_count integer;
 begin
     if coalesce(auth.role(), '') <> 'service_role' then
         raise exception 'Server authorization is required.' using errcode = '42501';
@@ -132,6 +136,7 @@ begin
        or v_config.treasury_address is distinct from p_treasury_address
        or v_config.credits_per_token is distinct from 10000
        or v_config.rounding_policy is distinct from 'floor'
+       or v_config.withdrawal_rate_limit_per_hour is distinct from 5
        or floor(p_amount_raw::numeric * v_config.credits_per_token
             / power(10::numeric, v_config.token_decimals)) <> p_amount_credits then
         raise exception 'Withdrawal configuration or amount does not match the approved database settings.'
@@ -176,6 +181,13 @@ begin
           and w.status in ('pending', 'submitted')
     ) then
         raise exception 'A withdrawal is already pending reconciliation.' using errcode = '23505';
+    end if;
+    select count(*) into v_recent_withdrawal_count
+    from public.wallet_withdrawals as w
+    where w.player_id = p_player_id
+      and w.created_at > now() - interval '1 hour';
+    if v_recent_withdrawal_count >= v_config.withdrawal_rate_limit_per_hour then
+        raise exception 'Withdrawal request rate limit exceeded.' using errcode = 'P0001';
     end if;
     if v_balance < p_amount_credits then
         raise exception 'Insufficient credits for withdrawal.' using errcode = '22023';

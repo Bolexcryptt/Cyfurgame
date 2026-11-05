@@ -20,8 +20,15 @@ function safeBigInt(value) {
 
 function readWalletSystemConfig() {
     return serviceRequest(
-        "wallet_system_config?select=network,official_mint_address,token_program_id,token_decimals,treasury_address,credits_per_token,deposits_enabled,withdrawals_enabled&id=eq.1"
+        "wallet_system_config?select=network,official_mint_address,token_program_id,token_decimals,treasury_address,credits_per_token,deposits_enabled,withdrawals_enabled,withdrawal_rate_limit_per_hour&id=eq.1"
     ).then((rows) => rows[0] ?? null);
+}
+
+function sanitizeWithdrawalError(message) {
+    return String(message || "")
+        .replace(/https?:\/\/\S+/gi, "[redacted-url]")
+        .replace(/[A-Za-z0-9+/_-]{80,}={0,2}/g, "[redacted-data]")
+        .slice(0, 250);
 }
 
 module.exports = async function withdrawals(request, response) {
@@ -52,13 +59,44 @@ module.exports = async function withdrawals(request, response) {
         const availableCredits = balanceCredits;
 
         if (request.method === "GET") {
+            const configurationReady = configs?.network === "mainnet-beta" &&
+                configs.official_mint_address === RELICGRID_CYFUR_MINT_ADDRESS &&
+                configs.treasury_address === RELICGRID_TREASURY_ADDRESS &&
+                configs.token_program_id === "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA" &&
+                configs.token_decimals === 8 &&
+                String(configs.credits_per_token) === "10000" &&
+                configs.withdrawal_rate_limit_per_hour === 5 &&
+                process.env.SOLANA_NETWORK === "mainnet-beta";
+            let signerReady = false;
+            if (configurationReady) {
+                try {
+                    signerReady = getWithdrawalSignerFromEnvironment()
+                        .publicKey.toBase58() === RELICGRID_TREASURY_ADDRESS;
+                } catch (error) {
+                    console.error("Withdrawal signer readiness check failed.", {
+                        code: error?.code || "withdrawal_signer_unavailable"
+                    });
+                }
+            }
+            const rpcConfigured = Boolean(process.env.SOLANA_RPC_URL?.trim());
+            const featureEnabled = process.env.WITHDRAWAL_ENABLED === "true" &&
+                configs?.withdrawals_enabled === true;
             return sendJson(response, 200, {
-                withdrawalEnabled: process.env.WITHDRAWAL_ENABLED === "true" &&
-                    configs?.withdrawals_enabled === true,
+                withdrawalEnabled: featureEnabled && configurationReady && signerReady && rpcConfigured,
+                readiness: {
+                    featureEnabled,
+                    configurationReady,
+                    signerReady,
+                    rpcConfigured
+                },
                 walletAddress: linkedWallet?.wallet_address ?? null,
+                walletVerified: Boolean(linkedWallet?.verified_at &&
+                    isBase58(linkedWallet.wallet_address, 32)),
                 balanceCredits,
                 availableCredits,
                 pendingWithdrawalCredits: pendingCredits.toString(),
+                activeWithdrawal: history.some((entry) =>
+                    ["pending", "submitted"].includes(entry.status)),
                 config: configs ? {
                     network: configs.network,
                     officialMintAddress: configs.official_mint_address,
@@ -84,8 +122,9 @@ module.exports = async function withdrawals(request, response) {
             configs.token_program_id !== "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA" ||
             configs.token_decimals !== 8 ||
             String(configs.credits_per_token) !== "10000" ||
-            configs.network !== process.env.SOLANA_NETWORK ||
-            !["devnet", "mainnet-beta"].includes(configs.network)) {
+            configs.withdrawal_rate_limit_per_hour !== 5 ||
+            configs.network !== "mainnet-beta" ||
+            process.env.SOLANA_NETWORK !== "mainnet-beta") {
             return sendJson(response, 503, {
                 error: "withdrawal_not_configured",
                 message: "The treasury and CYFUR mint configuration for withdrawals is not ready. The owner-approved configuration must be rechecked before any token transfer is attempted."
@@ -185,6 +224,9 @@ module.exports = async function withdrawals(request, response) {
             if (/insufficient credits/i.test(details)) {
                 return sendJson(response, 402, { error: "insufficient_balance", availableCredits });
             }
+            if (/withdrawal request rate limit exceeded/i.test(details)) {
+                return sendJson(response, 429, { error: "withdrawal_rate_limited" });
+            }
             if (/already pending reconciliation|idempotency key was reused/i.test(details)) {
                 return sendJson(response, 409, { error: "withdrawal_already_pending" });
             }
@@ -267,13 +309,15 @@ module.exports = async function withdrawals(request, response) {
         } catch (error) {
             const signature = submittedSignature || error.signature || null;
             if (!signature || error.chainFailed === true) {
+                const safeFailureReason = sanitizeWithdrawalError(error?.message) ||
+                    "Withdrawal transfer failed.";
                 try {
                     await serviceRequest("rpc/release_wallet_withdrawal", {
                         method: "POST",
                         headers: { "Content-Type": "application/json" },
                         body: JSON.stringify({
                             p_withdrawal_id: reservation.withdrawal_id,
-                            p_failure_reason: String(error?.message || "Withdrawal transfer failed.").slice(0, 500),
+                            p_failure_reason: safeFailureReason,
                             p_chain_failure_verified: error.chainFailed === true,
                             p_transaction_signature: signature
                         })
@@ -289,7 +333,7 @@ module.exports = async function withdrawals(request, response) {
                 }
                 return sendJson(response, 502, {
                     error: "withdrawal_failed",
-                    message: error?.message || "The server-side withdrawal attempt failed.",
+                    message: safeFailureReason,
                     walletAddress: linkedWallet.wallet_address,
                     status: "failed"
                 });
@@ -305,10 +349,16 @@ module.exports = async function withdrawals(request, response) {
             });
         }
     } catch (error) {
-        console.error("Withdrawal request failed.", error);
+        console.error("Withdrawal request failed.", {
+            code: error?.code || "withdrawal_failed",
+            message: sanitizeWithdrawalError(error?.message)
+        });
         if (error?.status === 404) {
             return sendJson(response, 503, { error: "wallet_schema_not_installed" });
         }
-        return sendJson(response, 500, { error: "withdrawal_unavailable", message: error?.message || "Withdrawal processing is unavailable." });
+        return sendJson(response, 500, {
+            error: "withdrawal_unavailable",
+            message: "Withdrawal processing is unavailable. Please try again later."
+        });
     }
 };

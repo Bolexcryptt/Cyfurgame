@@ -268,20 +268,24 @@
                             <div class="wallet-data-panel">
                                 <span class="wallet-field-label">MINIMUM WITHDRAWAL</span>
                                 <b id="withdrawal-minimum">Not configured</b>
-                                <small id="withdrawal-minimum-note">No minimum withdrawal rule is defined in the approved project rules.</small>
+                                <small id="withdrawal-minimum-note">Any positive whole amount; maximum is your available balance.</small>
                             </div>
                         </div>
 
                         <form id="withdrawal-form" class="deposit-signature-form withdrawal-form">
-                            <label class="wallet-field-label" for="withdrawal-wallet-address">SOLANA RECEIVING ADDRESS</label>
-                            <input id="withdrawal-wallet-address" name="walletAddress" type="text" inputmode="text" autocomplete="off" spellcheck="false" maxlength="500" placeholder="Enter the player wallet that should receive CYFUR" required>
+                            <label class="wallet-field-label" for="withdrawal-wallet-address">VERIFIED LINKED SOLANA WALLET</label>
+                            <input id="withdrawal-wallet-address" name="walletAddress" type="text" inputmode="text" autocomplete="off" spellcheck="false" maxlength="44" placeholder="Link and verify a Solana wallet first" readonly required>
                             <div class="withdrawal-inline-actions">
-                                <button id="withdrawal-validate-address" class="button button-quiet" type="button">VALIDATE ADDRESS</button>
+                                <span id="withdrawal-wallet-verified" class="wallet-history-state" data-state="unknown">NOT VERIFIED</span>
                                 <button id="withdrawal-refresh" class="wallet-refresh" type="button">REFRESH WITHDRAWAL</button>
                             </div>
 
                             <label class="wallet-field-label" for="withdrawal-amount">WITHDRAWAL AMOUNT (CREDITS)</label>
-                            <input id="withdrawal-amount" name="amountCredits" type="text" inputmode="numeric" autocomplete="off" spellcheck="false" maxlength="64" placeholder="Example: 10000" required>
+                            <input id="withdrawal-amount" name="amountCredits" type="text" inputmode="numeric" autocomplete="off" spellcheck="false" maxlength="19" placeholder="Enter any whole amount up to your available balance" required>
+                            <div class="withdrawal-inline-actions">
+                                <small>Any positive amount up to your available credits. Limit: 5 requests per hour.</small>
+                                <button id="withdrawal-max" class="button button-quiet" type="button" disabled>MAX AVAILABLE</button>
+                            </div>
 
                             <div class="withdrawal-preview-bar" aria-live="polite">
                                 <span>EXACT CYFUR</span>
@@ -289,7 +293,7 @@
                             </div>
 
                             <button id="withdrawal-submit" class="button button-primary" type="submit" disabled>REQUEST WITHDRAWAL</button>
-                            <p id="withdrawal-status" class="wallet-api-status" role="status" aria-live="polite">Real withdrawals remain disabled until the owner-approved treasury signer, official CYFUR mint, funding, and Supabase migration are verified.</p>
+                            <p id="withdrawal-status" class="wallet-api-status" role="status" aria-live="polite">Sign in and link a verified Solana wallet to view your withdrawal balance.</p>
                             <p id="withdrawal-transaction-status" class="wallet-api-status" hidden></p>
                         </form>
 

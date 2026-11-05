@@ -827,11 +827,18 @@ function renderWithdrawalHistory(withdrawals) {
         const amount = document.createElement("b");
         amount.textContent = `${formatTokenAmount((withdrawal.amount_raw ?? "0").toString(), Number(withdrawal.token_decimals ?? 8))} CYFUR`;
         const info = document.createElement("small");
-        info.textContent = typeof withdrawal.transaction_signature === "string"
-            ? `SIG ${history.id === "withdrawal-history"
-                ? withdrawal.transaction_signature
-                : `${withdrawal.transaction_signature.slice(0, 8)}…${withdrawal.transaction_signature.slice(-8)}`}`
-            : `Status: ${withdrawal.status || "unknown"}`;
+        const signature = withdrawal.transaction_signature;
+        if (typeof signature === "string" && /^[1-9A-HJ-NP-Za-km-z]{80,100}$/.test(signature)) {
+            info.textContent = `SIG ${signature.slice(0, 8)}…${signature.slice(-8)} · `;
+            const link = document.createElement("a");
+            link.href = `https://solscan.io/tx/${encodeURIComponent(signature)}`;
+            link.target = "_blank";
+            link.rel = "noopener noreferrer";
+            link.textContent = "VIEW ON SOLSCAN";
+            info.append(link);
+        } else {
+            info.textContent = `Status: ${withdrawal.status || "unknown"}`;
+        }
         detail.append(amount, info);
 
         const state = document.createElement("span");
@@ -878,22 +885,26 @@ function updateWithdrawalPreview() {
 async function refreshWithdrawalStatus() {
     const addressInput = document.getElementById("withdrawal-wallet-address");
     const submit = document.getElementById("withdrawal-submit");
-    const validateButton = document.getElementById("withdrawal-validate-address");
+    const verifiedBadge = document.getElementById("withdrawal-wallet-verified");
     const amountInput = document.getElementById("withdrawal-amount");
+    const maxButton = document.getElementById("withdrawal-max");
     const balanceValue = document.getElementById("withdrawal-eligible-balance");
     const balanceNote = document.getElementById("withdrawal-balance-note");
     const minimumValue = document.getElementById("withdrawal-minimum");
     const minimumNote = document.getElementById("withdrawal-minimum-note");
     const history = document.getElementById("withdrawal-history");
     const tokenDecimals = document.getElementById("withdrawal-token-decimals");
-    if (!addressInput || !submit || !validateButton || !amountInput || !balanceValue || !balanceNote || !minimumValue || !minimumNote || !history) return;
+    if (!addressInput || !submit || !verifiedBadge || !amountInput || !maxButton ||
+        !balanceValue || !balanceNote || !minimumValue || !minimumNote || !history) return;
     setWithdrawalStatus("Loading withdrawal details…", "pending");
     submit.disabled = true;
-    validateButton.disabled = true;
+    maxButton.disabled = true;
     amountInput.disabled = true;
-    addressInput.disabled = true;
-    minimumValue.textContent = "Not configured";
-    minimumNote.textContent = "No minimum withdrawal rule is defined in the approved project rules.";
+    addressInput.readOnly = true;
+    verifiedBadge.dataset.state = "unknown";
+    verifiedBadge.textContent = "CHECKING";
+    minimumValue.textContent = "Any positive amount";
+    minimumNote.textContent = "Maximum is your available balance; limited to 5 requests per hour.";
     balanceValue.textContent = "0 CREDITS";
     balanceNote.textContent = "No active withdrawal balance loaded yet.";
     history.replaceChildren();
@@ -928,31 +939,42 @@ async function refreshWithdrawalStatus() {
             return;
         }
         const availableCredits = BigInt(result.availableCredits || "0");
-        const totalCredits = BigInt(result.balanceCredits || "0");
         const decimals = Number(result.config?.tokenDecimals ?? 8);
         if (tokenDecimals) tokenDecimals.dataset.decimals = String(decimals);
-        if (typeof result.walletAddress === "string" && result.walletAddress.trim() && !addressInput.value.trim()) {
-            addressInput.value = result.walletAddress.trim();
-        }
+        addressInput.value = typeof result.walletAddress === "string" ? result.walletAddress.trim() : "";
         balanceValue.textContent = `${formatCredits(result.availableCredits || "0")} CREDITS`;
         balanceNote.textContent = `${formatCredits(result.balanceCredits || "0")} total credits on file · ${formatCredits(result.availableCredits || "0")} eligible for withdrawal`;
-        minimumValue.textContent = "Not configured";
-        minimumNote.textContent = "No minimum withdrawal rule is defined in the approved project rules.";
+        minimumValue.textContent = "Any positive amount";
+        minimumNote.textContent = "Maximum is your available balance; limited to 5 requests per hour.";
         renderWithdrawalHistory(result.withdrawals || []);
-        const ready = result.withdrawalEnabled === true && typeof result.walletAddress === "string" && result.walletAddress.trim();
-        submit.disabled = !ready || availableCredits <= 0n || !amountInput.value.trim();
-        validateButton.disabled = !ready;
+        const walletVerified = result.walletVerified === true &&
+            typeof result.walletAddress === "string" &&
+            /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(result.walletAddress);
+        verifiedBadge.dataset.state = walletVerified ? "confirmed" : "failed";
+        verifiedBadge.textContent = walletVerified ? "VERIFIED" : "NOT VERIFIED";
+        const ready = result.withdrawalEnabled === true && walletVerified;
+        const hasActiveWithdrawal = result.activeWithdrawal === true;
+        const enteredAmount = amountInput.value.trim();
+        const amountWithinBalance = /^\d+$/.test(enteredAmount) &&
+            BigInt(enteredAmount) > 0n &&
+            BigInt(enteredAmount) <= availableCredits;
+        submit.disabled = !ready || hasActiveWithdrawal || !amountWithinBalance;
         amountInput.disabled = !ready;
-        addressInput.disabled = !ready;
-        if (!ready) {
-            setWithdrawalStatus("Real withdrawals remain disabled until the treasury signer, approved CYFUR mint, and owner authorization are verified.", "error");
+        maxButton.disabled = !ready || hasActiveWithdrawal || availableCredits <= 0n;
+        maxButton.dataset.availableCredits = result.availableCredits || "0";
+        if (hasActiveWithdrawal) {
+            amountInput.disabled = true;
+            setWithdrawalStatus("A withdrawal is already pending confirmation. Check the history below; another request is blocked to prevent duplicate payments.", "pending");
             return;
         }
-        if (amountInput.value.trim() === "") {
-            amountInput.value = availableCredits > 0n ? availableCredits.toString() : "0";
+        if (!ready) {
+            setWithdrawalStatus(walletVerified
+                ? "Withdrawals are temporarily unavailable. Please try again later."
+                : "Link and verify a Solana wallet to this game account before withdrawing.", "error");
+            return;
         }
         updateWithdrawalPreview();
-        setWithdrawalStatus("Withdrawal requests are enabled. Review the linked wallet and send the request only after confirming the destination is correct.", "ready");
+        setWithdrawalStatus("Choose any positive credit amount up to your available balance. The verified linked wallet is the receiving address.", "ready");
     } catch (error) {
         console.error("Withdrawal status failed to load.", error);
         setWithdrawalStatus(error.message || "Withdrawal details could not be loaded.", "error");
@@ -970,7 +992,7 @@ async function submitWithdrawalRequest(event) {
     const walletAddress = (addressInput.value || "").trim();
     const amountCredits = (amountInput.value || "").trim();
     if (!/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(walletAddress)) {
-        setWithdrawalStatus("Enter a valid Solana wallet address that matches the verified linked wallet for this account.", "error");
+        setWithdrawalStatus("Link and verify a Solana wallet before requesting a withdrawal.", "error");
         return;
     }
     if (!/^\d+$/.test(amountCredits) || BigInt(amountCredits) <= 0n) {
@@ -1025,10 +1047,19 @@ async function submitWithdrawalRequest(event) {
         });
         const result = await response.json().catch(() => ({}));
         if (!response.ok) {
-            const errorMessage = result.message || result.error || `Withdrawal request failed (${response.status}).`;
+            const withdrawalErrors = {
+                withdrawal_rate_limited: "You have reached the limit of 5 withdrawal requests in the last hour.",
+                wallet_not_verified: "Link and verify a Solana wallet before requesting a withdrawal.",
+                withdrawals_disabled: "Withdrawals are temporarily unavailable. Please try again later."
+            };
+            const errorMessage = result.message ||
+                withdrawalErrors[result.error] ||
+                result.error ||
+                `Withdrawal request failed (${response.status}).`;
             if (["insufficient_balance", "withdrawal_failed"].includes(result.error)) {
                 sessionStorage.removeItem(requestStorageKey);
             }
+            await refreshWithdrawalStatus();
             setWithdrawalStatus(errorMessage, "error");
             if (statusNode) {
                 statusNode.textContent = errorMessage;
@@ -1038,12 +1069,26 @@ async function submitWithdrawalRequest(event) {
         }
         if (result.status === "confirmed") {
             sessionStorage.removeItem(requestStorageKey);
-            setWithdrawalStatus(`Withdrawal confirmed. Signature: ${result.signature || "pending verification"}`, "ready");
+            setWithdrawalStatus("Withdrawal confirmed on Solana.", "ready");
             if (statusNode) {
-                statusNode.textContent = `Transaction signature: ${result.signature || "unavailable"}`;
+                statusNode.replaceChildren(document.createTextNode("Transaction signature: "));
+                const signatureText = document.createElement("span");
+                signatureText.textContent = result.signature || "unavailable";
+                statusNode.append(signatureText);
+                if (typeof result.signature === "string" &&
+                    /^[1-9A-HJ-NP-Za-km-z]{80,100}$/.test(result.signature)) {
+                    statusNode.append(document.createTextNode(" · "));
+                    const link = document.createElement("a");
+                    link.href = `https://solscan.io/tx/${encodeURIComponent(result.signature)}`;
+                    link.target = "_blank";
+                    link.rel = "noopener noreferrer";
+                    link.textContent = "VIEW ON SOLSCAN";
+                    statusNode.append(link);
+                }
                 statusNode.dataset.state = "ready";
             }
             await refreshWithdrawalStatus();
+            setWithdrawalStatus("Withdrawal confirmed on Solana.", "ready");
             return;
         }
         const pendingMessage = result.signature
@@ -1051,36 +1096,30 @@ async function submitWithdrawalRequest(event) {
             : result.message || "The server accepted the request but the final transfer status is pending.";
         setWithdrawalStatus(pendingMessage, "pending");
         if (statusNode) {
-            statusNode.textContent = pendingMessage;
+            statusNode.replaceChildren(document.createTextNode(pendingMessage));
+            if (typeof result.signature === "string" &&
+                /^[1-9A-HJ-NP-Za-km-z]{80,100}$/.test(result.signature)) {
+                statusNode.append(document.createTextNode(" · "));
+                const link = document.createElement("a");
+                link.href = `https://solscan.io/tx/${encodeURIComponent(result.signature)}`;
+                link.target = "_blank";
+                link.rel = "noopener noreferrer";
+                link.textContent = "VIEW ON SOLSCAN";
+                statusNode.append(link);
+            }
             statusNode.dataset.state = "pending";
         }
         await refreshWithdrawalStatus();
+        setWithdrawalStatus(pendingMessage, "pending");
     } catch (error) {
         console.error("Withdrawal submission failed.", error);
+        await refreshWithdrawalStatus();
         setWithdrawalStatus(error.message || "The withdrawal request could not be completed.", "error");
         if (statusNode) {
             statusNode.textContent = error.message || "Withdrawal failed.";
             statusNode.dataset.state = "error";
         }
-    } finally {
-        submitButton.disabled = false;
     }
-}
-
-async function validateWithdrawalAddress() {
-    const addressInput = document.getElementById("withdrawal-wallet-address");
-    const status = document.getElementById("withdrawal-status");
-    if (!addressInput || !status) return;
-    const value = (addressInput.value || "").trim();
-    if (!value) {
-        setWithdrawalStatus("Enter the Solana wallet address that should receive CYFUR.", "error");
-        return;
-    }
-    if (!/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(value)) {
-        setWithdrawalStatus("This is not a valid Solana public key. Check the address and try again.", "error");
-        return;
-    }
-    setWithdrawalStatus("This wallet address looks valid and matches the expected Solana format.", "ready");
 }
 
 async function refreshWallet() {
@@ -2419,32 +2458,34 @@ async function saveWalletLevelCompletion(detail) {
 
 const withdrawalAddressInput = document.getElementById("withdrawal-wallet-address");
 const withdrawalAmountInput = document.getElementById("withdrawal-amount");
-const withdrawalValidateButton = document.getElementById("withdrawal-validate-address");
+const withdrawalMaxButton = document.getElementById("withdrawal-max");
 const withdrawalForm = document.getElementById("withdrawal-form");
-if (withdrawalForm && withdrawalAddressInput && withdrawalAmountInput && withdrawalValidateButton) {
-    withdrawalValidateButton.addEventListener("click", validateWithdrawalAddress);
-    withdrawalAddressInput.addEventListener("input", () => {
-        const value = (withdrawalAddressInput.value || "").trim();
-        if (!value) {
-            setWithdrawalStatus("Enter the Solana wallet address that should receive CYFUR.", "error");
-            return;
-        }
-        if (!/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(value)) {
-            setWithdrawalStatus("This wallet address is not yet a valid Solana public key.", "error");
-            return;
-        }
-        setWithdrawalStatus("This wallet address looks valid and is ready for a withdrawal review.", "ready");
+if (withdrawalForm && withdrawalAddressInput && withdrawalAmountInput && withdrawalMaxButton) {
+    withdrawalMaxButton.addEventListener("click", () => {
+        const availableCredits = withdrawalMaxButton.dataset.availableCredits || "0";
+        if (!/^\d+$/.test(availableCredits) || BigInt(availableCredits) <= 0n) return;
+        withdrawalAmountInput.value = availableCredits;
+        updateWithdrawalPreview();
+        document.getElementById("withdrawal-submit").disabled = false;
     });
     withdrawalAmountInput.addEventListener("input", () => {
         const value = (withdrawalAmountInput.value || "").trim();
         if (!/^\d*$/.test(value)) {
+            document.getElementById("withdrawal-submit").disabled = true;
             setWithdrawalStatus("Only whole credit values can be withdrawn.", "error");
             return;
         }
         updateWithdrawalPreview();
+        const availableCredits = BigInt(withdrawalMaxButton.dataset.availableCredits || "0");
+        const valid = value !== "" && BigInt(value) > 0n && BigInt(value) <= availableCredits;
+        document.getElementById("withdrawal-submit").disabled =
+            !valid || withdrawalMaxButton.disabled;
     });
     withdrawalForm.addEventListener("submit", submitWithdrawalRequest);
 }
+document.getElementById("withdrawal-refresh")?.addEventListener("click", () => {
+    void refreshWithdrawalStatus();
+});
 
 window.addEventListener("fluxgrid:level-timer-start", (event) => {
     const sessionId = event.detail?.walletSessionId;
