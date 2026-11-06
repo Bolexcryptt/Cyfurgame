@@ -75,7 +75,9 @@ function handleApiCors(request, response) {
     const host = request.headers["x-forwarded-host"]?.split(",")[0]?.trim() ||
         request.headers.host;
     const sameOrigin = host && origin === `${protocol}://${host}`;
-    if (origin !== configuredOrigin && !sameOrigin) {
+    const capacitorOrigin = origin === "capacitor://localhost" ||
+        origin === "https://localhost";
+    if (origin !== configuredOrigin && !sameOrigin && !capacitorOrigin) {
         sendJson(response, 403, { error: "origin_not_allowed" });
         return true;
     }
