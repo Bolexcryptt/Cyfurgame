@@ -21,6 +21,70 @@ const {
     solanaRpc
 } = require("../server/lib/solana-deposit");
 
+function getAction(request) {
+    if (typeof request.query?.action === "string") return request.query.action;
+    return new URL(request.url || "/api/wallet", "https://relicgrid.invalid")
+        .searchParams.get("action");
+}
+
+function isZeroCreditBalance(value) {
+    if (typeof value === "number") return Number.isSafeInteger(value) && value === 0;
+    return typeof value === "string" && /^\d+$/.test(value) && BigInt(value) === 0n;
+}
+
+async function getAccountRecoveryPreflight(playerId) {
+    const encodedPlayerId = encodeURIComponent(playerId);
+    const [
+        profiles,
+        accounts,
+        completions,
+        ledgerEntries,
+        deposits,
+        paymentIntents,
+        linkedWallets,
+        walletChallenges,
+        withdrawals,
+        levelSessions,
+        depositAddresses
+    ] = await Promise.all([
+        serviceRequest(`player_profiles?select=id,display_name&id=eq.${encodedPlayerId}&limit=1`),
+        serviceRequest(`wallet_credit_accounts?select=balance_credits&player_id=eq.${encodedPlayerId}&limit=1`),
+        serviceRequest(`level_completions?select=player_id&player_id=eq.${encodedPlayerId}&limit=1`),
+        serviceRequest(`wallet_credit_ledger?select=id&player_id=eq.${encodedPlayerId}&limit=1`),
+        serviceRequest(`wallet_deposits?select=id&player_id=eq.${encodedPlayerId}&limit=1`),
+        serviceRequest(`wallet_payment_intents?select=id&player_id=eq.${encodedPlayerId}&limit=1`),
+        serviceRequest(`player_solana_wallets?select=player_id&player_id=eq.${encodedPlayerId}&limit=1`),
+        serviceRequest(`wallet_link_challenges?select=player_id&player_id=eq.${encodedPlayerId}&limit=1`),
+        serviceRequest(`wallet_withdrawals?select=id&player_id=eq.${encodedPlayerId}&limit=1`),
+        serviceRequest(`wallet_level_sessions?select=id&player_id=eq.${encodedPlayerId}&limit=1`),
+        serviceRequest(`player_deposit_addresses?select=player_id&player_id=eq.${encodedPlayerId}&limit=1`)
+    ]);
+
+    const profileReady = profiles.length === 1;
+    const accountReady = accounts.length === 1 &&
+        isZeroCreditBalance(accounts[0].balance_credits);
+    if (!profileReady || !accountReady) {
+        return {
+            safeToRecover: false,
+            reason: "identity_state_unavailable",
+            message: "The current player account could not be safely checked. No account was changed."
+        };
+    }
+
+    const hasPlayerData = Boolean(profiles[0].display_name?.trim()) ||
+        [completions, ledgerEntries, deposits, paymentIntents, linkedWallets,
+            walletChallenges, withdrawals, levelSessions, depositAddresses]
+            .some((rows) => rows.length > 0);
+
+    return {
+        safeToRecover: !hasPlayerData,
+        reason: hasPlayerData ? "current_identity_has_data" : null,
+        message: hasPlayerData
+            ? "This guest account already has player data. Link a recovery email to this account instead of switching identities."
+            : null
+    };
+}
+
 module.exports = async function wallet(request, response) {
     if (handleApiCors(request, response)) return;
     if (request.method !== "GET") {
@@ -34,6 +98,23 @@ module.exports = async function wallet(request, response) {
     try {
         const user = await authenticate(request);
         if (!user) return sendJson(response, 401, { error: "authentication_required" });
+
+        if (getAction(request) === "identity-recovery-preflight") {
+            if (user.is_anonymous !== true) {
+                return sendJson(response, 409, {
+                    error: "account_recovery_requires_anonymous_session",
+                    message: "Account recovery is only available from a new anonymous player session."
+                });
+            }
+            if (!process.env.SUPABASE_SERVICE_ROLE_KEY?.trim()) {
+                return sendJson(response, 503, { error: "wallet_api_not_configured" });
+            }
+            return sendJson(
+                response,
+                200,
+                await getAccountRecoveryPreflight(user.id)
+            );
+        }
 
         const [accounts, deposits, ledgerEntries] = await Promise.all([
             selectOwn(request, "wallet_credit_accounts", new URLSearchParams({

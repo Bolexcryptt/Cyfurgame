@@ -11,6 +11,14 @@ import {
 import { supabase, supabaseConfigured } from "./supabase.js";
 import { GAME_API_BASE_URL } from "./supabase-config.js";
 import {
+    requestAccountEmailLink,
+    requestExistingAccountRecovery,
+    hydratePlayerFromAuthenticatedAccount,
+    restoreOrCreatePlayerSession,
+    verifyAccountEmailLink,
+    verifyExistingAccountRecovery
+} from "./player-auth.mjs";
+import {
     bytesToWalletBase64,
     clearPhantomMobileSession,
     connectPhantom,
@@ -133,10 +141,12 @@ let authUser = null;
 let backendStatus = supabaseConfigured ? "Connecting to Supabase…" : "Supabase is not configured.";
 let backendReady;
 let walletStatusSnapshot = null;
+let levelsGloballyLocked = true;
 let currentDepositIntent = null;
 let solanaWeb3ModulePromise = null;
 let activeLevelEntryCostCredits = null;
 let levelStartInProgress = false;
+let pendingAccountEmail = "";
 
 function savePlayer() {
     localStorage.setItem(storageKey, JSON.stringify(player));
@@ -192,13 +202,6 @@ videoOrientationQuery.addEventListener("change", updateVideoOrientation);
 window.addEventListener("resize", updateVideoOrientation);
 window.screen.orientation?.addEventListener("change", updateVideoOrientation);
 
-function nextUnlockedLevel(completedLevels) {
-    const completed = new Set(completedLevels);
-    let next = 1;
-    while (completed.has(next) && next < 99) next++;
-    return next;
-}
-
 function getContinueLevel() {
     return getCampaignStartLevel(player.completedLevels, player.lastLevel, player.unlockedLevel);
 }
@@ -209,12 +212,17 @@ async function refreshOwnProgress() {
         .select("level_number")
         .eq("player_id", authUser.id);
     if (error) throw error;
-    player.completedLevels = mergeCompletedLevels(
-        player.completedLevels,
-        data.map((record) => record.level_number),
-        !player.playerId || player.playerId === authUser.id
+    const hydrated = hydratePlayerFromAuthenticatedAccount(
+        player,
+        authUser,
+        { display_name: player.name },
+        mergeCompletedLevels(
+            player.completedLevels,
+            data.map((record) => record.level_number),
+            !player.playerId || player.playerId === authUser.id
+        )
     );
-    player.unlockedLevel = nextUnlockedLevel(player.completedLevels);
+    Object.assign(player, hydrated);
     savePlayer();
 }
 
@@ -225,15 +233,8 @@ async function initializeBackend() {
     }
 
     try {
-        const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
-        if (sessionError) throw sessionError;
-        authUser = sessionData.session?.user ?? null;
-        if (!authUser) {
-            const { data, error } = await supabase.auth.signInAnonymously();
-            if (error) throw error;
-            authUser = data.user;
-        }
-        if (!authUser) throw new Error("Supabase did not return an authenticated player.");
+        const session = await restoreOrCreatePlayerSession(supabase.auth);
+        authUser = session.user;
 
         const { data: profile, error: profileError } = await supabase
             .from("player_profiles")
@@ -243,17 +244,20 @@ async function initializeBackend() {
         if (profileError) throw profileError;
         if (!profile) throw new Error("Player profile is missing. Run supabase-leaderboard.sql in the SQL Editor.");
 
-        if (profile.display_name) {
-            player.name = profile.display_name;
-        } else if (player.name) {
+        if (!profile.display_name && player.playerId === authUser.id && player.name) {
             const { error } = await supabase.rpc("set_player_display_name", {
                 p_display_name: player.name
             });
             if (error) throw error;
         }
 
+        Object.assign(player, hydratePlayerFromAuthenticatedAccount(
+            player,
+            authUser,
+            profile,
+            []
+        ));
         await refreshOwnProgress();
-        player.playerId = authUser.id;
         backendStatus = "Connected to the RelicGrid leaderboard.";
         savePlayer();
         renderProfile();
@@ -339,7 +343,9 @@ function renderProfile() {
     nextTelemetry.parentElement.setAttribute("aria-valuenow", String(Math.round(nextProgress)));
     document.getElementById("hero-current-sector").textContent =
         `LEVEL ${String(continueLevel).padStart(2, "0")}`;
-    document.getElementById("hero-sector-access").textContent = "ALL SECTORS AVAILABLE";
+    document.getElementById("hero-sector-access").textContent =
+        levelsGloballyLocked ? "ALL SECTORS LOCKED" : "ALL SECTORS AVAILABLE";
+    document.getElementById("continue-game").disabled = levelsGloballyLocked;
     const campaignMap = document.getElementById("campaign-map-grid");
     const campaignMapCells = document.createDocumentFragment();
     for (const level of levels) {
@@ -376,6 +382,189 @@ function renderProfile() {
         statCard("NEXT STORY LEVEL", `LEVEL ${String(player.unlockedLevel).padStart(2, "0")}`),
         statCard("LEADERBOARD", supabaseConfigured ? backendStatus : "Configure Supabase to enable shared rankings")
     );
+    renderPlayerAccountStatus();
+}
+
+function renderPlayerAccountStatus() {
+    const status = document.getElementById("account-identity-status");
+    const linkForm = document.getElementById("account-upgrade-form");
+    const verifyForm = document.getElementById("account-upgrade-code-form");
+    const recoveryPanel = document.getElementById("account-recovery-panel");
+    if (!status) return;
+
+    if (!supabaseConfigured || !authUser) {
+        status.textContent = "Supabase player authentication is unavailable.";
+        if (linkForm) linkForm.hidden = true;
+        if (verifyForm) verifyForm.hidden = true;
+        if (recoveryPanel) recoveryPanel.hidden = true;
+        return;
+    }
+
+    const isAnonymous = authUser.is_anonymous === true;
+    if (isAnonymous) {
+        status.textContent = "This player uses a persistent anonymous Supabase identity. Link and verify an email to recover this same player ID on another device.";
+        if (linkForm) linkForm.hidden = false;
+        if (verifyForm) verifyForm.hidden = !pendingAccountEmail;
+    } else {
+        status.textContent = authUser.email_confirmed_at
+            ? "A verified sign-in identity is linked to this player. Credits, progress, and wallet links remain attached to the same Supabase user ID."
+            : "A permanent sign-in identity is linked to this player. Verify its email to enable account recovery.";
+        if (linkForm) linkForm.hidden = true;
+        if (verifyForm) verifyForm.hidden = true;
+    }
+    if (recoveryPanel) recoveryPanel.hidden = !isAnonymous;
+}
+
+async function requestAccountRecoveryPreflight() {
+    if (!supabaseConfigured || !supabase || !authUser ||
+        authUser.is_anonymous !== true) {
+        throw new Error("Account recovery requires the current anonymous player session.");
+    }
+    const { data, error } = await supabase.auth.getSession();
+    if (error) throw error;
+    if (!data.session?.access_token || data.session.user?.id !== authUser.id) {
+        throw new Error("The current Supabase player session could not be verified.");
+    }
+
+    const response = await fetch(apiUrl("wallet?action=identity-recovery-preflight"), {
+        headers: {
+            Authorization: `Bearer ${data.session.access_token}`,
+            "Content-Type": "application/json"
+        },
+        cache: "no-store"
+    });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok) {
+        throw new Error(result.message || result.error ||
+            `Account recovery check failed (${response.status}).`);
+    }
+    if (result.safeToRecover !== true) {
+        throw new Error(result.message ||
+            "The current player identity could not be proven safe to replace.");
+    }
+}
+
+function setAccountAuthStatus(elementId, message, state = "") {
+    const status = document.getElementById(elementId);
+    if (!status) return;
+    status.textContent = message;
+    status.dataset.state = state;
+}
+
+async function requestAccountUpgrade(event) {
+    event.preventDefault();
+    const email = document.getElementById("account-upgrade-email").value.trim();
+    setAccountAuthStatus("account-upgrade-status", "Requesting an email verification code…", "pending");
+    try {
+        await backendReady;
+        if (!authUser || authUser.is_anonymous !== true) {
+            throw new Error("Only the current anonymous player can be upgraded.");
+        }
+        await requestAccountEmailLink(supabase.auth, email);
+        pendingAccountEmail = email;
+        document.getElementById("account-upgrade-code-form").hidden = false;
+        renderPlayerAccountStatus();
+        setAccountAuthStatus(
+            "account-upgrade-status",
+            "Check your email for the Supabase verification code. The player ID and its existing data are unchanged.",
+            "pending"
+        );
+    } catch (error) {
+        console.error("Player account email could not be linked.", error);
+        setAccountAuthStatus("account-upgrade-status", error.message, "error");
+    }
+}
+
+async function verifyAccountUpgrade(event) {
+    event.preventDefault();
+    const email = document.getElementById("account-upgrade-email").value.trim();
+    const token = document.getElementById("account-upgrade-code").value.trim();
+    setAccountAuthStatus("account-upgrade-status", "Verifying the email identity…", "pending");
+    try {
+        if (!authUser || authUser.is_anonymous !== true || !pendingAccountEmail ||
+            email.toLowerCase() !== pendingAccountEmail.toLowerCase()) {
+            throw new Error("Request a new email verification code for the current player account.");
+        }
+        const verifiedUser = await verifyAccountEmailLink(supabase.auth, email, token);
+        if (verifiedUser.id !== authUser.id) {
+            throw new Error("The verification did not match the current player identity.");
+        }
+        const { data, error } = await supabase.auth.getUser();
+        if (error) throw error;
+        authUser = data.user;
+        pendingAccountEmail = "";
+        renderProfile();
+        setAccountAuthStatus(
+            "account-upgrade-status",
+            "Recovery email verified. This account keeps the same player ID, balances, progress, and linked wallet.",
+            "ready"
+        );
+    } catch (error) {
+        console.error("Player account email verification failed.", error);
+        setAccountAuthStatus("account-upgrade-status", error.message, "error");
+    }
+}
+
+async function requestAccountRecovery(event) {
+    event.preventDefault();
+    const email = document.getElementById("account-recovery-email").value.trim();
+    setAccountAuthStatus("account-recovery-status", "Checking this guest account before recovery…", "pending");
+    try {
+        await backendReady;
+        await requestAccountRecoveryPreflight();
+        await requestExistingAccountRecovery(supabase.auth, email);
+        setAccountAuthStatus(
+            "account-recovery-status",
+            "If this email has a linked player account, Supabase sent a sign-in code. Enter it below. No new permanent account is created.",
+            "pending"
+        );
+        document.getElementById("account-recovery-code-form").hidden = false;
+    } catch (error) {
+        console.error("Existing player account recovery could not be started.", error);
+        setAccountAuthStatus("account-recovery-status", error.message, "error");
+    }
+}
+
+async function verifyAccountRecovery(event) {
+    event.preventDefault();
+    const email = document.getElementById("account-recovery-email").value.trim();
+    const token = document.getElementById("account-recovery-code").value.trim();
+    setAccountAuthStatus("account-recovery-status", "Verifying the existing player account…", "pending");
+    try {
+        await requestAccountRecoveryPreflight();
+        const recoveredUser = await verifyExistingAccountRecovery(supabase.auth, email, token);
+        authUser = recoveredUser;
+        pendingAccountEmail = "";
+        player.name = "";
+        player.playerId = recoveredUser.id;
+        player.completedLevels = [];
+        player.unlockedLevel = 1;
+        player.lastLevel = 1;
+        player.transitionMilestonesPlayed = [];
+        const { data: profile, error } = await supabase
+            .from("player_profiles")
+            .select("display_name")
+            .eq("id", recoveredUser.id)
+            .maybeSingle();
+        if (error) throw error;
+        if (!profile) throw new Error("The recovered player profile could not be loaded.");
+        player.name = profile.display_name || "";
+        await refreshOwnProgress();
+        savePlayer();
+        backendReady = Promise.resolve(true);
+        renderProfile();
+        await refreshWallet();
+        await refreshWithdrawalStatus();
+        showNameOrHome();
+        setAccountAuthStatus(
+            "account-recovery-status",
+            "Existing player account restored. Its server-side balance and progress are loaded under the original Supabase user ID.",
+            "ready"
+        );
+    } catch (error) {
+        console.error("Existing player account recovery failed.", error);
+        setAccountAuthStatus("account-recovery-status", error.message, "error");
+    }
 }
 
 function setLeaderboardStatus(message, state = "") {
@@ -532,8 +721,8 @@ function renderLevels() {
             verifiedBalance !== null &&
             verifiedBalance < BigInt(entryCostCredits);
         button.className =
-            `${insufficientCredits ? "is-insufficient" : "is-unlocked"}${completed ? " is-complete" : ""}${current ? " is-current" : ""}`;
-        button.disabled = false;
+            `${levelsGloballyLocked ? "is-locked" : insufficientCredits ? "is-insufficient" : "is-unlocked"}${completed ? " is-complete" : ""}${current ? " is-current" : ""}`;
+        button.disabled = levelsGloballyLocked;
         const entryCost = document.createElement("small");
         entryCost.className = "level-cost";
         entryCost.textContent = insufficientCredits
@@ -544,12 +733,16 @@ function renderLevels() {
         detail.append(title, meta);
         const badge = document.createElement("span");
         badge.className = "level-state";
-        badge.textContent = insufficientCredits ? "PRACTICE" : completed ? "CLEARED" : current ? "NEXT UP" : "PLAY";
+        badge.textContent = levelsGloballyLocked
+            ? "LOCKED"
+            : insufficientCredits ? "PRACTICE" : completed ? "CLEARED" : current ? "NEXT UP" : "PLAY";
         const cost = document.createElement("span");
         cost.className = "level-entry-cost";
         cost.append(entryCost);
         button.append(number, detail, cost, badge);
-        button.setAttribute("aria-label", insufficientCredits
+        button.setAttribute("aria-label", levelsGloballyLocked
+            ? `Level ${level.number} is locked`
+            : insufficientCredits
             ? `Practice level ${level.number}; paid entry requires ${formatCredits(entryCostCredits)} credits, verified balance ${formatCredits(verifiedBalance.toString())}`
             : `Play level ${level.number}${walletStatusSnapshot?.paidGameplayEnabled === true ? `, ${formatCredits(entryCostCredits)} credit entry or free practice` : " in free practice"}`);
         button.addEventListener("click", () => void startLevel(level.number));
@@ -563,7 +756,30 @@ function renderHome() {
     renderProfile();
     renderLevels();
     showScreen("home-screen");
+    void refreshGameConfig();
     void refreshWallet();
+}
+
+async function refreshGameConfig() {
+    try {
+        const response = await fetch(apiUrl("game-config"), { cache: "no-store" });
+        const result = await response.json().catch(() => ({}));
+        if (!response.ok || typeof result.levelsLocked !== "boolean") {
+            throw new Error(result.error || `Game access status could not be loaded (${response.status}).`);
+        }
+        levelsGloballyLocked = result.levelsLocked;
+    } catch (error) {
+        console.error("Game access status could not be loaded.", error);
+        levelsGloballyLocked = true;
+    }
+    renderProfile();
+    renderLevels();
+    const levelStatus = document.getElementById("level-entry-status");
+    if (levelStatus) {
+        levelStatus.textContent = levelsGloballyLocked
+            ? "All levels are temporarily locked. Your saved progress is unchanged."
+            : "All 99 sectors are available in free practice.";
+    }
 }
 
 function formatCredits(value) {
@@ -591,6 +807,10 @@ function setLevelEntryMessage(message, state = "disabled") {
 
 async function requestLevelEntry(levelNumber) {
         if (levelEntryRequestInProgress) return null;
+        if (levelsGloballyLocked) {
+            setLevelEntryMessage("All levels are temporarily locked. Your saved progress is unchanged.", "disabled");
+            return null;
+        }
         const practiceEntry = (reason) => {
             setLevelEntryMessage(
                 `Level ${levelNumber} started in free practice. ${reason} No credits were charged; progress and rewards will not be saved.`,
@@ -664,7 +884,11 @@ async function requestLevelEntry(levelNumber) {
                 return practiceEntry("A paid session is already active.");
             }
             if (response.status === 423 && result.error === "levels_locked") {
-                return practiceEntry("The campaign API is paused.");
+                levelsGloballyLocked = true;
+                renderProfile();
+                renderLevels();
+                setLevelEntryMessage("All levels are temporarily locked. Your saved progress is unchanged.", "disabled");
+                return null;
             }
             if (result.error === "paid_gameplay_disabled") {
                 return practiceEntry("Paid entries are not enabled.");
@@ -740,16 +964,23 @@ function showPhantomUnavailableMessage() {
     if (isMobileBrowser()) {
         if (window.location.protocol === "https:") {
             try {
-                setWalletMessage("Opening Phantom's secure connection request. Approve wallet access; RelicGrid will return to this browser without sending tokens.", "pending");
+                const message = "Opening Phantom's secure connection request. Approve wallet access; RelicGrid will return to this browser without sending tokens.";
+                setWalletMessage(message, "pending");
+                setWithdrawalLinkStatus(message, "pending");
                 startPhantomMobileConnect(window, walletStatusSnapshot?.network);
             } catch (error) {
                 setWalletMessage(`Phantom mobile connection could not start. ${error.message}`, "error");
+                setWithdrawalLinkStatus(`Phantom mobile connection could not start. ${error.message}`, "error");
             }
         } else {
-            setWalletMessage("Phantom mobile connection requires the secure production HTTPS site.", "error");
+            const message = "Phantom mobile connection requires the secure production HTTPS site.";
+            setWalletMessage(message, "error");
+            setWithdrawalLinkStatus(message, "error");
         }
     } else {
-        setWalletMessage("Phantom is not available to this page. Open RelicGrid in a normal Chrome or Edge tab where the Phantom extension is installed and allowed for this site—not an embedded preview—then reload. No transfer was made.", "error");
+        const message = "Phantom is not available to this page. Open RelicGrid in a normal Chrome or Edge tab where the Phantom extension is installed and allowed for this site—not an embedded preview—then reload. No transfer was made.";
+        setWalletMessage(message, "error");
+        setWithdrawalLinkStatus(message, "error");
     }
 }
 
@@ -1558,9 +1789,18 @@ async function fetchWithTimeout(url, options, operation, timeoutMs = 20000) {
     }
 }
 
+function setWithdrawalLinkStatus(message, state = "") {
+    const status = document.getElementById("withdrawal-link-status");
+    if (!status) return;
+    status.textContent = message;
+    status.dataset.state = state;
+}
+
 async function connectSolanaWallet() {
     if (!supabaseConfigured || !supabase) {
-        setWalletMessage("Supabase authentication is unavailable. No wallet was linked.", "error");
+        const message = "Supabase authentication is unavailable. No wallet was linked.";
+        setWalletMessage(message, "error");
+        setWithdrawalLinkStatus(message, "error");
         return;
     }
     if (!getPhantomProvider(window)) {
@@ -1572,15 +1812,17 @@ async function connectSolanaWallet() {
         "Phantom connection approval"
     );
     const button = document.getElementById("wallet-link-button");
-    if (!button) throw new Error("Wallet linking is not available in the deposit flow.");
+    if (!button) throw new Error("The receiving-wallet verification control is unavailable.");
     button.disabled = true;
-    button.textContent = "CONNECTING WALLET…";
+    button.textContent = "VERIFYING WALLET…";
     try {
         const { data, error } = await supabase.auth.getSession();
         if (error) throw error;
         const accessToken = data.session?.access_token;
         if (!accessToken) throw new Error("Sign in before linking a Solana wallet.");
-        setWalletMessage("Waiting for Phantom connection approval. No token transfer will happen.", "pending");
+        const connectingMessage = "Approve the receiving wallet in Phantom. RelicGrid will verify ownership with a signed message; no tokens or fees are involved.";
+        setWalletMessage(connectingMessage, "pending");
+        setWithdrawalLinkStatus(connectingMessage, "pending");
         const walletConnection = await walletConnectionPromise;
         if (!walletConnection) {
             showPhantomUnavailableMessage();
@@ -1591,11 +1833,15 @@ async function connectSolanaWallet() {
             throw new Error("The connected Phantom provider cannot sign the wallet ownership proof.");
         }
         if (walletStatusSnapshot?.linkedWalletAddress === walletAddress) {
-            setWalletMessage("Phantom is connected and its address matches the wallet linked to this authenticated game account.", "ready");
+            const message = "Phantom's receiving address already matches this authenticated game account.";
+            setWalletMessage(message, "ready");
+            setWithdrawalLinkStatus(message, "ready");
             return;
         }
         button.textContent = "VERIFYING WALLET…";
-        setWalletMessage("Wallet connected. Requesting an ownership challenge from the server; this signature does not transfer tokens.", "pending");
+        const challengeMessage = "Wallet connected. Requesting an ownership challenge from the server; this signature does not transfer tokens.";
+        setWalletMessage(challengeMessage, "pending");
+        setWithdrawalLinkStatus(challengeMessage, "pending");
         const headers = {
             Authorization: `Bearer ${accessToken}`,
             "Content-Type": "application/json"
@@ -1611,7 +1857,9 @@ async function connectSolanaWallet() {
             throw new Error(challengeResult.message || challengeResult.error || `Wallet proof request failed (${challengeResponse.status}).`);
         }
         button.textContent = "SIGN IN PHANTOM…";
-        setWalletMessage("Approve the RelicGrid ownership message in Phantom. It proves wallet ownership and does not send tokens or pay a network fee.", "pending");
+        const signatureMessage = "Approve the RelicGrid ownership message in Phantom. It proves wallet ownership and does not send tokens or pay a network fee.";
+        setWalletMessage(signatureMessage, "pending");
+        setWithdrawalLinkStatus(signatureMessage, "pending");
         const signed = await withWalletTimeout(walletProvider.signMessage(
             new TextEncoder().encode(challengeResult.challenge),
             "utf8"
@@ -1621,7 +1869,9 @@ async function connectSolanaWallet() {
         }
         const signature = btoa(Array.from(signed.signature, (byte) => String.fromCharCode(byte)).join(""));
         button.textContent = "SAVING WALLET…";
-        setWalletMessage("Wallet signature received. Saving the wallet link securely on the server…", "pending");
+        const savingMessage = "Wallet signature received. Saving the verified receiving wallet securely on the server…";
+        setWalletMessage(savingMessage, "pending");
+        setWithdrawalLinkStatus(savingMessage, "pending");
         const linkResponse = await fetch(apiUrl("wallet-link"), {
             method: "POST",
             headers,
@@ -1632,16 +1882,19 @@ async function connectSolanaWallet() {
         if (!linkResponse.ok || linkResult.linked !== true) {
             throw new Error(linkResult.message || linkResult.error || `Wallet verification failed (${linkResponse.status}).`);
         }
-        setWalletMessage("Solana wallet ownership is verified and linked. Deposits remain disabled until the treasury and backend checks are ready.", "disabled");
+        setWalletMessage("Solana wallet ownership is verified and linked. No transfer was made.", "ready");
+        setWithdrawalLinkStatus("Receiving wallet ownership verified. No transfer was made.", "ready");
         await refreshWallet();
+        await refreshWithdrawalStatus();
     } catch (error) {
         console.error("Solana wallet could not be linked.", error);
         setWalletMessage(`Wallet was not linked. ${error.message}`, "error");
+        setWithdrawalLinkStatus(`Wallet was not linked. ${error.message}`, "error");
     } finally {
         button.disabled = false;
         button.textContent = walletStatusSnapshot?.linkedWalletAddress
-            ? "UPDATE SENDING WALLET"
-            : "LINK SENDING WALLET";
+            ? "CHANGE RECEIVING WALLET"
+            : "LINK RECEIVING WALLET";
     }
 }
 
@@ -1784,7 +2037,9 @@ async function handlePhantomMobileCallback(callback) {
             }
             const provider = walletConnection.provider;
             if (!provider?.signMessage) throw new Error("The secure Phantom mobile session could not be restored.");
-            setWalletMessage("Phantom connected. Approve the ownership message in Phantom; this does not transfer tokens.", "pending");
+            const message = "Phantom connected. Approve the receiving-wallet ownership message; this does not transfer tokens.";
+            setWalletMessage(message, "pending");
+            setWithdrawalLinkStatus(message, "pending");
             await provider.signMessage(new TextEncoder().encode(challenge.challenge));
             return;
         }
@@ -1810,11 +2065,14 @@ async function handlePhantomMobileCallback(callback) {
             }
             setPhantomMobilePendingAction(window, { action: "connected", challenge: undefined });
             await refreshWallet();
+            await refreshWithdrawalStatus();
             const walletConnection = await connectPhantom(window);
             if (walletConnection?.publicKey !== walletStatusSnapshot?.linkedWalletAddress) {
                 throw new Error("The Phantom session does not match the wallet linked to this game account.");
             }
-            setWalletMessage("Phantom is connected and the wallet ownership proof is linked to this game account.", "ready");
+            const message = "The receiving wallet ownership proof is verified and linked to this game account.";
+            setWalletMessage(message, "ready");
+            setWithdrawalLinkStatus(`${message} No transfer was made.`, "ready");
             return;
         }
 
@@ -2135,6 +2393,10 @@ function fitVideoFrame(video) {
 
 async function startLevel(number, resumeMusic = false) {
     if (levelStartInProgress) return;
+    if (levelsGloballyLocked) {
+        setLevelEntryMessage("All levels are temporarily locked. Your saved progress is unchanged.", "disabled");
+        return;
+    }
     const level = levels[number - 1];
     if (!level) return;
     levelStartInProgress = true;
@@ -2202,6 +2464,11 @@ function leaveGameplay(toHome = true) {
 
 window.addEventListener("fluxgrid:core-activation-start", pauseMusic);
 window.addEventListener("fluxgrid:core-activation-cancel", startMusic);
+
+document.getElementById("account-upgrade-form").addEventListener("submit", requestAccountUpgrade);
+document.getElementById("account-upgrade-code-form").addEventListener("submit", verifyAccountUpgrade);
+document.getElementById("account-recovery-form").addEventListener("submit", requestAccountRecovery);
+document.getElementById("account-recovery-code-form").addEventListener("submit", verifyAccountRecovery);
 
 document.getElementById("name-form").addEventListener("submit", async (event) => {
     event.preventDefault();
@@ -2483,6 +2750,9 @@ if (withdrawalForm && withdrawalAddressInput && withdrawalAmountInput && withdra
     });
     withdrawalForm.addEventListener("submit", submitWithdrawalRequest);
 }
+document.getElementById("wallet-link-button")?.addEventListener("click", () => {
+    void connectSolanaWallet();
+});
 document.getElementById("withdrawal-refresh")?.addEventListener("click", () => {
     void refreshWithdrawalStatus();
 });

@@ -52,12 +52,27 @@
                 <img src="logo.png" alt="" class="name-logo">
                 <span class="eyebrow">PLAYER IDENTIFICATION</span>
                 <h1>Welcome to RelicGrid</h1>
-                <p>Choose a callsign to save your local profile and begin your first sector.</p>
+                <p>Your player identity and progress are stored with your persistent Supabase account. Choose a callsign to begin.</p>
                 <form id="name-form">
                     <label for="player-name">CALLSIGN</label>
                     <input id="player-name" name="name" maxlength="20" autocomplete="nickname" required placeholder="Enter your name">
                     <button class="button button-primary" type="submit">SAVE & CONTINUE <span>→</span></button>
                 </form>
+                <details id="account-recovery-panel" class="player-auth-panel">
+                    <summary>RECOVER AN EXISTING PLAYER ACCOUNT</summary>
+                    <p>Use this on a new device to restore an account that already has a verified recovery email. Recovery is allowed only while this new guest profile has no saved player data.</p>
+                    <form id="account-recovery-form" class="player-auth-form">
+                        <label for="account-recovery-email">ACCOUNT RECOVERY EMAIL</label>
+                        <input id="account-recovery-email" type="email" autocomplete="email" required>
+                        <button class="button button-quiet" type="submit">SEND SIGN-IN CODE</button>
+                    </form>
+                    <form id="account-recovery-code-form" class="player-auth-form" hidden>
+                        <label for="account-recovery-code">SIX-DIGIT EMAIL CODE</label>
+                        <input id="account-recovery-code" type="text" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" required>
+                        <button class="button button-primary" type="submit">RESTORE ACCOUNT</button>
+                    </form>
+                    <p id="account-recovery-status" class="wallet-api-status" role="status" aria-live="polite"></p>
+                </details>
             </div>
         </section>
 
@@ -171,7 +186,7 @@
                         <div>
                             <span class="eyebrow">THE CAMPAIGN</span>
                             <h2 id="level-heading">Select a sector</h2>
-                            <p id="level-section-description">Choose any of the 99 sectors. Paid entries require verified credits; free practice is always available.</p>
+                            <p id="level-section-description">Choose a sector when campaign access is available. Your saved progress is preserved while levels are locked.</p>
                         </div>
                         <div class="campaign-progress-card">
                             <span>SECTORS CLEARED</span>
@@ -179,7 +194,7 @@
                             <i><span id="campaign-progress-fill"></span></i>
                         </div>
                     </div>
-                    <p id="level-entry-status" class="level-entry-status" role="status" aria-live="polite">All 99 sectors are available in free practice.</p>
+                    <p id="level-entry-status" class="level-entry-status" role="status" aria-live="polite">Checking campaign access…</p>
                     <ol id="level-list" class="level-list" aria-label="Levels"></ol>
                 </section>
 
@@ -277,8 +292,10 @@
                             <input id="withdrawal-wallet-address" name="walletAddress" type="text" inputmode="text" autocomplete="off" spellcheck="false" maxlength="44" placeholder="Link and verify a Solana wallet first" readonly required>
                             <div class="withdrawal-inline-actions">
                                 <span id="withdrawal-wallet-verified" class="wallet-history-state" data-state="unknown">NOT VERIFIED</span>
+                                <button id="wallet-link-button" class="wallet-refresh" type="button">LINK RECEIVING WALLET</button>
                                 <button id="withdrawal-refresh" class="wallet-refresh" type="button">REFRESH WITHDRAWAL</button>
                             </div>
+                            <p id="withdrawal-link-status" class="wallet-api-status" role="status" aria-live="polite">Link a receiving wallet by connecting Phantom and signing a no-fee ownership message. No tokens will be sent.</p>
 
                             <label class="wallet-field-label" for="withdrawal-amount">WITHDRAWAL AMOUNT (CREDITS)</label>
                             <input id="withdrawal-amount" name="amountCredits" type="text" inputmode="numeric" autocomplete="off" spellcheck="false" maxlength="19" placeholder="Enter any whole amount up to your available balance" required>
@@ -365,6 +382,23 @@
                 <span class="eyebrow">PILOT DOSSIER</span>
                 <h1>Your profile</h1>
                 <div id="profile-details" class="profile-details"></div>
+                <article class="info-card player-account-security" aria-labelledby="account-security-heading">
+                    <span class="eyebrow">SUPABASE PLAYER IDENTITY</span>
+                    <h2 id="account-security-heading">Protect account recovery</h2>
+                    <p>New players keep a persistent anonymous Supabase identity. Linking a verified email upgrades that same user ID; credits, game progress, leaderboard records, and linked Solana wallet stay attached.</p>
+                    <p id="account-identity-status" class="wallet-api-status" role="status" aria-live="polite">Checking Supabase player identity…</p>
+                    <form id="account-upgrade-form" class="player-auth-form" hidden>
+                        <label for="account-upgrade-email">RECOVERY EMAIL</label>
+                        <input id="account-upgrade-email" type="email" autocomplete="email" required>
+                        <button class="button button-primary" type="submit">LINK RECOVERY EMAIL</button>
+                    </form>
+                    <form id="account-upgrade-code-form" class="player-auth-form" hidden>
+                        <label for="account-upgrade-code">SIX-DIGIT EMAIL CODE</label>
+                        <input id="account-upgrade-code" type="text" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" required>
+                        <button class="button button-quiet" type="submit">VERIFY EMAIL</button>
+                    </form>
+                    <p id="account-upgrade-status" class="wallet-api-status" role="status" aria-live="polite"></p>
+                </article>
             </main>
         </section>
 

@@ -37,15 +37,16 @@ function createResponse() {
     };
 }
 
-test("the campaign remains open even when a stale pause variable is configured", () => {
+test("the campaign lock is controlled only by an explicit true setting", () => {
     assert.equal(areLevelsGloballyLocked({}), false);
-    assert.equal(areLevelsGloballyLocked({ LEVELS_LOCKED: "true" }), false);
+    assert.equal(areLevelsGloballyLocked({ LEVELS_LOCKED: "true" }), true);
+    assert.equal(areLevelsGloballyLocked({ LEVELS_LOCKED: " TRUE " }), true);
     assert.equal(areLevelsGloballyLocked({ LEVELS_LOCKED: "0" }), false);
     assert.equal(areLevelsGloballyLocked({ LEVELS_LOCKED: "False" }), false);
     assert.equal(areLevelsGloballyLocked({ LEVELS_LOCKED: "false" }), false);
 });
 
-test("game configuration always reports the campaign open without caching", (context) => {
+test("game configuration reports the campaign lock without caching", (context) => {
     context.after(restoreEnvironment);
     delete process.env.LEVELS_LOCKED;
 
@@ -59,22 +60,23 @@ test("game configuration always reports the campaign open without caching", (con
     process.env.LEVELS_LOCKED = "true";
     const lockedResponse = createResponse();
     gameConfig(request, lockedResponse);
-    assert.deepEqual(lockedResponse.payload, { levelsLocked: false });
+    assert.deepEqual(lockedResponse.payload, { levelsLocked: true });
 });
 
-test("level-entry and gameplay APIs ignore a stale global lock setting", async (context) => {
+test("level-entry and gameplay APIs reject access while the global lock is enabled", async (context) => {
     context.after(restoreEnvironment);
     process.env.LEVELS_LOCKED = "true";
 
     for (const handler of handlers) {
         const response = createResponse();
         await handler({ method: "POST", headers: {}, body: {} }, response);
-        assert.notEqual(response.statusCode, 423);
-        assert.notEqual(response.payload?.error, "levels_locked");
+        assert.equal(response.statusCode, 423);
+        assert.equal(response.payload?.error, "levels_locked");
+        assert.equal(response.payload?.levelsLocked, true);
     }
 });
 
-test("setting LEVELS_LOCKED=false removes the global lock from each API route", async (context) => {
+test("setting LEVELS_LOCKED=false leaves level routes available for normal authentication checks", async (context) => {
     context.after(restoreEnvironment);
     process.env.LEVELS_LOCKED = "false";
     process.env.SUPABASE_URL = "https://supabase.example";

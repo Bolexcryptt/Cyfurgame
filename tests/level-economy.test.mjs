@@ -638,8 +638,12 @@ test("intro navigation leads through the project video to the homepage before ga
     assert.doesNotMatch(app, /function startInitialLevel\(\)/);
     assert.match(app, /await refreshOwnProgress\(\)/);
     assert.match(app, /mergeCompletedLevels\([\s\S]*?!player\.playerId \|\| player\.playerId === authUser\.id/);
+    assert.match(app, /hydratePlayerFromAuthenticatedAccount\(/);
     const initializeBackend = app.slice(app.indexOf("async function initializeBackend"), app.indexOf("\nfunction showScreen"));
-    assert.ok(initializeBackend.indexOf("await refreshOwnProgress();") < initializeBackend.indexOf("player.playerId = authUser.id;"));
+    assert.ok(initializeBackend.indexOf("authUser = session.user;") <
+        initializeBackend.indexOf("hydratePlayerFromAuthenticatedAccount("));
+    assert.ok(initializeBackend.indexOf("hydratePlayerFromAuthenticatedAccount(") <
+        initializeBackend.indexOf("await refreshOwnProgress();"));
     assert.match(app, /async function startLevel\(number, resumeMusic = false\) \{\s*if \(levelStartInProgress\) return/);
     assert.match(app, /window\.addEventListener\("fluxgrid:core-activation-start", pauseMusic\)/);
     assert.match(app, /window\.addEventListener\("fluxgrid:core-activation-cancel", startMusic\)/);
@@ -1108,16 +1112,18 @@ test("wallet API returns verified zero for a player with no credit account or le
     }
 });
 
-test("all campaign levels remain selectable and the in-game field guide is available", () => {
+test("campaign levels follow the server lock while free practice and the in-game field guide remain available when open", () => {
     const app = readFileSync(new URL("../app.js", import.meta.url), "utf8");
     const levelPicker = app.slice(app.indexOf("function renderLevels"), app.indexOf("\nfunction renderHome"));
     const startLevel = app.slice(app.indexOf("async function startLevel"), app.indexOf("\nfunction leaveGameplay"));
-    assert.match(levelPicker, /button\.disabled = false/);
+    assert.match(levelPicker, /button\.disabled = levelsGloballyLocked/);
+    assert.match(levelPicker, /levelsGloballyLocked\s*\?\s*"LOCKED"/);
     assert.match(levelPicker, /FREE PRACTICE/);
+    assert.match(startLevel, /if \(levelsGloballyLocked\)/);
+    assert.match(app, /fetch\(apiUrl\("game-config"\)/);
 
     const html = readFileSync(new URL("../index.html", import.meta.url), "utf8");
     assert.doesNotMatch(html, /id="continue-game"[^>]+disabled/);
-    assert.doesNotMatch(html, /CAMPAIGN TEMPORARILY LOCKED/);
     assert.match(html, /id="game-guide-toggle"/);
     assert.match(html, /id="game-guide"/);
     assert.match(html, /Charge crystals in order/);

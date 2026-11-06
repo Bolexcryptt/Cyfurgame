@@ -5390,3 +5390,78 @@ body {
 }
 .completion-balance > span,
 .completion-balance > strong { color: #a4f0cf; }
+
+.player-auth-panel,
+.player-account-security {
+    margin-top: 20px;
+    padding: 18px;
+    border: 1px solid #8ad7e22c;
+    border-radius: 6px;
+    background: #101923;
+}
+
+.player-auth-panel summary {
+    color: #b7dbe2;
+    font: 700 10px "Consolas", monospace;
+    letter-spacing: .1em;
+    cursor: pointer;
+}
+
+.player-auth-panel p,
+.player-account-security > p {
+    color: #a9b7c3;
+    font-size: 11px;
+    line-height: 1.6;
+}
+
+.player-account-security h2 {
+    margin: 8px 0;
+    color: #f5efff;
+    font-size: clamp(20px, 3vw, 26px);
+}
+
+.player-auth-form {
+    display: grid;
+    gap: 9px;
+    margin-top: 14px;
+}
+
+.player-auth-form label {
+    color: #9fb6c5;
+    font: 700 9px "Consolas", monospace;
+    letter-spacing: .09em;
+}
+
+.player-auth-form input {
+    width: 100%;
+    min-height: 42px;
+    padding: 10px 12px;
+    border: 1px solid #9bb7cc38;
+    border-radius: 4px;
+    background: #080f17;
+    color: #eff7fb;
+    font: 13px "Consolas", monospace;
+}
+
+.player-auth-form input:focus-visible,
+.player-auth-panel summary:focus-visible {
+    outline: 2px solid #8be2ed;
+    outline-offset: 2px;
+}
+
+.player-auth-form .button {
+    justify-self: start;
+    min-height: 40px;
+}
+
+.player-auth-panel .wallet-api-status,
+.player-account-security .wallet-api-status {
+    min-height: 0;
+    margin: 12px 0 0;
+}
+
+@media (max-width: 680px) {
+    .player-auth-panel,
+    .player-account-security { padding: 14px; }
+    .player-auth-form .button { width: 100%; }
+}
