@@ -153,6 +153,13 @@ module.exports = async function deposits(request, response) {
                 transactionUrl
             });
         }
+        if (verified.state === "missing_payment_intent_memo") {
+            return sendJson(response, 422, {
+                error: "payment_intent_memo_missing",
+                credited: false,
+                transactionUrl
+            });
+        }
         if (verified.state === "invalid_treasury") {
             return respondNotReady(
                 response,

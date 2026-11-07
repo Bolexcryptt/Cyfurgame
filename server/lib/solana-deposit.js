@@ -48,8 +48,7 @@ function getSolanaRpcUrl() {
 }
 
 function isDepositSettingEnabled(name) {
-    const value = process.env[name]?.trim();
-    return value === undefined || value === "" || value === "true";
+    return process.env[name]?.trim() === "true";
 }
 
 function deriveAssociatedTokenAccount(ownerAddress, mintAddress, tokenProgramId) {
@@ -432,6 +431,9 @@ async function verifyFinalizedDeposit({
     const paymentIntentMemos = memoTexts.map((memo) =>
         /^RelicGrid payment intent: ([0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$/i.exec(memo)
     ).filter(Boolean);
+    if (requirePaymentIntentMemo && paymentIntentMemos.length === 0) {
+        return { state: "missing_payment_intent_memo" };
+    }
     if (requirePaymentIntentMemo && paymentIntentMemos.length !== 1) {
         return { state: "payment_intent_mismatch" };
     }
