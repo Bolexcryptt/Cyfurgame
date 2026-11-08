@@ -1,0 +1,8 @@
+{
+  "rewrites": [
+    {
+      "source": "/api/game-points",
+      "destination": "/api/level-entry?route=game-points"
+    }
+  ]
+}

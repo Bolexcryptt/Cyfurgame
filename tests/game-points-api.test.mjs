@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 import { createRequire } from "node:module";
 import { levels } from "../levels.js";
 
 const require = createRequire(import.meta.url);
-const gamePoints = require("../api/game-points.js");
+const gamePoints = require("../server/lib/game-points.js");
 const levelEntry = require("../api/level-entry.js");
 const levelCompletion = require("../api/level-completion.js");
 const originalFetch = globalThis.fetch;
@@ -144,10 +145,11 @@ function resetScenario() {
     };
 }
 
-async function call(handler, method, body) {
+async function call(handler, method, body, url = "/") {
     const response = makeResponse();
     await handler({
         method,
+        url,
         headers: { authorization: "Bearer test-access-token" },
         body
     }, response);
@@ -167,6 +169,22 @@ test.after(restoreEnvironment);
 
 test("authenticated game-points balance and clears load from the server ledger", async () => {
     const response = await call(gamePoints, "GET");
+
+    assert.equal(response.statusCode, 200);
+    assert.deepEqual(response.payload, {
+        balancePoints: "4321",
+        completedLevels: [2, 4]
+    });
+});
+
+test("the public game-points route dispatches through the existing level-entry function", async () => {
+    const config = JSON.parse(readFileSync(new URL("../vercel.json", import.meta.url), "utf8"));
+    assert.deepEqual(config.rewrites, [{
+        source: "/api/game-points",
+        destination: "/api/level-entry?route=game-points"
+    }]);
+
+    const response = await call(levelEntry, "GET", undefined, "/api/level-entry?route=game-points");
 
     assert.equal(response.statusCode, 200);
     assert.deepEqual(response.payload, {

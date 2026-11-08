@@ -9,8 +9,15 @@ const {
     sendJson
 } = require("../server/lib/wallet");
 const { areLevelsGloballyLocked } = require("../server/lib/level-lock");
+const gamePoints = require("../server/lib/game-points");
 
 module.exports = async function levelEntry(request, response) {
+    const requestUrl = new URL(request.url || "/", "http://localhost");
+    if (request.query?.route === "game-points" ||
+        requestUrl.searchParams.get("route") === "game-points") {
+        return gamePoints(request, response);
+    }
+
     if (handleApiCors(request, response)) return;
     if (request.method !== "POST") {
         response.setHeader("Allow", "POST");

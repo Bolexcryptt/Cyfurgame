@@ -4,13 +4,13 @@ const {
     hasWalletEnvironment,
     serviceRequest,
     sendJson
-} = require("../server/lib/wallet");
+} = require("./wallet");
 const {
     getSolanaNetwork,
     getSolanaRpcUrl,
     normalizeTransactionSignature,
     verifyFinalizedSuccessfulTransaction
-} = require("../server/lib/solana-deposit");
+} = require("./solana-deposit");
 
 const CLAIM_POINTS = "1000";
 
