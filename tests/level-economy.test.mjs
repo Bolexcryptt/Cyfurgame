@@ -703,7 +703,7 @@ test("level transition milestones occur every seven completed levels and are not
     assert.throws(() => getPendingLevelTransition(-1), TypeError);
 });
 
-test("company intro stays portrait and Play Now game video plays in landscape", () => {
+test("company intro and game video play in landscape before the portrait title screen", () => {
     const app = readFileSync(new URL("../app.js", import.meta.url), "utf8");
     assert.match(app, /async function finishOpeningFlow\(\)/);
     assert.match(app, /async function showOpeningIntro\(\)/);
@@ -723,7 +723,7 @@ test("company intro stays portrait and Play Now game video plays in landscape", 
     assert.match(openingCompletion, /wallet-card"\)\.scrollIntoView/);
     assert.match(openingFlow, /introVideo\.muted = true/);
     assert.match(openingFlow, /void playVideoInOrientation\(\s*introVideo,\s*offerNext,\s*\(\) => \{\s*introVideo\.muted = false/);
-    assert.match(openingFlow, /const orientation = source === "gamevideo\.mp4" \? "landscape" : "portrait"/);
+    assert.match(openingFlow, /const orientation = source === "companyintro\.mp4" \|\| source === "gamevideo\.mp4"\s*\? "landscape"\s*:\s*"portrait"/);
     assert.match(app, /active\.orientation === "landscape" && videoOrientationQuery\.matches/);
     assert.match(app, /if \(!active \|\| \(active\.orientation === "landscape" && videoOrientationQuery\.matches\)\) return/);
     assert.doesNotMatch(app, /if \(Capacitor\.isNativePlatform\(\)\) \{\s*void restorePortraitOrientation\(\);\s*\}/);
@@ -762,7 +762,9 @@ test("company intro stays portrait and Play Now game video plays in landscape", 
     const styles = readFileSync(new URL("../style.css", import.meta.url), "utf8");
     assert.match(styles, /\.video-screen\[data-opening-sequence="true"\]\s*\{[^}]*height: 100dvh/);
     assert.match(styles, /\.video-screen\[data-opening-sequence="true"\] #intro-video\s*\{[^}]*object-fit: contain/);
-    assert.match(styles, /\.video-screen\[data-company-intro="true"\] \.video-brand,[\s\S]*?\.rotate-device-prompt\s*\{\s*visibility: hidden/);
+    assert.match(styles, /\.video-screen\[data-company-intro="true"\] \.video-brand,[\s\S]*?\.video-shade\s*\{\s*visibility: hidden/);
+    assert.doesNotMatch(styles, /\.video-screen\[data-company-intro="true"\][^{]*\.rotate-device-prompt/);
+    assert.match(styles, /\.title-screen\s*\{[^}]*height: 100dvh;[^}]*min-height: 100dvh;/);
     assert.match(html, /id="background-music"[^>]*loop/);
     assert.match(app, /backgroundMusic\.src = "music\.mp3"/);
     assert.doesNotMatch(html, /music\.wav/);
@@ -976,7 +978,7 @@ test("backend level entry costs match the campaign economy for all 99 levels", (
     assert.equal(getLevelEntryCostCredits(100), null);
 });
 
-test("campaign level entry requires a server-managed game-points session", () => {
+test("campaign levels use saved game access points before wallet entry", () => {
     const app = readFileSync(new URL("../app.js", import.meta.url), "utf8");
     const startIndex = app.indexOf("async function startLevel");
     const endIndex = app.indexOf("\nfunction leaveGameplay", startIndex);
@@ -992,10 +994,10 @@ test("campaign level entry requires a server-managed game-points session", () =>
     assert.match(startLevel, /activeWalletLevelSessionId = entry\.sessionId/);
     assert.match(startLevel, /entryCostCredits: activeLevelEntryCostCredits/);
     assert.match(app, /getLevelEconomy\(level\.number\)\.entryCostCredits/);
-    assert.match(entryFlow, /apiUrl\("game-points"\)/);
-    assert.match(entryFlow, /action: "start"/);
-    assert.match(entryFlow, /result\.gamePoints !== true/);
-    assert.doesNotMatch(entryFlow, /practiceEntry/);
+    assert.match(entryFlow, /if \(gameAccessPoints >= gameAccessCost\)/);
+    assert.match(entryFlow, /gameAccess: true/);
+    assert.match(entryFlow, /apiUrl\("level-entry"\)/);
+    assert.doesNotMatch(app, /apiUrl\("game-points"\)/);
     assert.match(app, /Practice complete\. No credits, leaderboard points, or saved progress were awarded/);
 
     const scene = readFileSync(new URL("../script.js", import.meta.url), "utf8");
@@ -1104,14 +1106,15 @@ test("RelicGrid branding is used in the game and hidden scenes stop rendering", 
     assert.match(html, /cannot be withdrawn/);
     assert.match(html, /id="rotate-device-prompt"/);
     const gameAccessClaim = app.slice(
-        app.indexOf("async function claimGameAccessPoints"),
+        app.indexOf("async function claimLegacyLocalGameAccessPoints"),
         app.indexOf("\nasync function getWalletAuthorizationHeaders")
     );
     assert.match(gameAccessClaim, /getSolscanSignature\(input\.value\)/);
     assert.match(gameAccessClaim, /3_000 \+ Math\.floor\(Math\.random\(\) \* 4_001\)/);
-    assert.match(gameAccessClaim, /apiUrl\("game-points"\)/);
-    assert.match(gameAccessClaim, /Cannot reach the game-points API/);
-    assert.match(gameAccessClaim, /action: "claim"/);
+    assert.match(gameAccessClaim, /localStorage\.setItem\(ownerStorageKey/);
+    assert.match(app, /game-access-form"\)\.addEventListener\("submit", claimLegacyLocalGameAccessPoints\)/);
+    assert.doesNotMatch(gameAccessClaim, /fetch\(|apiUrl\(/);
+    assert.match(app, /async function refreshGameAccessPoints\(\) \{\s*gameAccessPointsVerified = true/);
     assert.doesNotMatch(gameAccessClaim, /verifyDepositSignature|wallet_balance|wallet_credit_accounts/);
     assert.match(app, /gameAccessPointsVerified && gameAccessPoints >= entryCostCredits/);
     const pointEntryLevelStart = app.slice(app.indexOf("async function startLevel"), app.indexOf("\nfunction leaveGameplay"));
@@ -1133,7 +1136,7 @@ test("RelicGrid branding is used in the game and hidden scenes stop rendering", 
     const styles = readFileSync(new URL("../style.css", import.meta.url), "utf8");
     assert.match(styles, /\.button\[hidden\]\s*\{\s*display:\s*none\s*!important;/);
     assert.match(styles, /\.intro-video \{[\s\S]*?object-fit: contain/);
-    assert.match(styles, /\.video-screen\[data-opening-sequence="true"\] \{[\s\S]*?position: fixed;[\s\S]*?height: 100svh/);
+    assert.match(styles, /\.video-screen\[data-opening-sequence="true"\] \{[\s\S]*?position: fixed;[\s\S]*?height: 100dvh/);
     assert.match(styles, /\.video-screen\[data-opening-sequence="true"\] #intro-video \{[\s\S]*?width: 100%;[\s\S]*?height: 100%;[\s\S]*?object-fit: contain/);
     assert.match(styles, /\.video-screen\[data-opening-sequence="true"\]\[data-company-intro="true"\] #intro-video \{\s*object-fit: cover;/);
     assert.match(styles, /\.video-screen\[data-opening-sequence="true"\] \.video-brand,[\s\S]*?\.video-shade\s*\{\s*visibility: hidden/);
@@ -1330,7 +1333,7 @@ test("wallet API returns verified zero for a player with no credit account or le
     }
 });
 
-test("campaign levels remain locked until the verified game-points balance covers entry", () => {
+test("campaign levels remain locked until the saved game-points balance covers entry", () => {
     const app = readFileSync(new URL("../app.js", import.meta.url), "utf8");
     const levelPicker = app.slice(app.indexOf("function renderLevels"), app.indexOf("\nfunction renderHome"));
     const startLevel = app.slice(app.indexOf("async function startLevel"), app.indexOf("\nfunction leaveGameplay"));

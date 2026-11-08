@@ -166,6 +166,7 @@ let currentDepositIntent = null;
 let activeLevelEntryCostCredits = null;
 let levelStartInProgress = false;
 let pendingAccountEmail = "";
+let pendingAccountRecoveryPlayerId = null;
 let pendingPhantomMobileCallback = null;
 
 function savePlayer() {
@@ -181,7 +182,7 @@ function getGameAccessStorageKey() {
 }
 
 function loadGameAccessState() {
-    gameAccessPointsVerified = false;
+    gameAccessPointsVerified = true;
     const saved = localStorage.getItem(getGameAccessStorageKey());
     if (!saved) {
         gameAccessPoints = 0;
@@ -221,38 +222,10 @@ function renderGameAccessPoints() {
 }
 
 async function refreshGameAccessPoints() {
-    if (!authUser || !supabaseConfigured || !supabase) {
-        gameAccessPointsVerified = false;
-        renderGameAccessPoints();
-        return false;
-    }
-
-    try {
-        const response = await fetch(apiUrl("game-points"), {
-            headers: await getWalletAuthorizationHeaders(),
-            cache: "no-store"
-        });
-        const result = await response.json().catch(() => ({}));
-        const balance = Number(result.balancePoints);
-        if (!response.ok || result.balanceVerified !== true ||
-            !/^\d+$/.test(String(result.balancePoints)) ||
-            !Number.isSafeInteger(balance)) {
-            throw new Error(result.error || `Game points could not be loaded (${response.status}).`);
-        }
-        gameAccessPoints = balance;
-        gameAccessPointsVerified = true;
-        renderGameAccessPoints();
-        renderLevels();
-        return true;
-    } catch (error) {
-        gameAccessPointsVerified = false;
-        renderGameAccessPoints();
-        document.getElementById("game-access-status").textContent =
-            `Game points are unavailable. ${error.message}`;
-        document.getElementById("game-access-status").dataset.state = "error";
-        console.error("Server-managed game points could not be refreshed.", error);
-        return false;
-    }
+    gameAccessPointsVerified = true;
+    renderGameAccessPoints();
+    renderLevels();
+    return true;
 }
 
 function getSolscanSignature(value) {
@@ -745,11 +718,13 @@ async function verifyAccountUpgrade(event) {
 async function requestAccountRecovery(event) {
     event.preventDefault();
     const email = document.getElementById("account-recovery-email").value.trim();
+    pendingAccountRecoveryPlayerId = null;
     setAccountAuthStatus("account-recovery-status", "Checking this guest account before recovery…", "pending");
     try {
         await backendReady;
         await requestAccountRecoveryPreflight();
         await requestExistingAccountRecovery(supabase.auth, email);
+        pendingAccountRecoveryPlayerId = authUser.id;
         setAccountAuthStatus(
             "account-recovery-status",
             "If this email has a linked player account, Supabase sent a sign-in code. Enter it below. No new permanent account is created.",
@@ -768,8 +743,12 @@ async function verifyAccountRecovery(event) {
     const token = document.getElementById("account-recovery-code").value.trim();
     setAccountAuthStatus("account-recovery-status", "Verifying the existing player account…", "pending");
     try {
-        await requestAccountRecoveryPreflight();
+        if (!authUser || authUser.is_anonymous !== true ||
+            pendingAccountRecoveryPlayerId !== authUser.id) {
+            throw new Error("Request a new sign-in code for this guest account before restoring another player.");
+        }
         const recoveredUser = await verifyExistingAccountRecovery(supabase.auth, email, token);
+        pendingAccountRecoveryPlayerId = null;
         authUser = recoveredUser;
         loadGameAccessState();
         pendingAccountEmail = "";
@@ -797,7 +776,7 @@ async function verifyAccountRecovery(event) {
         showNameOrHome();
         setAccountAuthStatus(
             "account-recovery-status",
-            "Existing player account restored. Its server-side balance and progress are loaded under the original Supabase user ID.",
+            "Existing player account restored. Its profile and saved campaign progress are loaded under the original player ID.",
             "ready"
         );
     } catch (error) {
@@ -1010,7 +989,7 @@ async function refreshGameConfig() {
     if (levelStatus) {
         levelStatus.textContent = levelsGloballyLocked
             ? "All levels are temporarily locked. Your saved progress is unchanged."
-            : "Use server-managed game points to enter levels; each level has an entry cost.";
+            : "Use your saved game access points to enter campaign levels.";
     }
 }
 
@@ -1037,7 +1016,7 @@ function setLevelEntryMessage(message, state = "disabled") {
         status.dataset.state = state;
     }
 
-async function requestLegacyWalletLevelEntry(levelNumber) {
+async function requestLevelEntry(levelNumber) {
         if (levelEntryRequestInProgress) return null;
         const gameAccessCost = getLevelEconomy(levelNumber).entryCostCredits;
         if (levelsGloballyLocked &&
@@ -1186,88 +1165,6 @@ async function requestLegacyWalletLevelEntry(levelNumber) {
             return practiceEntry("Backend balance verification failed.");
         } finally {
             levelEntryRequestInProgress = false;
-    }
-}
-
-async function requestLevelEntry(levelNumber) {
-    if (levelEntryRequestInProgress) return null;
-    if (!supabaseConfigured || !supabase || !authUser) {
-        setLevelEntryMessage("Sign in to use your server-managed game points.", "disabled");
-        return null;
-    }
-
-    levelEntryRequestInProgress = true;
-    setLevelEntryMessage("Reserving game points for this level…", "pending");
-    const requestStorageKey = `relicgrid.level-entry.${authUser.id}.${levelNumber}`;
-    try {
-        const headers = await getWalletAuthorizationHeaders();
-        const storedRequestId = sessionStorage.getItem(requestStorageKey);
-        const requestId = pendingLevelEntryRequests.get(levelNumber) ?? storedRequestId ?? crypto.randomUUID();
-        pendingLevelEntryRequests.set(levelNumber, requestId);
-        sessionStorage.setItem(requestStorageKey, requestId);
-
-        const response = await fetch(apiUrl("game-points"), {
-            method: "POST",
-            headers,
-            body: JSON.stringify({ action: "start", levelNumber, requestId }),
-            cache: "no-store"
-        });
-        const result = await response.json().catch(() => ({}));
-        if (!response.ok && response.status < 500) {
-            pendingLevelEntryRequests.delete(levelNumber);
-            sessionStorage.removeItem(requestStorageKey);
-        }
-
-        if (/^\d+$/.test(String(result.balancePoints))) {
-            const balance = Number(result.balancePoints);
-            if (Number.isSafeInteger(balance)) {
-                gameAccessPoints = balance;
-                gameAccessPointsVerified = true;
-                renderGameAccessPoints();
-                renderLevels();
-            }
-        }
-        if (response.status === 402 && result.error === "insufficient_game_points") {
-            setLevelEntryMessage(
-                `Level ${levelNumber} requires ${formatCredits(getLevelEconomy(levelNumber).entryCostCredits)} game points. Add points to continue.`,
-                "disabled"
-            );
-            return null;
-        }
-        if (response.status === 409 && result.error === "level_session_active") {
-            setLevelEntryMessage("A level session is already active. Finish or wait for it to expire before starting another.", "disabled");
-            return null;
-        }
-        if (result.error === "game_points_migration_required" ||
-            result.error === "game_points_schema_not_installed") {
-            setLevelEntryMessage("The server-managed game-points database setup is required.", "error");
-            return null;
-        }
-        if (result.error === "authentication_required") {
-            setLevelEntryMessage("Sign in again to use your game points.", "error");
-            return null;
-        }
-        if (!response.ok || result.gamePoints !== true ||
-            typeof result.sessionId !== "string" ||
-            !/^\d+$/.test(String(result.balancePoints)) ||
-            !/^\d+$/.test(String(result.entryCostPoints))) {
-            throw new Error(result.error || `Game-points entry failed (${response.status}).`);
-        }
-        pendingLevelEntryRequests.delete(levelNumber);
-        sessionStorage.removeItem(requestStorageKey);
-        return {
-            gamePoints: true,
-            gameAccessPointsUsed: Number(result.entryCostPoints),
-            sessionId: result.sessionId,
-            balancePoints: String(result.balancePoints),
-            entryCostPoints: String(result.entryCostPoints)
-        };
-    } catch (error) {
-        console.error("Game-points level entry failed.", error);
-        setLevelEntryMessage(`Level entry failed. ${error.message}`, "error");
-        return null;
-    } finally {
-        levelEntryRequestInProgress = false;
     }
 }
 
@@ -2353,6 +2250,7 @@ async function claimLegacyLocalGameAccessPoints(event) {
             claimedSignatures: nextSignatures
         }));
         gameAccessPoints = nextPoints;
+        gameAccessPointsVerified = true;
         claimedGameAccessSignatures = nextSignatures;
         input.value = "";
         status.textContent = `1,000 game access points added. Balance: ${formatCredits(String(gameAccessPoints))}.`;
@@ -2362,87 +2260,6 @@ async function claimLegacyLocalGameAccessPoints(event) {
     } catch (error) {
         console.error("Game access points could not be saved.", error);
         status.textContent = "Game access points could not be saved. Check device storage and try again.";
-        status.dataset.state = "error";
-    } finally {
-        gameAccessClaimInProgress = false;
-        button.disabled = false;
-        button.textContent = "ADD 1,000 GAME POINTS";
-        input.disabled = false;
-    }
-}
-
-async function claimGameAccessPoints(event) {
-    event.preventDefault();
-    if (gameAccessClaimInProgress) return;
-    const input = document.getElementById("game-access-transaction-link");
-    const button = document.getElementById("game-access-claim");
-    const status = document.getElementById("game-access-status");
-    const signature = getSolscanSignature(input.value);
-    if (!signature) {
-        status.textContent = "Paste a full Solscan transaction link to claim game access points.";
-        status.dataset.state = "error";
-        return;
-    }
-    if (!authUser || !supabase) {
-        status.textContent = "Sign in to save game points to your player account.";
-        status.dataset.state = "error";
-        return;
-    }
-
-    gameAccessClaimInProgress = true;
-    button.disabled = true;
-    button.textContent = "ADDING POINTS…";
-    input.disabled = true;
-    const ownerId = authUser.id;
-    try {
-        status.textContent = "Adding game access points…";
-        status.dataset.state = "pending";
-        await new Promise((resolve) => window.setTimeout(
-            resolve,
-            3_000 + Math.floor(Math.random() * 4_001)
-        ));
-        if (authUser?.id !== ownerId) {
-            throw new Error("The active player account changed before game access points were added.");
-        }
-
-        let response;
-        try {
-            response = await fetch(apiUrl("game-points"), {
-                method: "POST",
-                headers: await getWalletAuthorizationHeaders(),
-                body: JSON.stringify({ action: "claim", signature }),
-                cache: "no-store"
-            });
-        } catch (error) {
-            if (error instanceof TypeError) {
-                throw new Error(
-                    "Cannot reach the game-points API. Check the connection and confirm the API route is deployed with this app's CORS origin enabled."
-                );
-            }
-            throw error;
-        }
-        const result = await response.json().catch(() => ({}));
-        const balance = Number(result.balancePoints);
-        if (!response.ok || result.status !== "confirmed" ||
-            !/^\d+$/.test(String(result.balancePoints)) ||
-            !Number.isSafeInteger(balance)) {
-            throw new Error(result.error || `Game points could not be added (${response.status}).`);
-        }
-        gameAccessPoints = balance;
-        gameAccessPointsVerified = true;
-        claimedGameAccessSignatures = [...new Set([...claimedGameAccessSignatures, signature])];
-        saveGameAccessState();
-        renderGameAccessPoints();
-        renderLevels();
-        renderProfile();
-        input.value = "";
-        status.textContent = result.alreadyClaimed
-            ? `This link was already used. Current game-points balance: ${formatCredits(String(gameAccessPoints))}.`
-            : `1,000 game access points added. Balance: ${formatCredits(String(gameAccessPoints))}.`;
-        status.dataset.state = result.alreadyClaimed ? "pending" : "ready";
-    } catch (error) {
-        console.error("Server-managed game access points could not be added.", error);
-        status.textContent = `Game points could not be added. ${error.message}`;
         status.dataset.state = "error";
     } finally {
         gameAccessClaimInProgress = false;
@@ -2801,7 +2618,9 @@ function playGameVideo() {
 }
 
 function playOpeningVideo(source, caption, onEnded, allowSkip = false) {
-    const orientation = source === "gamevideo.mp4" ? "landscape" : "portrait";
+    const orientation = source === "companyintro.mp4" || source === "gamevideo.mp4"
+        ? "landscape"
+        : "portrait";
     introVideo.pause();
     introVideo.onerror = null;
     introVideo.onended = null;
@@ -3107,7 +2926,7 @@ document.getElementById("home-open-deposit").addEventListener("click", () => {
     document.getElementById("wallet-card").scrollIntoView({ behavior: "smooth", block: "start" });
     document.getElementById("deposit-signature").focus({ preventScroll: true });
 });
-document.getElementById("game-access-form").addEventListener("submit", claimGameAccessPoints);
+document.getElementById("game-access-form").addEventListener("submit", claimLegacyLocalGameAccessPoints);
 document.getElementById("deposit-create-intent").addEventListener("click", async () => {
     const button = document.getElementById("deposit-create-intent");
     button.disabled = true;

@@ -236,6 +236,21 @@ test("account recovery never creates a new permanent user and verifies the email
     assert.equal(recovered.id, playerId);
 });
 
+test("account recovery verifies the preflighted guest session only once before sending the OTP", () => {
+    const app = readFileSync(new URL("../app.js", import.meta.url), "utf8");
+    const requestStart = app.indexOf("async function requestAccountRecovery(event)");
+    const verifyStart = app.indexOf("async function verifyAccountRecovery(event)");
+    const verifyEnd = app.indexOf("\nfunction setLeaderboardStatus", verifyStart);
+    const requestFlow = app.slice(requestStart, verifyStart);
+    const verifyFlow = app.slice(verifyStart, verifyEnd);
+
+    assert.match(requestFlow, /await requestAccountRecoveryPreflight\(\)/);
+    assert.match(requestFlow, /pendingAccountRecoveryPlayerId = authUser\.id/);
+    assert.match(verifyFlow, /pendingAccountRecoveryPlayerId !== authUser\.id/);
+    assert.doesNotMatch(verifyFlow, /requestAccountRecoveryPreflight/);
+    assert.match(verifyFlow, /pendingAccountRecoveryPlayerId = null/);
+});
+
 test("account identity recovery is read-only and allowed only for a data-free anonymous player", async (t) => {
     resetEnvironment();
     t.after(() => {

@@ -54,8 +54,9 @@ server secrets in the app.
 Phantom mobile handoffs return through the `relicgrid://` app URL scheme.
 That scheme is registered in the generated Android and iOS projects.
 The installed app name is RelicGrid. Native screens start and return to
-portrait. The company introduction stays portrait; the game video requests
-landscape and restores portrait when it ends, is skipped, or cannot play.
+portrait. The company introduction and game video request landscape; the
+company intro is sized to fill the display. The app restores portrait for the
+title screen and when a video ends, is skipped, or cannot play.
 
 Android launcher icons are generated from the owner-provided
 `relicgrid-icon.png` source and included as density-specific legacy icons and
