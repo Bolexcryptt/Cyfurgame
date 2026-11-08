@@ -10,7 +10,7 @@ const {
 } = await import('../server/lib/solana-deposit.js');
 const { serviceRequest } = await import('../server/lib/wallet.js');
 
-test('deposit verification defaults to the supported mainnet settings without extra environment variables', () => {
+test('deposit switches default closed and require explicit true configuration', () => {
   const names = [
     'SOLANA_NETWORK',
     'SOLANA_RPC_URL',
@@ -26,8 +26,17 @@ test('deposit verification defaults to the supported mainnet settings without ex
     assert.equal(getSolanaNetwork(), 'mainnet-beta');
     assert.equal(getSolanaRpcUrl(), 'https://api.mainnet-beta.solana.com');
     assert.equal(getApprovedCyfurMintAddress(), RELICGRID_CYFUR_MINT_ADDRESS);
-    for (const name of names.slice(3)) assert.equal(isDepositSettingEnabled(name), true);
+    for (const name of names.slice(3)) {
+      assert.equal(isDepositSettingEnabled(name), false);
+      process.env[name] = '';
+      assert.equal(isDepositSettingEnabled(name), false);
+      process.env[name] = 'true';
+      assert.equal(isDepositSettingEnabled(name), true);
+      delete process.env[name];
+    }
     process.env.WALLET_DEPOSITS_ENABLED = 'false';
+    assert.equal(isDepositSettingEnabled('WALLET_DEPOSITS_ENABLED'), false);
+    process.env.WALLET_DEPOSITS_ENABLED = 'TRUE';
     assert.equal(isDepositSettingEnabled('WALLET_DEPOSITS_ENABLED'), false);
   } finally {
     for (const [name, value] of Object.entries(previous)) {

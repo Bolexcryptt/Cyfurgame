@@ -4,16 +4,10 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
     <meta name="theme-color" content="#05080e">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="mobile-web-app-capable" content="yes">
     <title>RelicGrid — Route the light</title>
     <link rel="stylesheet" href="style.css">
-    <script type="importmap">
-        {
-            "imports": {
-                "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
-                "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
-            }
-        }
-    </script>
     <script src="vendor/tweetnacl.min.js"></script>
     <script type="module" src="levels.js"></script>
     <script type="module" src="app.js"></script>
@@ -21,8 +15,8 @@
 </head>
 <body>
     <main class="app-shell">
-        <section id="video-screen" class="screen video-screen" aria-label="Game introduction">
-            <video id="intro-video" class="intro-video" src="intro.mp4" playsinline preload="auto"></video>
+        <section id="video-screen" class="screen video-screen" aria-label="Company introduction and campaign transmissions">
+            <video id="intro-video" class="intro-video" playsinline preload="auto"></video>
             <video id="transition-video" class="intro-video" playsinline preload="metadata" hidden></video>
             <div class="video-shade"></div>
             <div id="rotate-device-prompt" class="rotate-device-prompt" role="status" aria-live="polite" hidden>
@@ -41,9 +35,19 @@
                 <span>RELICGRID <i>LIGHT PROTOCOL</i></span>
             </div>
             <div class="video-action">
-                <span class="video-audio-status"><i></i> TRANSMISSION AUDIO ENABLED</span>
+                <span class="video-audio-status"><i></i> COMPANY INTRODUCTION</span>
                 <p id="video-caption">A new signal is waiting.</p>
-                <button id="video-action-button" class="button button-primary" type="button" hidden>Play Now <span>→</span></button>
+                <button id="video-action-button" class="button button-primary" type="button" hidden>Next <span>→</span></button>
+            </div>
+        </section>
+
+        <section id="title-screen" class="screen title-screen" hidden>
+            <div class="title-card">
+                <img src="logo.png" alt="RelicGrid" class="title-logo">
+                <span class="eyebrow">LIGHT PROTOCOL · CAMPAIGN 01</span>
+                <h1>RELICGRID</h1>
+                <p>Restore the grid. Route the light.</p>
+                <button id="title-continue-button" class="button button-primary" type="button">PLAY NOW <span>→</span></button>
             </div>
         </section>
 
@@ -205,6 +209,18 @@
                         <h2 id="wallet-heading">Pilot resources</h2>
                         <p class="wallet-description">Your verified credits and deposit activity, secured by RelicGrid's server-side payment checks.</p>
                         <p class="wallet-exchange-rate">EXCHANGE RATE <b id="wallet-exchange-rate">1 CYFUR = 10,000 CREDITS</b> · DISPLAY ONLY</p>
+                        <section class="wallet-data-panel game-access-panel" aria-labelledby="game-access-heading">
+                            <span class="wallet-field-label">SEPARATE FROM WALLET CREDITS</span>
+                            <h3 id="game-access-heading">Game access points</h3>
+                            <b><span id="game-access-points">0</span> POINTS</b>
+                            <small>Claim 1,000 server-managed game points with a Solscan link. Use points to enter campaign levels; they are separate from wallet credits and cannot be withdrawn.</small>
+                            <form id="game-access-form" class="game-access-form">
+                                <label class="wallet-field-label" for="game-access-transaction-link">SOLSCAN TRANSACTION LINK</label>
+                                <input id="game-access-transaction-link" type="url" inputmode="url" autocomplete="url" spellcheck="false" maxlength="300" placeholder="https://solscan.io/tx/…" required>
+                                <button id="game-access-claim" class="button button-quiet" type="submit">ADD 1,000 GAME POINTS</button>
+                            </form>
+                            <p id="game-access-status" class="wallet-api-status" role="status" aria-live="polite">Paste a Solscan link to add game access points.</p>
+                        </section>
                         <div class="wallet-data-panel wallet-balance-panel">
                             <span class="wallet-field-label">VERIFIED IN-GAME BALANCE</span>
                             <b id="wallet-balance">—</b>
@@ -227,7 +243,7 @@
                         <ol class="deposit-steps">
                             <li><span>01</span><div><strong>CREATE PAYMENT INSTRUCTIONS</strong><small>Generate a one-time amount and memo tied to your signed-in game account.</small></div></li>
                             <li><span>02</span><div><strong>SEND CYFUR WITH THE UNIQUE MEMO</strong><small>Use Phantom or any Solana wallet. Send at least the displayed amount to the verified treasury and include the memo exactly.</small></div></li>
-                            <li><span>03</span><div><strong>PASTE AND VERIFY THE TRANSACTION</strong><small>Submit its Solana Explorer/Solscan link or signature. The server verifies the finalized transfer and account-bound memo before crediting.</small></div></li>
+                            <li><span>03</span><div><strong>PASTE AND VERIFY THE TRANSACTION</strong><small>Paste the full Solscan transaction link in the field below. The server verifies the finalized transfer and account-bound payment instructions before crediting.</small></div></li>
                         </ol>
                         <button id="deposit-create-intent" class="button button-primary" type="button" disabled>CREATE DEPOSIT INSTRUCTIONS</button>
                         <section id="deposit-intent-panel" class="deposit-memo-panel" hidden>
@@ -241,8 +257,10 @@
                         </section>
                         <p id="deposit-wallet-requirement" class="wallet-api-status" role="status" aria-live="polite">Funding status is being checked. Do not send CYFUR until the status is READY and account-bound instructions are created.</p>
                         <form id="deposit-signature-form" class="deposit-signature-form">
-                            <label class="wallet-field-label" for="deposit-signature">03 · PASTE TRANSACTION LINK OR SIGNATURE</label>
-                            <input id="deposit-signature" name="signature" type="text" inputmode="url" autocomplete="off" spellcheck="false" maxlength="300" placeholder="Paste signature or Solana Explorer/Solscan link" required>
+                            <label class="wallet-field-label" for="deposit-signature">Solscan Transaction Link</label>
+                            <input id="deposit-signature" name="signature" type="text" inputmode="url" autocomplete="url" spellcheck="false" maxlength="300" placeholder="Paste your Solscan transaction link here" required>
+                            <small class="wallet-field-help">After sending your CYFUR tokens, open your transaction on Solscan, copy the full transaction link from your browser, and paste it here.</small>
+                            <small class="wallet-field-example">https://solscan.io/tx/YourTransactionSignature</small>
                             <button id="deposit-verify-button" class="button button-primary" type="submit" disabled>VERIFY PAYMENT <span>→</span></button>
                         </form>
                         <div class="deposit-status-panel">
@@ -266,7 +284,7 @@
                         <div class="wallet-emblem" aria-hidden="true"><i></i><b>W</b></div>
                         <span class="eyebrow"><span class="wallet-signal"></span> PLAYER WITHDRAWAL // SECURE SERVER-SIDE TRANSFER</span>
                         <h2 id="withdrawal-heading">Withdraw CYFUR</h2>
-                        <p class="wallet-description">Sends an authenticated request to the server for an on-chain SPL transfer only after the approved treasury, wallet config, and signer are verified.</p>
+                        <p class="wallet-description">Withdrawal requests unlock after levels 1-30 have server-saved completion records; local game-access-point clears do not count. Transfers are sent on-chain only after the approved treasury, wallet config, and signer are verified.</p>
                     </div>
                     <div class="wallet-home-details">
                         <div class="wallet-withdrawal-summary">
@@ -518,7 +536,7 @@
                             <small id="completion-star-icons" aria-hidden="true"></small>
                         </div>
                         <div class="completion-metric">
-                            <span>GAME POINTS</span>
+                            <span>CAMPAIGN SCORE</span>
                             <strong id="completion-points">Pending</strong>
                             <small id="completion-points-note">Awaiting server confirmation</small>
                         </div>
@@ -533,17 +551,17 @@
                             <small>Charged once when the server session begins</small>
                         </div>
                         <div class="completion-metric">
-                            <span id="completion-reward-label">PAYOUT / REFUND</span>
+                            <span id="completion-reward-label">POINT REWARD</span>
                             <strong id="completion-reward">—</strong>
                             <small id="completion-reward-note">Preview · not credited</small>
                         </div>
                         <div class="completion-metric completion-token">
-                            <span>CYFUR TOKEN REWARD</span>
-                            <strong id="completion-token-reward">—</strong>
-                            <small>Off-chain equivalent · reward shown separately from points</small>
+                            <span>TOKEN TRANSFER</span>
+                            <strong id="completion-token-reward">NONE</strong>
+                            <small>Gameplay rewards stay in the separate off-chain points balance.</small>
                         </div>
                         <div class="completion-metric completion-balance">
-                            <span>AVAILABLE CYFUR BALANCE</span>
+                            <span>GAME POINT BALANCE</span>
                             <strong id="completion-balance">Not confirmed</strong>
                             <small id="completion-balance-note">Refreshes only after backend confirmation</small>
                         </div>
@@ -553,6 +571,6 @@
             <p id="load-error" class="load-error" hidden></p>
         </section>
     </main>
-    <audio id="background-music" src="music.mp3" preload="auto" loop></audio>
+    <audio id="background-music" preload="auto" loop></audio>
 </body>
 </html>

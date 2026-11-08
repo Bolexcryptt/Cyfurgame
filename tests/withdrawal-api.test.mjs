@@ -39,10 +39,16 @@ const withdrawalsHandler = require("../api/withdrawals.js");
 
 let scenario;
 
-function resetScenario({ balance = 10000n, transferOutcome = "success", readBalanceOverride = null } = {}) {
+function resetScenario({
+    balance = 10000n,
+    transferOutcome = "success",
+    readBalanceOverride = null,
+    completedLevels = Array.from({ length: 30 }, (_, index) => index + 1)
+} = {}) {
     scenario = {
         actualBalance: balance,
         readBalanceOverride,
+        completedLevels,
         transferOutcome,
         rateLimited: false,
         records: new Map(),
@@ -104,6 +110,9 @@ function installFakeFetch() {
                 transaction_signature: record.signature,
                 created_at: "2026-01-01T00:00:00Z"
             })));
+        }
+        if (path.startsWith("level_completions")) {
+            return dbResponse(200, scenario.completedLevels.map((level_number) => ({ level_number })));
         }
         if (path === "rpc/reserve_wallet_withdrawal") {
             if (scenario.rateLimited) {
@@ -278,6 +287,40 @@ test("withdrawal status reports only the authenticated player's verified wallet 
     assert.equal(response.payload.availableCredits, "10000");
     assert.equal(response.payload.withdrawalEnabled, true);
     assert.equal(response.payload.activeWithdrawal, false);
+    assert.deepEqual(response.payload.level30Requirement, {
+        requiredLevels: 30,
+        completedLevels: 30,
+        remainingLevels: 0,
+        met: true
+    });
+});
+
+test("withdrawal status stays disabled until all first 30 server-saved levels are complete", async () => {
+    scenario.completedLevels = Array.from({ length: 29 }, (_, index) => index + 1);
+
+    const response = await getWithdrawalStatus();
+
+    assert.equal(response.statusCode, 200);
+    assert.equal(response.payload.withdrawalEnabled, false);
+    assert.deepEqual(response.payload.level30Requirement, {
+        requiredLevels: 30,
+        completedLevels: 29,
+        remainingLevels: 1,
+        met: false
+    });
+});
+
+test("withdrawal request is rejected before reservation until levels 1 through 30 are server-saved", async () => {
+    scenario.completedLevels = Array.from({ length: 29 }, (_, index) => index + 1);
+
+    const response = await submitWithdrawal();
+
+    assert.equal(response.statusCode, 403);
+    assert.equal(response.payload.error, "level_30_required");
+    assert.equal(response.payload.level30Requirement.remainingLevels, 1);
+    assert.equal(scenario.records.size, 0);
+    assert.equal(scenario.ledger.length, 0);
+    assert.equal(scenario.sendCount, 0);
 });
 
 test("one CYFUR withdrawal uses exactly 100000000 raw units for the verified recipient", async () => {

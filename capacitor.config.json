@@ -1,0 +1,21 @@
+{
+  "appId": "com.relicgrid.cyfurgame",
+  "appName": "RelicGrid",
+  "webDir": "dist",
+  "ios": {
+    "contentInset": "automatic"
+  },
+  "android": {
+    "allowMixedContent": false
+  },
+  "plugins": {
+    "StatusBar": {
+      "overlaysWebView": true,
+      "style": "DARK",
+      "backgroundColor": "#05080e"
+    },
+    "ScreenOrientation": {
+      "orientation": "portrait"
+    }
+  }
+}

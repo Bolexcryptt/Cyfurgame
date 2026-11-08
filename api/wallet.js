@@ -134,6 +134,7 @@ module.exports = async function wallet(request, response) {
         ]);
         let config = null;
         let linkedWalletAddress = null;
+        let depositSchemaReady = false;
         if (process.env.SUPABASE_SERVICE_ROLE_KEY?.trim()) {
             const [configs, linkedWallets] = await Promise.all([
                 serviceRequest(
@@ -146,6 +147,21 @@ module.exports = async function wallet(request, response) {
             config = configs[0] ?? null;
             if (isBase58(linkedWallets[0]?.wallet_address, 32)) {
                 linkedWalletAddress = linkedWallets[0].wallet_address;
+            }
+            try {
+                depositSchemaReady = await serviceRequest(
+                    "rpc/relicgrid_deposit_schema_ready",
+                    {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: "{}"
+                    }
+                ) === true;
+            } catch (error) {
+                console.error("Wallet deposit database readiness check failed.", {
+                    status: error.status ?? 500,
+                    code: error.code ?? "deposit_schema_check_failed"
+                });
             }
         }
         const network = getSolanaNetwork();
@@ -201,6 +217,11 @@ module.exports = async function wallet(request, response) {
             addReadinessCheck(
                 "service_database_key_missing",
                 "The server-side wallet database connection is not configured."
+            );
+        } else if (!depositSchemaReady) {
+            addReadinessCheck(
+                "deposit_database_schema_not_ready",
+                "Required deposit and atomic ledger database migrations are missing or could not be verified."
             );
         }
         if (

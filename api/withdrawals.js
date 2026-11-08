@@ -45,13 +45,23 @@ module.exports = async function withdrawals(request, response) {
         const user = await authenticate(request);
         if (!user) return sendJson(response, 401, { error: "authentication_required" });
 
-        const [[linkedWallet], [account], configs, history] = await Promise.all([
+        const [[linkedWallet], [account], configs, history, completedLevels] = await Promise.all([
             serviceRequest(`player_solana_wallets?select=wallet_address,verified_at&player_id=eq.${encodeURIComponent(user.id)}&limit=1`),
             serviceRequest(`wallet_credit_accounts?select=balance_credits,updated_at&player_id=eq.${encodeURIComponent(user.id)}&limit=1`),
             readWalletSystemConfig(),
-            serviceRequest(`wallet_withdrawals?select=id,status,amount_credits,amount_raw,transaction_signature,created_at&player_id=eq.${encodeURIComponent(user.id)}&order=created_at.desc&limit=20`)
+            serviceRequest(`wallet_withdrawals?select=id,status,amount_credits,amount_raw,transaction_signature,created_at&player_id=eq.${encodeURIComponent(user.id)}&order=created_at.desc&limit=20`),
+            serviceRequest(`level_completions?select=level_number&player_id=eq.${encodeURIComponent(user.id)}&level_number=lte.30`)
         ]);
 
+        const completedLevelNumbers = new Set(completedLevels
+            .map((completion) => Number(completion.level_number))
+            .filter((levelNumber) => Number.isInteger(levelNumber) && levelNumber >= 1 && levelNumber <= 30));
+        const level30Requirement = {
+            requiredLevels: 30,
+            completedLevels: completedLevelNumbers.size,
+            remainingLevels: 30 - completedLevelNumbers.size,
+            met: completedLevelNumbers.size === 30
+        };
         const balanceCredits = account?.balance_credits ? String(account.balance_credits) : "0";
         const pendingCredits = history
             .filter((entry) => ["pending", "submitted"].includes(entry.status))
@@ -82,13 +92,16 @@ module.exports = async function withdrawals(request, response) {
             const featureEnabled = process.env.WITHDRAWAL_ENABLED === "true" &&
                 configs?.withdrawals_enabled === true;
             return sendJson(response, 200, {
-                withdrawalEnabled: featureEnabled && configurationReady && signerReady && rpcConfigured,
+                withdrawalEnabled: featureEnabled && configurationReady && signerReady && rpcConfigured &&
+                    level30Requirement.met,
                 readiness: {
                     featureEnabled,
                     configurationReady,
                     signerReady,
-                    rpcConfigured
+                    rpcConfigured,
+                    level30RequirementMet: level30Requirement.met
                 },
+                level30Requirement,
                 walletAddress: linkedWallet?.wallet_address ?? null,
                 walletVerified: Boolean(linkedWallet?.verified_at &&
                     isBase58(linkedWallet.wallet_address, 32)),
@@ -112,6 +125,13 @@ module.exports = async function withdrawals(request, response) {
         const action = request.body?.action || "preview";
         if (action !== "preview" && action !== "submit") {
             return sendJson(response, 400, { error: "invalid_withdrawal_action" });
+        }
+        if (!level30Requirement.met) {
+            return sendJson(response, 403, {
+                error: "level_30_required",
+                level30Requirement,
+                message: `Complete levels 1-30 to unlock withdrawals. ${level30Requirement.completedLevels} of 30 server-saved level clears are recorded.`
+            });
         }
         if (!linkedWallet?.wallet_address || !isBase58(linkedWallet.wallet_address, 32) ||
             !linkedWallet.verified_at) {

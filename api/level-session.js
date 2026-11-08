@@ -27,12 +27,17 @@ module.exports = async function levelSession(request, response) {
         const user = await authenticate(request);
         if (!user) return sendJson(response, 401, { error: "authentication_required" });
         const sessionId = request.body?.sessionId;
+        if (request.body?.gamePoints !== undefined && typeof request.body.gamePoints !== "boolean") {
+            return sendJson(response, 400, { error: "invalid_level_session" });
+        }
+        const gamePoints = request.body?.gamePoints === true;
         if (typeof sessionId !== "string" ||
             !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(sessionId)) {
             return sendJson(response, 400, { error: "invalid_level_session" });
         }
 
-        const startedAtResponse = await serviceRequest("rpc/start_wallet_level_timer", {
+        const startedAtResponse = await serviceRequest(
+            gamePoints ? "rpc/start_game_point_level_timer" : "rpc/start_wallet_level_timer", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ p_player_id: user.id, p_session_id: sessionId })
@@ -48,7 +53,15 @@ module.exports = async function levelSession(request, response) {
             code: error.code ?? "level_timer_start_failed"
         });
         if (error.status === 404 && error.code === "PGRST202") {
-            return sendJson(response, 503, { error: "wallet_migration_required" });
+            return sendJson(response, 503, {
+                error: request.body?.gamePoints === true
+                    ? "game_points_migration_required"
+                    : "wallet_migration_required"
+            });
+        }
+        if (error.status === 404 && error.code === "PGRST205" &&
+            request.body?.gamePoints === true) {
+            return sendJson(response, 503, { error: "game_points_schema_not_installed" });
         }
         return sendJson(response, 502, { error: "level_timer_unavailable" });
     }

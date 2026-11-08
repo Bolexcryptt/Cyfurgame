@@ -5,7 +5,6 @@ import { UnrealBloomPass } from "three/addons/postprocessing/UnrealBloomPass.js"
 import { OutputPass } from "three/addons/postprocessing/OutputPass.js";
 import {
     levels,
-    formatCyfurCredits,
     calculateSolveTimeMilliseconds,
     evaluateLevelStars,
     traceLaserRoute
@@ -188,6 +187,8 @@ function startScene() {
     let firstLevelTutorialStage = "observe";
     let walletLevelSessionId = null;
     let walletLevelEntryCostCredits = null;
+    let gameAccessPointsUsed = null;
+    let gamePointsSession = false;
     let updateSourceMarker = () => {};
     let traceStartedAt = 0;
     let levelStartedAt = null;
@@ -201,7 +202,7 @@ function startScene() {
         ["mirror", "mirror.mp3"],
         ["powerSource", "powersource.mp3"]
     ].map(([effect, file]) => {
-        const audio = new Audio(new URL(file, import.meta.url));
+        const audio = new Audio(new URL(file, document.baseURI));
         audio.preload = "auto";
         audio.load();
         return [effect, audio];
@@ -510,7 +511,7 @@ function startScene() {
     const textureLoader = new THREE.TextureLoader();
 
     function loadPbrTexture(filename, colorSpace) {
-        const url = new URL(`./assets/pbr/${filename}`, import.meta.url).href;
+        const url = new URL(`assets/pbr/${filename}`, document.baseURI).href;
         return new Promise((resolve) => {
             textureLoader.load(
                 url,
@@ -1568,6 +1569,12 @@ function startScene() {
         walletLevelEntryCostCredits = levelDetails?.level
             ? levelDetails.entryCostCredits ?? null
             : null;
+        gameAccessPointsUsed = levelDetails?.level
+            ? levelDetails.gameAccessPointsUsed ?? null
+            : null;
+        gamePointsSession = levelDetails?.level
+            ? levelDetails.gamePointsSession === true
+            : false;
         GRID.start = { row: level.start.row, col: level.start.col };
         GRID.target = { row: level.target.row, col: level.target.col };
         launchDirection = level.start.direction;
@@ -1757,7 +1764,7 @@ function startScene() {
             levelStartedAt = performance.now();
             if (walletLevelSessionId) {
                 window.dispatchEvent(new CustomEvent("fluxgrid:level-timer-start", {
-                    detail: { walletSessionId: walletLevelSessionId }
+                    detail: { walletSessionId: walletLevelSessionId, gamePointsSession }
                 }));
             }
         }
@@ -1769,31 +1776,48 @@ function startScene() {
         document.getElementById("completion-stars").textContent = `${stars} / 3`;
         document.getElementById("completion-star-icons").textContent = `${"★".repeat(stars)}${"☆".repeat(3 - stars)}`;
         document.getElementById("completion-level").textContent = `Level ${String(level.number).padStart(2, "0")}`;
-        document.getElementById("completion-points").textContent = walletLevelSessionId ? "Pending" : "0";
+        document.getElementById("completion-points").textContent =
+            walletLevelSessionId || gameAccessPointsUsed ? "Pending" : "0";
         document.getElementById("completion-points-note").textContent = walletLevelSessionId
             ? "Awaiting server confirmation"
-            : "Practice clear · not saved";
+            : gameAccessPointsUsed
+                ? "Campaign progress saves on this device"
+                : "Practice clear · not saved";
         document.getElementById("completion-time").textContent = `${(elapsedMilliseconds / 1000).toFixed(1)} s`;
         document.getElementById("completion-time-thresholds").textContent =
             `3★ ≤ ${timeTargets.threeSeconds}s · 2★ ≤ ${timeTargets.twoSeconds}s`;
-        const formattedEntryCost = Number.isSafeInteger(walletLevelEntryCostCredits)
-            ? `${walletLevelEntryCostCredits.toLocaleString("en-US")} credits`
-            : "Unavailable";
+        const formattedEntryCost = Number.isSafeInteger(gameAccessPointsUsed)
+            ? `${gameAccessPointsUsed.toLocaleString("en-US")} game points`
+            : Number.isSafeInteger(walletLevelEntryCostCredits)
+                ? `${walletLevelEntryCostCredits.toLocaleString("en-US")} credits`
+                : "Unavailable";
         document.getElementById("completion-entry-cost").textContent = formattedEntryCost;
         document.querySelector("#completion-entry-cost + small").textContent =
-            "Deducted once when the server session began";
+            gameAccessPointsUsed
+                ? "Used once when this level started"
+                : "Deducted once when the server session began";
 
         const rewardLabel = document.getElementById("completion-reward-label");
         const reward = document.getElementById("completion-reward");
         const rewardNote = document.getElementById("completion-reward-note");
-        rewardLabel.textContent = "ESTIMATED REWARD";
-        reward.textContent = `${result.rewardCredits.toLocaleString("en-US")} credits`;
-        rewardNote.textContent = "Pending server validation; not yet credited";
-        document.getElementById("completion-token-reward").textContent =
-            `${formatCyfurCredits(result.rewardCredits)} CYFUR equivalent`;
-        document.getElementById("completion-balance").textContent = "Not confirmed";
-        document.getElementById("completion-balance-note").textContent =
-            "Refreshes only after backend confirmation";
+        if (gameAccessPointsUsed && !gamePointsSession) {
+            rewardLabel.textContent = "NO WALLET REWARD";
+            reward.textContent = "—";
+            rewardNote.textContent = "Game access points are separate from wallet credits";
+            document.getElementById("completion-token-reward").textContent = "NONE";
+            document.getElementById("completion-balance").textContent = "Unchanged";
+            document.getElementById("completion-balance-note").textContent = "Wallet balance unchanged";
+        } else {
+            rewardLabel.textContent = gamePointsSession ? "ESTIMATED POINT REWARD" : "ESTIMATED REWARD";
+            reward.textContent = `${result.rewardCredits.toLocaleString("en-US")} ${gamePointsSession ? "points" : "credits"}`;
+            rewardNote.textContent = "Pending server confirmation; not yet credited";
+            document.getElementById("completion-token-reward").textContent = "NONE";
+            document.getElementById("completion-balance").textContent = "Not confirmed";
+            document.getElementById("completion-balance-note").textContent =
+                gamePointsSession
+                    ? "Points balance refreshes after server confirmation"
+                    : "Refreshes only after backend confirmation";
+        }
         const nextLevelButton = document.getElementById("next-level");
         nextLevelButton.hidden = false;
         nextLevelButton.disabled = true;
@@ -1814,7 +1838,9 @@ function startScene() {
                 : "1 star";
         setStatus(
             "Battery connected",
-            `Level ${String(pending.level.number).padStart(2, "0")} complete. Rating: ${starLabel}. Reward pending server verification.`,
+            gameAccessPointsUsed && !gamePointsSession
+                ? `Level ${String(pending.level.number).padStart(2, "0")} complete. Rating: ${starLabel}.`
+                : `Level ${String(pending.level.number).padStart(2, "0")} complete. Rating: ${starLabel}. Reward pending server calculation.`,
             "success"
         );
         window.dispatchEvent(new CustomEvent("fluxgrid:level-complete", { detail: pending.detail }));
@@ -2908,6 +2934,7 @@ function startScene() {
                             stars: starResult.stars,
                             elapsedMilliseconds,
                             walletSessionId: walletLevelSessionId,
+                            gamePointsSession,
                             launchDirection,
                             mirrors: [...placedMirrors.values()].map(({ row, col, slash }) => ({ row, col, slash }))
                         }

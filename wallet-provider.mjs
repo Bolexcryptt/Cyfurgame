@@ -6,6 +6,23 @@ const connectionListeners = new WeakSet();
 const mobileProviders = new WeakMap();
 const mobileStateKey = "fluxgrid.phantom.deeplink.v1";
 const BASE58_ALPHABET = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+let nativeCallbackScheme = null;
+let nativeAppUrl = null;
+
+export function setNativePhantomCallback({ scheme = null, appUrl = null } = {}) {
+    if (scheme !== null && !/^[a-z][a-z0-9+.-]*$/i.test(scheme)) {
+        throw new TypeError("The native wallet callback scheme is invalid.");
+    }
+    if (appUrl !== null) {
+        const parsed = new URL(appUrl);
+        if (parsed.protocol !== "https:" || parsed.username || parsed.password ||
+            parsed.pathname !== "/" || parsed.search || parsed.hash) {
+            throw new TypeError("The native wallet app URL must be a secure HTTPS origin.");
+        }
+    }
+    nativeCallbackScheme = scheme;
+    nativeAppUrl = appUrl;
+}
 
 export function getDepositPreparationFieldErrors(preparation) {
     const errors = [];
@@ -67,6 +84,36 @@ export function getSolFundingStatus(diagnostic) {
         };
     }
     return { status: "sufficient", balanceLamports, requiredLamports };
+}
+
+export function normalizeDepositSignatureInput(value) {
+    return typeof value === "string" ? value.trim() : "";
+}
+
+export function getDepositVerificationErrorMessage(errorCode, message, status) {
+    const messages = {
+        invalid_transaction_signature: "Invalid Solscan link. Paste the full transaction URL from Solscan, including its transaction signature.",
+        transaction_failed: "Solana reports this transaction failed. No credits were added.",
+        wrong_token_or_destination: "This transaction does not contain a verified CYFUR transfer to the exact treasury token account. No credits were added.",
+        wrong_amount: "The finalized CYFUR transfer does not meet the required deposit amount. No credits were added.",
+        payment_intent_memo_missing: "This finalized transaction has no RelicGrid deposit memo, so it cannot be matched to your account. Create a new deposit instruction and include its memo before sending. No credits were added.",
+        payment_intent_mismatch: "This transaction does not match an active deposit instruction for this account. Create a fresh deposit instruction and include its memo exactly. No credits were added.",
+        transaction_already_claimed: "This transaction has already been claimed or credited to another player. No credits were added.",
+        deposit_rejected: "The deposit was rejected because it did not match the current verified account or deposit configuration.",
+        transaction_not_found: "Transaction not found on Solana yet. Check the Solscan link and retry after the transaction is submitted.",
+        finalized_transaction_unavailable: "Solana could not provide finalized transaction details. No credits were added; retry verification later.",
+        deposit_verification_unavailable: "The verification service could not complete the check. No credits were added; try again later.",
+        wallet_api_not_configured: "The deposit verification service is not configured. No credits were added; contact support.",
+        wallet_verifier_not_configured: "Deposit verification is not ready. No credits were added; do not send CYFUR and contact support.",
+        wallet_migration_required: "Deposit verification needs a server database update. No credits were added; contact support.",
+        wallet_schema_not_installed: "Deposit verification is temporarily unavailable because its database setup is incomplete. No credits were added; contact support.",
+        authentication_required: "Your session has expired. Sign in again before verifying this transaction.",
+        origin_not_allowed: "This app origin is not allowed to use the deposit service. Update the server's native-app CORS allowlist.",
+        deposit_amount_not_creditable: "This deposit cannot be credited under the current account rules. No credits were added; contact support."
+    };
+    if (typeof message === "string" && message.trim()) return message.trim();
+    if (messages[errorCode]) return messages[errorCode];
+    return `Deposit verification could not complete (HTTP ${status}). No credits were added. Please try again later.`;
 }
 
 export function getFeePayerPreflightError(diagnostic) {
@@ -157,7 +204,9 @@ function writeMobileState(walletWindow, state) {
 }
 
 function buildCallbackUrl(walletWindow, state) {
-    const callback = new URL(walletWindow.location.href);
+    const callback = nativeCallbackScheme
+        ? new URL(`${nativeCallbackScheme}://wallet-callback/`)
+        : new URL(walletWindow.location.href);
     callback.searchParams.set("phantom_callback", "1");
     callback.searchParams.set("phantom_state", state);
     return callback.toString();
@@ -487,7 +536,7 @@ export async function connectPhantom(walletWindow = window, timeoutMs = 2000) {
 
 export function startPhantomMobileConnect(walletWindow = window, cluster = "mainnet-beta") {
     const target = new URL(walletWindow.location.href);
-    if (target.protocol !== "https:") {
+    if (target.protocol !== "https:" && !nativeCallbackScheme) {
         throw new Error("Phantom mobile connection requires the secure production HTTPS site.");
     }
     const nacl = getNacl(walletWindow);
@@ -502,7 +551,7 @@ export function startPhantomMobileConnect(walletWindow = window, cluster = "main
         secretKey: bytesToBase64(keyPair.secretKey)
     });
     const url = new URL("https://phantom.com/ul/v1/connect");
-    url.searchParams.set("app_url", target.origin);
+    url.searchParams.set("app_url", nativeAppUrl || target.origin);
     url.searchParams.set("dapp_encryption_public_key", encodeBase58(keyPair.publicKey));
     url.searchParams.set("redirect_link", buildCallbackUrl(walletWindow, state));
     if (cluster === "devnet" || cluster === "testnet" || cluster === "mainnet-beta") {
@@ -511,8 +560,8 @@ export function startPhantomMobileConnect(walletWindow = window, cluster = "main
     walletWindow.location.assign(url.toString());
 }
 
-export function readPhantomMobileCallback(walletWindow = window) {
-    const url = new URL(walletWindow.location.href);
+export function readPhantomMobileCallback(walletWindow = window, callbackUrl = walletWindow.location.href) {
+    const url = new URL(callbackUrl);
     if (url.searchParams.get("phantom_callback") !== "1") return null;
     const response = Object.fromEntries(url.searchParams.entries());
     const state = readMobileState(walletWindow);
@@ -521,7 +570,9 @@ export function readPhantomMobileCallback(walletWindow = window) {
         "phantom_encryption_public_key", "errorCode", "errorMessage"]) {
         url.searchParams.delete(key);
     }
-    walletWindow.history.replaceState({}, "", url.toString());
+    const isCurrentPage = url.origin === walletWindow.location.origin &&
+        url.protocol === walletWindow.location.protocol;
+    if (isCurrentPage) walletWindow.history.replaceState({}, "", url.toString());
     if (!state || state.state !== callbackState) {
         walletWindow.localStorage.removeItem(mobileStateKey);
         return { error: new Error("Phantom returned to RelicGrid with an invalid connection state.") };

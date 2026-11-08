@@ -12,15 +12,18 @@ import {
     encodeWalletBytes,
     getConnectedPhantomWallet,
     getDepositPreparationFieldErrors,
+    getDepositVerificationErrorMessage,
     getFeePayerPreflightError,
     getPhantomProvider,
     getSolFundingStatus,
     isLinkedPhantomWallet,
     isMobileBrowser,
+    normalizeDepositSignatureInput,
     readPhantomMobileCallback,
     rebuildMobileDepositAfterBlockhashRejection,
     savePhantomMobileSession,
     signAndBroadcastWithBlockhashRetry,
+    setNativePhantomCallback,
     startPhantomMobileConnect,
     waitForPhantomProvider
 } from "../wallet-provider.mjs";
@@ -81,8 +84,9 @@ test("Phantom provider detection supports current and legacy injection without a
 });
 
 test("deposit signature input accepts raw signatures and trusted explorer links only", () => {
-    const signature = "1".repeat(64);
+    const signature = encodeBase58(Uint8Array.from({ length: 64 }, (_, index) => index + 1));
     assert.equal(normalizeTransactionSignature(signature), signature);
+    assert.equal(normalizeTransactionSignature(` \t${signature}\n`), signature);
     assert.equal(
         normalizeTransactionSignature(`https://explorer.solana.com/tx/${signature}?cluster=mainnet-beta`),
         signature
@@ -92,6 +96,32 @@ test("deposit signature input accepts raw signatures and trusted explorer links 
     assert.equal(normalizeTransactionSignature(`http://explorer.solana.com/tx/${signature}`), null);
     assert.equal(normalizeTransactionSignature(`https://explorer.solana.com/account/${signature}`), null);
     assert.equal(normalizeTransactionSignature("not-a-transaction"), null);
+});
+
+test("deposit signature input preserves the complete signature and explains verification errors", () => {
+    const signature = encodeBase58(Uint8Array.from({ length: 64 }, (_, index) => index + 1));
+    assert.equal(normalizeDepositSignatureInput(` \n${signature}\t `), signature);
+    assert.equal(normalizeDepositSignatureInput(null), "");
+    assert.match(
+        getDepositVerificationErrorMessage("invalid_transaction_signature", null, 400),
+        /Invalid Solscan link/
+    );
+    assert.match(
+        getDepositVerificationErrorMessage("payment_intent_mismatch", null, 422),
+        /active deposit instruction.*include its memo exactly/
+    );
+    assert.match(
+        getDepositVerificationErrorMessage("payment_intent_memo_missing", null, 422),
+        /no RelicGrid deposit memo/
+    );
+    assert.match(
+        getDepositVerificationErrorMessage("deposit_verification_unavailable", null, 502),
+        /No credits were added/
+    );
+    assert.equal(
+        getDepositVerificationErrorMessage("direct_treasury_not_ready", "Funding is not READY.", 503),
+        "Funding is not READY."
+    );
 });
 
 test("Phantom Wallet Standard registration supports connect, ownership signing, and transaction approval", async () => {
@@ -497,6 +527,53 @@ test("Phantom mobile deeplink encrypts connect and message-sign requests and res
         sharedSecret: decrypted.sharedSecret,
         phantomPublicKey: decrypted.phantomPublicKey
     });
+
+    test("Phantom mobile callbacks return to the Capacitor app through its registered scheme", () => {
+        const storage = new Map();
+        let assignedUrl = "";
+        const walletWindow = {
+            nacl,
+            location: {
+                href: "capacitor://localhost/index.html",
+                origin: "capacitor://localhost",
+                protocol: "capacitor:",
+                assign(url) { assignedUrl = url; }
+            },
+            localStorage: {
+                getItem(key) { return storage.get(key) ?? null; },
+                setItem(key, value) { storage.set(key, value); },
+                removeItem(key) { storage.delete(key); }
+            },
+            history: {
+                replaceState(_state, _title, href) { walletWindow.location.href = href; }
+            }
+        };
+
+        try {
+            setNativePhantomCallback({
+                scheme: "relicgrid",
+                appUrl: "https://cyfurpuzzlegame.vercel.app"
+            });
+            startPhantomMobileConnect(walletWindow);
+            const connectUrl = new URL(assignedUrl);
+            const callbackUrl = new URL(connectUrl.searchParams.get("redirect_link"));
+            const storedState = JSON.parse(storage.get("fluxgrid.phantom.deeplink.v1"));
+            assert.equal(connectUrl.searchParams.get("app_url"), "https://cyfurpuzzlegame.vercel.app");
+            assert.equal(callbackUrl.protocol, "relicgrid:");
+            assert.equal(callbackUrl.hostname, "wallet-callback");
+            assert.equal(callbackUrl.searchParams.get("phantom_callback"), "1");
+            assert.equal(callbackUrl.searchParams.get("phantom_state"), storedState.state);
+
+            callbackUrl.searchParams.set("data", "encrypted-response");
+            callbackUrl.searchParams.set("nonce", "encrypted-nonce");
+            const callback = readPhantomMobileCallback(walletWindow, callbackUrl.toString());
+            assert.equal(callback.response.data, "encrypted-response");
+            assert.equal(callback.response.nonce, "encrypted-nonce");
+            assert.equal(walletWindow.location.href, "capacitor://localhost/index.html");
+        } finally {
+            setNativePhantomCallback();
+        }
+    });
     const connection = await connectPhantom(walletWindow);
     assert.equal(connection.publicKey, "mobile-wallet-address");
     assert.equal(getConnectedPhantomWallet(walletWindow).provider, connection.provider);
@@ -626,15 +703,48 @@ test("level transition milestones occur every seven completed levels and are not
     assert.throws(() => getPendingLevelTransition(-1), TypeError);
 });
 
-test("intro navigation leads through the project video to the homepage before gameplay", () => {
+test("company intro stays portrait and Play Now game video plays in landscape", () => {
     const app = readFileSync(new URL("../app.js", import.meta.url), "utf8");
-    assert.match(app, /function finishOpeningFlow\(\)/);
-    assert.match(app, /function continueAfterIntro\(\)/);
-    assert.match(app, /if \(openingFlowFinished \|\| projectVideoInProgress\) return/);
-    assert.match(app, /transitionVideo\.src = "gamevideo\.mp4"/);
-    assert.match(app, /transitionVideo\.onended = finish/);
-    assert.match(app, /videoAction\.onclick = continueAfterIntro/);
-    assert.match(app, /videoSkip\.onclick = finishOpeningFlow/);
+    assert.match(app, /async function finishOpeningFlow\(\)/);
+    assert.match(app, /async function showOpeningIntro\(\)/);
+    const openingFlow = app.slice(
+        app.indexOf("function playGameVideo"),
+        app.indexOf("\nfunction fitVideoFrame")
+    );
+    assert.match(openingFlow, /playOpeningVideo\("companyintro\.mp4", "", \(\) => \{\}, false\)/);
+    assert.match(openingFlow, /if \(source === "companyintro\.mp4"\) \{\s*playOpeningVideo\("intro\.mp4", "RelicGrid introduction"/);
+    assert.match(openingFlow, /if \(source === "intro\.mp4"\) \{\s*void finishCompanyIntro\(\)/);
+    assert.match(openingFlow, /async function finishCompanyIntro\(\)[\s\S]*?showScreen\("title-screen"\)/);
+    const openingCompletion = app.slice(
+        app.indexOf("async function finishOpeningFlow"),
+        app.indexOf("\nfunction playCampaignEnding")
+    );
+    assert.match(openingCompletion, /renderHome\(\)/);
+    assert.match(openingCompletion, /wallet-card"\)\.scrollIntoView/);
+    assert.match(openingFlow, /introVideo\.muted = true/);
+    assert.match(openingFlow, /void playVideoInOrientation\(\s*introVideo,\s*offerNext,\s*\(\) => \{\s*introVideo\.muted = false/);
+    assert.match(openingFlow, /const orientation = source === "gamevideo\.mp4" \? "landscape" : "portrait"/);
+    assert.match(app, /active\.orientation === "landscape" && videoOrientationQuery\.matches/);
+    assert.match(app, /if \(!active \|\| \(active\.orientation === "landscape" && videoOrientationQuery\.matches\)\) return/);
+    assert.doesNotMatch(app, /if \(Capacitor\.isNativePlatform\(\)\) \{\s*void restorePortraitOrientation\(\);\s*\}/);
+    assert.match(app, /await waitForNativeOrientation\(orientation\);\s*active\.nativeOrientationConfirmed = true/);
+    assert.match(app, /videoOrientationQuery\.matches &&\s*!nativeOrientationConfirmed/);
+    assert.match(openingFlow, /function playGameVideo\(\)[\s\S]*?videoSkip\.hidden = false[\s\S]*?videoSkip\.onclick = \(\) => void finishOpeningFlow\(\)[\s\S]*?playOpeningVideo\("gamevideo\.mp4"[\s\S]*?true\)/);
+    assert.match(openingFlow, /offerNext,\s*\(\) => \{[\s\S]*?orientation\s*\);/);
+    assert.match(openingFlow, /videoSkip\.hidden = !allowSkip/);
+    assert.match(openingFlow, /videoSkip\.onclick = allowSkip \? \(\) => void finishOpeningFlow\(\) : null/);
+    assert.match(openingFlow, /videoScreen\.dataset\.companyIntro = String\(source === "companyintro\.mp4"\)/);
+    assert.match(app, /document\.addEventListener\("keydown", \(event\) => \{\s*if \(openingFlowFinished\) return;\s*if \(\["Backspace", "Escape", "Enter", " "\]\.includes\(event\.key\)\)/);
+    assert.match(app, /App\.addListener\("backButton", \(\{ canGoBack \}\) => \{\s*if \(!openingFlowFinished\) return/);
+    assert.match(app, /await stopVideoPlayback\(introVideo\)/);
+    assert.match(app, /showScreen\("title-screen"\)/);
+    assert.match(app, /player\.watchedGameIntro = true/);
+    assert.match(app, /delete videoScreen\.dataset\.openingSequence/);
+    assert.match(app, /pendingPhantomMobileCallback = phantomMobileCallback/);
+    assert.doesNotMatch(app, /continueAfterIntro/);
+    assert.equal(existsSync(new URL("../companyintro.mp4", import.meta.url)), true);
+    const viteConfig = readFileSync(new URL("../vite.config.mjs", import.meta.url), "utf8");
+    assert.match(viteConfig, /"companyintro\.mp4"/);
     assert.doesNotMatch(app, /function startInitialLevel\(\)/);
     assert.match(app, /await refreshOwnProgress\(\)/);
     assert.match(app, /mergeCompletedLevels\([\s\S]*?!player\.playerId \|\| player\.playerId === authUser\.id/);
@@ -649,7 +759,12 @@ test("intro navigation leads through the project video to the homepage before ga
     assert.match(app, /window\.addEventListener\("fluxgrid:core-activation-cancel", startMusic\)/);
 
     const html = readFileSync(new URL("../index.html", import.meta.url), "utf8");
-    assert.match(html, /id="background-music" src="music\.mp3"[^>]*loop/);
+    const styles = readFileSync(new URL("../style.css", import.meta.url), "utf8");
+    assert.match(styles, /\.video-screen\[data-opening-sequence="true"\]\s*\{[^}]*height: 100dvh/);
+    assert.match(styles, /\.video-screen\[data-opening-sequence="true"\] #intro-video\s*\{[^}]*object-fit: contain/);
+    assert.match(styles, /\.video-screen\[data-company-intro="true"\] \.video-brand,[\s\S]*?\.rotate-device-prompt\s*\{\s*visibility: hidden/);
+    assert.match(html, /id="background-music"[^>]*loop/);
+    assert.match(app, /backgroundMusic\.src = "music\.mp3"/);
     assert.doesNotMatch(html, /music\.wav/);
     assert.match(html, /id="completion-points"/);
     assert.match(html, /id="completion-token-reward"/);
@@ -723,7 +838,7 @@ test("wallet API publishes the same exchange rate and keeps deposits disabled", 
             ["Wallet deposit readiness checks failed."]
         );
         assert.ok(readinessLogs[0].details.failedChecks.includes("service_database_key_missing"));
-        assert.equal(readinessLogs[0].details.failedChecks.includes("server_deposits_flag_disabled"), false);
+        assert.equal(readinessLogs[0].details.failedChecks.includes("server_deposits_flag_disabled"), true);
         assert.equal(readinessLogs[0].details.failedChecks.includes("approved_mint_unconfigured"), false);
         assert.equal(response.payload.treasuryAddress, null);
         assert.equal(response.payload.linkedWalletAddress, null);
@@ -768,6 +883,7 @@ test("wallet API reports mainnet deposits ready only when every readiness check 
         mintAddress,
         tokenProgramId
     );
+    let depositSchemaReady = true;
     globalThis.fetch = async (url, options = {}) => {
         const target = String(url);
         if (target.endsWith("/auth/v1/user")) {
@@ -795,6 +911,9 @@ test("wallet API reports mainnet deposits ready only when every readiness check 
         }
         if (target.includes("/player_solana_wallets?")) {
             return new Response(JSON.stringify([]), { status: 200 });
+        }
+        if (target.includes("/rpc/relicgrid_deposit_schema_ready")) {
+            return new Response(JSON.stringify(depositSchemaReady), { status: 200 });
         }
         if (target === environment.SOLANA_RPC_URL) {
             const call = JSON.parse(options.body);
@@ -857,24 +976,32 @@ test("backend level entry costs match the campaign economy for all 99 levels", (
     assert.equal(getLevelEntryCostCredits(100), null);
 });
 
-test("all levels can start in practice while paid rewards require a server session", () => {
+test("campaign level entry requires a server-managed game-points session", () => {
     const app = readFileSync(new URL("../app.js", import.meta.url), "utf8");
     const startIndex = app.indexOf("async function startLevel");
     const endIndex = app.indexOf("\nfunction leaveGameplay", startIndex);
     const startLevel = app.slice(startIndex, endIndex);
+    const entryStart = app.indexOf("async function requestLevelEntry");
+    const entryEnd = app.indexOf("\nfunction formatTokenAmount", entryStart);
+    const entryFlow = app.slice(entryStart, entryEnd);
     assert.ok(startIndex >= 0);
     assert.ok(endIndex > startIndex);
+    assert.ok(entryStart >= 0);
+    assert.ok(entryEnd > entryStart);
     assert.match(startLevel, /const entry = await requestLevelEntry\(number\)/);
     assert.match(startLevel, /activeWalletLevelSessionId = entry\.sessionId/);
     assert.match(startLevel, /entryCostCredits: activeLevelEntryCostCredits/);
     assert.match(app, /getLevelEconomy\(level\.number\)\.entryCostCredits/);
-    assert.match(app, /FREE PRACTICE · NEED/);
-    assert.match(app, /entry\.practice/);
+    assert.match(entryFlow, /apiUrl\("game-points"\)/);
+    assert.match(entryFlow, /action: "start"/);
+    assert.match(entryFlow, /result\.gamePoints !== true/);
+    assert.doesNotMatch(entryFlow, /practiceEntry/);
     assert.match(app, /Practice complete\. No credits, leaderboard points, or saved progress were awarded/);
 
     const scene = readFileSync(new URL("../script.js", import.meta.url), "utf8");
     assert.match(scene, /ESTIMATED REWARD/);
-    assert.match(scene, /Pending server validation; not yet credited/);
+    assert.match(scene, /Pending server confirmation; not yet credited/);
+    assert.match(scene, /ESTIMATED POINT REWARD/);
     assert.match(scene, /No reward is credited for a failed attempt/);
     assert.match(scene, /traceLaserRoute\(activeLevel, mirrorOrientations, launchDirection\)/);
     const levelsModule = readFileSync(new URL("../levels.js", import.meta.url), "utf8");
@@ -896,7 +1023,7 @@ test("RelicGrid branding is used in the game and hidden scenes stop rendering", 
     assert.match(scene, /antialias: !mobileQuality/);
     assert.match(scene, /mobileQuality \? 1\.5 : 2/);
     assert.match(scene, /loadPbrTexture\(`\$\{prefix\}-color\.jpg`/);
-    assert.match(scene, /new URL\(`\.\/assets\/pbr\/\$\{filename\}`, import\.meta\.url\)/);
+    assert.match(scene, /new URL\(`assets\/pbr\/\$\{filename\}`, document\.baseURI\)/);
     assert.equal(existsSync(new URL("../background.png", import.meta.url)), true);
     for (const texture of [
         "rock-color.jpg",
@@ -934,10 +1061,11 @@ test("RelicGrid branding is used in the game and hidden scenes stop rendering", 
     assert.equal(existsSync(new URL("../mirror.mp3", import.meta.url)), true);
     assert.equal(existsSync(new URL("../powersource.mp3", import.meta.url)), true);
     const soundHtml = readFileSync(new URL("../index.html", import.meta.url), "utf8");
-    assert.match(soundHtml, /id="background-music" src="music\.mp3"[^>]*loop/);
+    assert.match(soundHtml, /id="background-music"[^>]*loop/);
     assert.equal(existsSync(new URL("../music.mp3", import.meta.url)), true);
     assert.doesNotMatch(scene, /backgroundMusic\.(?:pause|play|currentTime|volume)/);
     const app = readFileSync(new URL("../app.js", import.meta.url), "utf8");
+    assert.match(app, /backgroundMusic\.src = "music\.mp3"/);
     const startLevel = app.slice(app.indexOf("async function startLevel"), app.indexOf("\nfunction leaveGameplay"));
     assert.ok(startLevel.indexOf("startMusic()") < startLevel.indexOf("await requestLevelEntry"));
     assert.match(app, /Tap anywhere in the game to enable music/);
@@ -951,28 +1079,73 @@ test("RelicGrid branding is used in the game and hidden scenes stop rendering", 
     assert.match(app, /transitionClips\[\(milestone \/ LEVEL_TRANSITION_INTERVAL - 1\) % transitionClips\.length\]/);
     assert.match(app, /transitionMilestonesPlayed = \[\.\.\.new Set/);
     assert.match(app, /if \(transitionInProgress\) return/);
+    const transitionFlow = app.slice(
+        app.indexOf("async function playLevelTransition"),
+        app.indexOf("\nasync function showOpeningIntro")
+    );
+    assert.match(transitionFlow, /const finish = async \(\) => \{[\s\S]*?await stopVideoPlayback\(transitionVideo\)/);
+    assert.match(transitionFlow, /videoSkip\.onclick = \(\) => void finish\(\)/);
+    assert.match(transitionFlow, /transitionVideo\.onended = \(\) => void finish\(\)/);
+    assert.match(transitionFlow, /await playVideoInOrientation\(transitionVideo, offerContinue\)/);
+    const endingFlow = app.slice(
+        app.indexOf("function playCampaignEnding"),
+        app.indexOf("\nasync function playLevelTransition")
+    );
+    assert.match(endingFlow, /await stopVideoPlayback\(transitionVideo\)/);
+    assert.match(endingFlow, /videoSkip\.onclick = \(\) => void finish\(\)/);
+    assert.match(endingFlow, /transitionVideo\.onended = \(\) => void finish\(\)/);
     assert.match(app, /videoOrientationQuery = window\.matchMedia\("\(max-width: 900px\) and \(orientation: portrait\)"\)/);
-    assert.match(app, /function playVideoInLandscape\(video, onError\)/);
-    assert.match(app, /videoAction\.textContent = "Play Now  →"/);
-    assert.match(app, /introVideo\.onended = \(\) => \{/);
-    assert.match(app, /videoAction\.classList\.add\("video-action-ready"\)/);
-    assert.match(app, /videoSkip\.onclick = finishOpeningFlow/);
-    assert.doesNotMatch(app, /videoAction\.textContent = "CONTINUE  →"/);
-    assert.match(html, /id="video-action-button"[^>]*>Play Now/);
+    assert.match(app, /async function playVideoInOrientation\(video, onError, onPlaybackStarted, orientation = "portrait"\)/);
+    assert.match(html, /id="title-screen" class="screen title-screen" hidden/);
+    assert.match(html, /id="title-continue-button"[^>]*>PLAY NOW/);
+    assert.match(html, /id="video-action-button"[^>]*hidden>Next/);
+    assert.match(html, /id="game-access-form"/);
+    assert.match(html, /id="game-access-points"/);
+    assert.match(html, /cannot be withdrawn/);
     assert.match(html, /id="rotate-device-prompt"/);
-    assert.doesNotMatch(app, /Tap to play the opening transmission with sound/);
-    assert.match(app, /videoAction\.onclick = continueAfterIntro/);
+    const gameAccessClaim = app.slice(
+        app.indexOf("async function claimGameAccessPoints"),
+        app.indexOf("\nasync function getWalletAuthorizationHeaders")
+    );
+    assert.match(gameAccessClaim, /getSolscanSignature\(input\.value\)/);
+    assert.match(gameAccessClaim, /3_000 \+ Math\.floor\(Math\.random\(\) \* 4_001\)/);
+    assert.match(gameAccessClaim, /apiUrl\("game-points"\)/);
+    assert.match(gameAccessClaim, /Cannot reach the game-points API/);
+    assert.match(gameAccessClaim, /action: "claim"/);
+    assert.doesNotMatch(gameAccessClaim, /verifyDepositSignature|wallet_balance|wallet_credit_accounts/);
+    assert.match(app, /gameAccessPointsVerified && gameAccessPoints >= entryCostCredits/);
+    const pointEntryLevelStart = app.slice(app.indexOf("async function startLevel"), app.indexOf("\nfunction leaveGameplay"));
+    assert.doesNotMatch(pointEntryLevelStart, /gameAccessPoints\s*-/);
+    assert.match(pointEntryLevelStart, /gameAccessPointsVerified \|\| gameAccessPoints < gameAccessCost/);
+    assert.match(app, /activeLevelUsesGameAccessPoints[\s\S]*?Campaign progress saved on this device/);
+    assert.match(scene, /Game access points are separate from wallet credits/);
     assert.match(app, /function fitVideoFrame\(video\)/);
-    assert.match(html, /id="intro-video"[^>]+src="intro\.mp4"/);
+    assert.match(html, /id="intro-video"[^>]*playsinline/);
+    assert.match(app, /introVideo\.src = "companyintro\.mp4"/);
+    assert.match(app, /title-continue-button[\s\S]*?playGameVideo\(\)/);
+    assert.match(app, /playOpeningVideo\("intro\.mp4", "RelicGrid introduction"/);
     assert.match(app, /function playCampaignEnding\(\)/);
     assert.match(app, /transitionVideo\.src = "theend\.mp4"/);
     assert.doesNotMatch(app, /if \(number === 99\) playCampaignEnding\(\)/);
-    assert.equal(existsSync(new URL("../gamevideo.mp4", import.meta.url)), true);
     assert.equal(existsSync(new URL("../levels1.mp4", import.meta.url)), true);
     assert.equal(existsSync(new URL("../levels2.mp4", import.meta.url)), true);
     assert.equal(existsSync(new URL("../theend.mp4", import.meta.url)), true);
     const styles = readFileSync(new URL("../style.css", import.meta.url), "utf8");
+    assert.match(styles, /\.button\[hidden\]\s*\{\s*display:\s*none\s*!important;/);
     assert.match(styles, /\.intro-video \{[\s\S]*?object-fit: contain/);
+    assert.match(styles, /\.video-screen\[data-opening-sequence="true"\] \{[\s\S]*?position: fixed;[\s\S]*?height: 100svh/);
+    assert.match(styles, /\.video-screen\[data-opening-sequence="true"\] #intro-video \{[\s\S]*?width: 100%;[\s\S]*?height: 100%;[\s\S]*?object-fit: contain/);
+    assert.match(styles, /\.video-screen\[data-opening-sequence="true"\]\[data-company-intro="true"\] #intro-video \{\s*object-fit: cover;/);
+    assert.match(styles, /\.video-screen\[data-opening-sequence="true"\] \.video-brand,[\s\S]*?\.video-shade\s*\{\s*visibility: hidden/);
+    assert.match(styles, /\.video-skip-button \{[\s\S]*?top: calc\(/);
+    const immersivePlugin = readFileSync(new URL("../android/app/src/main/java/com/relicgrid/cyfurgame/ImmersiveModePlugin.java", import.meta.url), "utf8");
+    const mainActivity = readFileSync(new URL("../android/app/src/main/java/com/relicgrid/cyfurgame/MainActivity.java", import.meta.url), "utf8");
+    assert.match(immersivePlugin, /WindowInsetsControllerCompat\.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE/);
+    assert.match(immersivePlugin, /controller\.hide\(WindowInsetsCompat\.Type\.systemBars\(\)\)/);
+    assert.match(immersivePlugin, /controller\.show\(WindowInsetsCompat\.Type\.systemBars\(\)\)/);
+    assert.match(mainActivity, /registerPlugin\(ImmersiveModePlugin\.class\)/);
+    assert.match(app, /ImmersiveMode\.setEnabled\(\{ enabled: true \}\)/);
+    assert.match(app, /async function restorePortraitOrientation\(\)[\s\S]*?ImmersiveMode\.setEnabled\(\{ enabled: true \}\)/);
     assert.match(styles, /video-action \.button \{[\s\S]*?font-size: clamp\(17px, 4vw, 20px\)/);
     assert.match(styles, /@keyframes video-play-ready/);
 });
@@ -990,10 +1163,14 @@ test("deposit UI creates an account-bound payment memo before accepting a transa
     assert.match(html, /id="deposit-intent-memo"/);
     assert.match(html, /include the memo exactly/i);
     assert.match(html, /VERIFY PAYMENT/);
-    assert.match(html, /Paste signature or Solana Explorer\/Solscan link/);
+    assert.match(html, /label class="wallet-field-label" for="deposit-signature">Solscan Transaction Link<\/label>/);
+    assert.match(html, /placeholder="Paste your Solscan transaction link here"/);
+    assert.match(html, /After sending your CYFUR tokens, open your transaction on Solscan, copy the full transaction link from your browser, and paste it here\./);
+    assert.match(html, /https:\/\/solscan\.io\/tx\/YourTransactionSignature/);
     assert.match(html, /id="deposit-signature"[^>]*required>/);
     assert.match(html, /id="deposit-verify-button"[^>]*disabled/);
     const app = readFileSync(new URL("../app.js", import.meta.url), "utf8");
+    assert.match(app, /Then paste the full Solscan transaction link\./);
     assert.match(app, /home-open-deposit[\s\S]*?deposit-signature"\)\.focus/);
     assert.match(app, /copyButton\.disabled = false/);
     assert.match(app, /status\.textContent = depositReady/);
@@ -1008,14 +1185,55 @@ test("deposit UI creates an account-bound payment memo before accepting a transa
     assert.doesNotMatch(html, /id="wallet-transfer-amount"|id="wallet-transfer-form"|id="wallet-preflight-button"/);
     assert.match(html, /PUBLIC SHARED CYFUR TREASURY ADDRESS/);
     assert.match(html, /Do not send until funding status is READY/);
-    assert.match(html, /Paste signature or Solana Explorer\/Solscan link/);
+    assert.doesNotMatch(html, /PASTE TRANSACTION LINK OR SIGNATURE|Paste signature or Solana Explorer\/Solscan link/);
     assert.match(app, /body: JSON\.stringify\(\{ signature: signatureOrLink \}\)/);
-    assert.match(app, /Deposit not detected yet\. Please wait and check again/);
+    assert.match(app, /Transaction not confirmed yet\. Wait for Solana finalization/);
+    assert.match(app, /Transaction not found on Solana yet/);
+    assert.match(app, /if \(depositVerificationInProgress\) return/);
+    assert.match(app, /depositVerificationInProgress = true/);
+    assert.match(app, /depositVerificationInProgress = false/);
+    assert.match(app, /Transaction not found on Solana yet/);
     const depositApi = readFileSync(new URL("../api/deposits.js", import.meta.url), "utf8");
     assert.match(depositApi, /requirePaymentIntentMemo: true/);
     assert.match(depositApi, /process_verified_payment_intent/);
     assert.match(depositApi, /await new Promise\(\(resolve\) => setTimeout\(resolve, CREDIT_DELAY_MS\)\)/);
     assert.doesNotMatch(depositApi, /process_verified_treasury_deposit/);
+});
+
+test("Android RelicGrid app stays portrait including during videos", () => {
+    const config = JSON.parse(readFileSync(new URL("../capacitor.config.json", import.meta.url), "utf8"));
+    const manifest = readFileSync(new URL("../android/app/src/main/AndroidManifest.xml", import.meta.url), "utf8");
+    const strings = readFileSync(new URL("../android/app/src/main/res/values/strings.xml", import.meta.url), "utf8");
+    const app = readFileSync(new URL("../app.js", import.meta.url), "utf8");
+    assert.equal(config.appId, "com.relicgrid.cyfurgame");
+    assert.equal(config.appName, "RelicGrid");
+    assert.equal(config.plugins.ScreenOrientation.orientation, "portrait");
+    assert.match(manifest, /android:screenOrientation="portrait"/);
+    assert.match(strings, /<string name="app_name">RelicGrid<\/string>/);
+    assert.match(strings, /<string name="title_activity_main">RelicGrid<\/string>/);
+    assert.match(app, /ScreenOrientation\.lock\(\{ orientation \}\)/);
+    assert.match(app, /ScreenOrientation\.lock\(\{ orientation: "portrait" \}\)/);
+    assert.doesNotMatch(app, /ScreenOrientation\.unlock\(/);
+    assert.match(app, /async function stopVideoPlayback\(video\)[\s\S]*?return restorePortraitOrientation\(\)/);
+    assert.match(app, /async function failActiveVideoPlayback\(video, error\)[\s\S]*?await stopVideoPlayback\(video\)/);
+    assert.match(app, /await ScreenOrientation\.lock\(\{ orientation \}\)/);
+    assert.match(app, /await waitForNativeOrientation\(orientation\)/);
+    assert.match(app, /await waitForNativeOrientation\("portrait"\)/);
+    assert.match(app, /async function waitForNativeOrientation\(expectedOrientation\)/);
+    assert.match(app, /appStateChange[\s\S]*?failActiveVideoPlayback/);
+    assert.match(app, /visibilitychange[\s\S]*?failActiveVideoPlayback/);
+    const adaptiveIcon = readFileSync(new URL("../android/app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml", import.meta.url), "utf8");
+    assert.match(adaptiveIcon, /@color\/ic_launcher_background/);
+    assert.match(adaptiveIcon, /@mipmap\/ic_launcher_foreground/);
+    for (const density of ["mdpi", "hdpi", "xhdpi", "xxhdpi", "xxxhdpi"]) {
+        const iconDirectory = `../android/app/src/main/res/mipmap-${density}/`;
+        assert.equal(existsSync(new URL(`${iconDirectory}ic_launcher.png`, import.meta.url)), true);
+        assert.equal(existsSync(new URL(`${iconDirectory}ic_launcher_round.png`, import.meta.url)), true);
+        assert.equal(existsSync(new URL(`${iconDirectory}ic_launcher_foreground.png`, import.meta.url)), true);
+    }
+    const storeIcon = readFileSync(new URL("../relicgrid-icon-512.png", import.meta.url));
+    assert.equal(storeIcon.readUInt32BE(16), 512);
+    assert.equal(storeIcon.readUInt32BE(20), 512);
 });
 
 test("deposit backend requires owner-approved mint configuration and treasury migration enables deposits only", () => {
@@ -1112,14 +1330,16 @@ test("wallet API returns verified zero for a player with no credit account or le
     }
 });
 
-test("campaign levels follow the server lock while free practice and the in-game field guide remain available when open", () => {
+test("campaign levels remain locked until the verified game-points balance covers entry", () => {
     const app = readFileSync(new URL("../app.js", import.meta.url), "utf8");
     const levelPicker = app.slice(app.indexOf("function renderLevels"), app.indexOf("\nfunction renderHome"));
     const startLevel = app.slice(app.indexOf("async function startLevel"), app.indexOf("\nfunction leaveGameplay"));
-    assert.match(levelPicker, /button\.disabled = levelsGloballyLocked/);
-    assert.match(levelPicker, /levelsGloballyLocked\s*\?\s*"LOCKED"/);
-    assert.match(levelPicker, /FREE PRACTICE/);
-    assert.match(startLevel, /if \(levelsGloballyLocked\)/);
+    assert.match(levelPicker, /const hasGameAccessPoints = gameAccessPointsVerified && gameAccessPoints >= entryCostCredits/);
+    assert.match(levelPicker, /const levelLocked = !hasGameAccessPoints/);
+    assert.match(levelPicker, /button\.disabled = levelLocked/);
+    assert.match(levelPicker, /levelLocked\s*\?\s*"LOCKED"/);
+    assert.doesNotMatch(levelPicker, /FREE PRACTICE/);
+    assert.match(startLevel, /gameAccessPointsVerified \|\| gameAccessPoints < gameAccessCost/);
     assert.match(app, /fetch\(apiUrl\("game-config"\)/);
 
     const html = readFileSync(new URL("../index.html", import.meta.url), "utf8");
@@ -1187,6 +1407,17 @@ test("wallet-less deposit migration allows unlinked senders without weakening at
     assert.match(migration, /public\.apply_wallet_ledger_entry/);
     assert.match(migration, /revoke all on function public\.process_verified_payment_intent/i);
     assert.match(migration, /grant execute[\s\S]*?to service_role/i);
+    const readinessMigration = readFileSync(new URL("../supabase-deposit-readiness.sql", import.meta.url), "utf8");
+    assert.match(readinessMigration, /create or replace function public\.relicgrid_deposit_schema_ready\(\)/i);
+    assert.match(readinessMigration, /public\.process_verified_payment_intent/i);
+    assert.match(readinessMigration, /public\.process_verified_treasury_deposit/i);
+    assert.match(readinessMigration, /public\.apply_wallet_ledger_entry/i);
+    assert.match(readinessMigration, /pg_get_indexdef[\s\S]*?transaction_signature/i);
+    assert.match(readinessMigration, /pg_get_indexdef[\s\S]*?idempotency_key/i);
+    assert.doesNotMatch(readinessMigration, /::regclass/i);
+    assert.match(readinessMigration, /revoke all[\s\S]*?from public, anon, authenticated/i);
+    assert.match(readinessMigration, /grant execute[\s\S]*?to service_role/i);
+    assert.doesNotMatch(readinessMigration, /update public\.wallet_credit_accounts|deposits_enabled\s*=\s*true/i);
 });
 
 test("shared-treasury migration records the verified sender and allows memo-attributed players", () => {
@@ -1733,7 +1964,7 @@ test("Solana verifier credits only successful finalized transfers to the mapped 
     assert.deepEqual(await verifyFinalizedDeposit({
         ...options,
         requirePaymentIntentMemo: true
-    }), { state: "payment_intent_mismatch" });
+    }), { state: "missing_payment_intent_memo" });
     assert.deepEqual(await verifyFinalizedDeposit({ ...options, expectedSourceWallet: sourceWallet }), {
         state: "finalized",
         amountRaw: "10000",
@@ -1920,6 +2151,8 @@ test("deposit API credits a finalized shared-treasury transfer using the authent
     const paymentIntentId = "8f9ef883-520e-45ef-96ae-62e621d3b31c";
     const sourceWallet = "11111111111111111111111111111111";
     let rpcSourceWallet = null;
+    let rpcTransactionLookupSignature = null;
+    let rpcStatusValue = { err: null, confirmationStatus: "finalized" };
     let authenticatedPlayer = "test-player";
     let ledgerCallCount = 0;
     const authorization = "Bearer deposit-test-token";
@@ -2034,9 +2267,9 @@ test("deposit API credits a finalized shared-treasury transfer using the authent
             const result = call.method === "getGenesisHash"
                 ? "5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d"
                 : call.method === "getSignatureStatuses"
-                    ? { value: [{ err: null, confirmationStatus: "finalized" }] }
+                    ? { value: [rpcStatusValue] }
                     : call.method === "getTransaction"
-                        ? transaction
+                        ? (rpcTransactionLookupSignature = call.params[0], transaction)
                         : call.params[0] === environment.SOLANA_TREASURY_ADDRESS
                             ? { value: { owner: "11111111111111111111111111111111", data: ["", "base64"] } }
                             : call.params[0] === treasuryTokenAccount
@@ -2080,6 +2313,72 @@ test("deposit API credits a finalized shared-treasury transfer using the authent
         assert.equal(ledgerCallCount, 0);
 
         authenticatedPlayer = "test-player";
+        const intentMemoInstruction = transaction.transaction.message.instructions.shift();
+        const missingMemoResponse = {
+            statusCode: 200,
+            status(code) { this.statusCode = code; return this; },
+            setHeader() {},
+            json(payload) { this.payload = payload; }
+        };
+        await endpoint({
+            method: "POST",
+            headers: { authorization },
+            body: { signature: `https://solscan.io/tx/${signature}` }
+        }, missingMemoResponse);
+        assert.equal(missingMemoResponse.statusCode, 422);
+        assert.equal(missingMemoResponse.payload.error, "payment_intent_memo_missing");
+        assert.equal(missingMemoResponse.payload.credited, false);
+        assert.equal(ledgerCallCount, 0);
+        transaction.transaction.message.instructions.unshift(intentMemoInstruction);
+
+        const invalidLinkResponse = {
+            statusCode: 200,
+            status(code) { this.statusCode = code; return this; },
+            setHeader() {},
+            json(payload) { this.payload = payload; }
+        };
+        await endpoint({
+            method: "POST",
+            headers: { authorization },
+            body: { signature: `https://example.com/tx/${signature}` }
+        }, invalidLinkResponse);
+        assert.equal(invalidLinkResponse.statusCode, 400);
+        assert.equal(invalidLinkResponse.payload.error, "invalid_transaction_signature");
+        assert.equal(ledgerCallCount, 0);
+
+        rpcStatusValue = null;
+        const notFoundResponse = {
+            statusCode: 200,
+            status(code) { this.statusCode = code; return this; },
+            setHeader() {},
+            json(payload) { this.payload = payload; }
+        };
+        await endpoint({
+            method: "POST",
+            headers: { authorization },
+            body: { signature: `https://solscan.io/tx/${signature}` }
+        }, notFoundResponse);
+        assert.equal(notFoundResponse.statusCode, 404);
+        assert.equal(notFoundResponse.payload.error, "transaction_not_found");
+        assert.equal(ledgerCallCount, 0);
+
+        rpcStatusValue = { err: null, confirmationStatus: "confirmed" };
+        const pendingResponse = {
+            statusCode: 200,
+            status(code) { this.statusCode = code; return this; },
+            setHeader() {},
+            json(payload) { this.payload = payload; }
+        };
+        await endpoint({
+            method: "POST",
+            headers: { authorization },
+            body: { signature: `https://solscan.io/tx/${signature}` }
+        }, pendingResponse);
+        assert.equal(pendingResponse.statusCode, 202);
+        assert.equal(pendingResponse.payload.status, "pending");
+        assert.equal(ledgerCallCount, 0);
+
+        rpcStatusValue = { err: null, confirmationStatus: "finalized" };
         const response = {
             statusCode: 200,
             status(code) { this.statusCode = code; return this; },
@@ -2089,13 +2388,14 @@ test("deposit API credits a finalized shared-treasury transfer using the authent
         await endpoint({
             method: "POST",
             headers: { authorization: "Bearer walletless-deposit-test-token" },
-            body: { signature }
+            body: { signature: `https://solscan.io/tx/${signature}` }
         }, response);
 
         assert.equal(response.statusCode, 200, JSON.stringify(response.payload));
         assert.equal(response.payload.status, "confirmed");
         assert.equal(response.payload.credited, true);
         assert.equal(response.payload.creditAmountCredits, "10000");
+        assert.equal(rpcTransactionLookupSignature, signature);
         assert.equal(rpcSourceWallet, sourceWallet);
         assert.equal(rpcPayload.p_deposit_address, environment.SOLANA_TREASURY_ADDRESS);
         assert.equal(rpcPayload.p_amount_raw, "100000000");

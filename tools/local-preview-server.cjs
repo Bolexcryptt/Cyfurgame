@@ -230,30 +230,44 @@ function handleStaticRequest(request, response, url) {
     fs.createReadStream(filePath, { start, end }).pipe(response);
 }
 
-const server = http.createServer((request, response) => {
-    let url;
-    try {
-        url = new URL(request.url, `http://${request.headers.host}`);
-    } catch {
-        sendJson(response, 400, { error: "invalid_url" });
-        return;
-    }
+async function startServer() {
+    const { createServer: createViteServer } = await import("vite");
+    const vite = await createViteServer({
+        configFile: path.join(root, "vite.config.mjs"),
+        server: { middlewareMode: true },
+        appType: "spa"
+    });
+    const server = http.createServer((request, response) => {
+        let url;
+        try {
+            url = new URL(request.url, `http://${request.headers.host}`);
+        } catch {
+            sendJson(response, 400, { error: "invalid_url" });
+            return;
+        }
 
-    if (request.method !== "GET" && request.method !== "HEAD" &&
-        !url.pathname.startsWith("/api/")) {
-        response.writeHead(405, { Allow: "GET, HEAD" });
-        response.end();
-        return;
-    }
+        if (url.pathname.startsWith("/api/")) {
+            void handleApiRequest(request, response, url);
+            return;
+        }
+        if (request.method !== "GET" && request.method !== "HEAD") {
+            response.writeHead(405, { Allow: "GET, HEAD" });
+            response.end();
+            return;
+        }
+        vite.middlewares(request, response, () => {
+            sendJson(response, 404, { error: "not_found" });
+        });
+    });
+    server.on("close", () => void vite.close());
+    server.listen(port, host, () => {
+        console.log(`RelicGrid local preview: http://${host}:${port}`);
+        console.log(`Global level lock: ${areLevelsGloballyLocked() ? "on" : "off (local process only)"}`);
+    });
+    return server;
+}
 
-    if (url.pathname.startsWith("/api/")) {
-        void handleApiRequest(request, response, url);
-    } else {
-        handleStaticRequest(request, response, url);
-    }
-});
-
-server.listen(port, host, () => {
-    console.log(`RelicGrid local preview: http://${host}:${port}`);
-    console.log(`Global level lock: ${areLevelsGloballyLocked() ? "on" : "off (local process only)"}`);
+void startServer().catch((error) => {
+    console.error("RelicGrid local preview could not start.", error);
+    process.exitCode = 1;
 });

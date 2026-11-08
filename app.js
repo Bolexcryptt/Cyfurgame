@@ -10,6 +10,12 @@ import {
 } from "./levels.js";
 import { supabase, supabaseConfigured } from "./supabase.js";
 import { GAME_API_BASE_URL } from "./supabase-config.js";
+import { Capacitor, registerPlugin } from "@capacitor/core";
+import { App } from "@capacitor/app";
+import { Browser } from "@capacitor/browser";
+import { ScreenOrientation } from "@capacitor/screen-orientation";
+import { StatusBar } from "@capacitor/status-bar";
+import { PublicKey, Transaction, TransactionInstruction } from "@solana/web3.js";
 import {
     requestAccountEmailLink,
     requestExistingAccountRecovery,
@@ -27,22 +33,27 @@ import {
     encodeWalletBytes,
     getConnectedPhantomWallet,
     getDepositPreparationFieldErrors,
+    getDepositVerificationErrorMessage,
     getFeePayerPreflightError,
     getPhantomProvider,
     getSolFundingStatus,
     isLinkedPhantomWallet,
     isMobileBrowser,
+    normalizeDepositSignatureInput,
     readPhantomMobileCallback,
     rebuildMobileDepositAfterBlockhashRejection,
     savePhantomMobileSession,
     signAndBroadcastWithBlockhashRetry,
+    setNativePhantomCallback,
     setPhantomMobilePendingAction,
     startPhantomMobileConnect
 } from "./wallet-provider.mjs";
 
 const storageKey = "fluxgrid.player.v1";
+const ImmersiveMode = registerPlugin("ImmersiveMode");
 const screens = [
     "video-screen",
+    "title-screen",
     "name-screen",
     "home-screen",
     "leaderboard-screen",
@@ -50,6 +61,7 @@ const screens = [
     "play-screen"
 ].map((id) => document.getElementById(id));
 const introVideo = document.getElementById("intro-video");
+introVideo.src = "companyintro.mp4";
 const transitionVideo = document.getElementById("transition-video");
 const videoScreen = document.getElementById("video-screen");
 const videoAction = document.getElementById("video-action-button");
@@ -57,12 +69,16 @@ const videoSkip = document.getElementById("video-skip-button");
 const rotateDevicePrompt = document.getElementById("rotate-device-prompt");
 const videoCaption = document.getElementById("video-caption");
 const backgroundMusic = document.getElementById("background-music");
+backgroundMusic.src = "music.mp3";
 const playerNameInput = document.getElementById("player-name");
 document.getElementById("wallet-exchange-rate").textContent =
     `1 CYFUR = ${CYFUR_CREDITS_PER_TOKEN.toLocaleString("en-US")} CREDITS`;
 
 function apiUrl(path) {
-    if (!GAME_API_BASE_URL) return `/api/${path}`;
+    if (!Capacitor.isNativePlatform()) return `/api/${path}`;
+    if (!GAME_API_BASE_URL) {
+        throw new Error("GAME_API_BASE_URL must be set for the native app.");
+    }
     let base;
     try {
         base = new URL(GAME_API_BASE_URL);
@@ -127,15 +143,19 @@ function readPlayer() {
 }
 
 let player = readPlayer();
+let gameAccessPoints = 0;
+let gameAccessPointsVerified = false;
+let claimedGameAccessSignatures = [];
 let activeVideoPlayback = null;
 let transitionInProgress = false;
 let openingFlowFinished = false;
-let projectVideoInProgress = false;
 let pendingLevel = null;
 let activeWalletLevelSessionId = null;
+let activeLevelUsesGameAccessPoints = false;
 let walletTimerStartPromise = Promise.resolve(false);
 const pendingLevelEntryRequests = new Map();
 let levelEntryRequestInProgress = false;
+let depositVerificationInProgress = false;
 let musicStarted = false;
 let authUser = null;
 let backendStatus = supabaseConfigured ? "Connecting to Supabase…" : "Supabase is not configured.";
@@ -143,36 +163,181 @@ let backendReady;
 let walletStatusSnapshot = null;
 let levelsGloballyLocked = true;
 let currentDepositIntent = null;
-let solanaWeb3ModulePromise = null;
 let activeLevelEntryCostCredits = null;
 let levelStartInProgress = false;
 let pendingAccountEmail = "";
+let pendingPhantomMobileCallback = null;
 
 function savePlayer() {
     localStorage.setItem(storageKey, JSON.stringify(player));
 }
 
-function stopVideoPlayback(video) {
-    if (activeVideoPlayback?.video !== video) return;
-    activeVideoPlayback = null;
+function getGameAccessOwner() {
+    return authUser?.id || player.playerId || "local";
+}
+
+function getGameAccessStorageKey() {
+    return `relicgrid.game-access.${getGameAccessOwner()}`;
+}
+
+function loadGameAccessState() {
+    gameAccessPointsVerified = false;
+    const saved = localStorage.getItem(getGameAccessStorageKey());
+    if (!saved) {
+        gameAccessPoints = 0;
+        claimedGameAccessSignatures = [];
+        return;
+    }
+
+    try {
+        const parsed = JSON.parse(saved);
+        gameAccessPoints = Number.isSafeInteger(parsed.points) && parsed.points >= 0
+            ? parsed.points
+            : 0;
+        claimedGameAccessSignatures = Array.isArray(parsed.claimedSignatures)
+            ? [...new Set(parsed.claimedSignatures.filter((signature) =>
+                typeof signature === "string" && /^[1-9A-HJ-NP-Za-km-z]{80,100}$/.test(signature)
+            ))]
+            : [];
+    } catch (error) {
+        console.error("Saved game-access points could not be read.", error);
+        gameAccessPoints = 0;
+        claimedGameAccessSignatures = [];
+    }
+}
+
+function saveGameAccessState() {
+    localStorage.setItem(getGameAccessStorageKey(), JSON.stringify({
+        points: gameAccessPoints,
+        claimedSignatures: claimedGameAccessSignatures
+    }));
+}
+
+function renderGameAccessPoints() {
+    const balance = document.getElementById("game-access-points");
+    if (balance) balance.textContent = gameAccessPointsVerified
+        ? formatCredits(String(gameAccessPoints))
+        : "—";
+}
+
+async function refreshGameAccessPoints() {
+    if (!authUser || !supabaseConfigured || !supabase) {
+        gameAccessPointsVerified = false;
+        renderGameAccessPoints();
+        return false;
+    }
+
+    try {
+        const response = await fetch(apiUrl("game-points"), {
+            headers: await getWalletAuthorizationHeaders(),
+            cache: "no-store"
+        });
+        const result = await response.json().catch(() => ({}));
+        const balance = Number(result.balancePoints);
+        if (!response.ok || result.balanceVerified !== true ||
+            !/^\d+$/.test(String(result.balancePoints)) ||
+            !Number.isSafeInteger(balance)) {
+            throw new Error(result.error || `Game points could not be loaded (${response.status}).`);
+        }
+        gameAccessPoints = balance;
+        gameAccessPointsVerified = true;
+        renderGameAccessPoints();
+        renderLevels();
+        return true;
+    } catch (error) {
+        gameAccessPointsVerified = false;
+        renderGameAccessPoints();
+        document.getElementById("game-access-status").textContent =
+            `Game points are unavailable. ${error.message}`;
+        document.getElementById("game-access-status").dataset.state = "error";
+        console.error("Server-managed game points could not be refreshed.", error);
+        return false;
+    }
+}
+
+function getSolscanSignature(value) {
+    try {
+        const url = new URL(value.trim());
+        const match = url.protocol === "https:" &&
+            url.hostname === "solscan.io" &&
+            !url.username &&
+            !url.password &&
+            url.pathname.match(/^\/tx\/([1-9A-HJ-NP-Za-km-z]{80,100})\/?$/);
+        return match ? match[1] : null;
+    } catch {
+        return null;
+    }
+}
+
+loadGameAccessState();
+
+async function restorePortraitOrientation() {
+    if (!Capacitor.isNativePlatform()) return true;
+    try {
+        if (Capacitor.getPlatform() === "android") {
+            await ImmersiveMode.setEnabled({ enabled: true });
+            await StatusBar.hide();
+        }
+        await ScreenOrientation.lock({ orientation: "portrait" });
+        await waitForNativeOrientation("portrait");
+        return true;
+    } catch (error) {
+        console.error("Native portrait orientation could not be restored.", error);
+        return false;
+    }
+}
+
+async function waitForNativeOrientation(expectedOrientation) {
+    if (!Capacitor.isNativePlatform()) return;
+    const deadline = Date.now() + 5_000;
+    let currentOrientation = "unknown";
+    while (Date.now() < deadline) {
+        const result = await ScreenOrientation.orientation();
+        currentOrientation = result.type;
+        if (currentOrientation.startsWith(expectedOrientation)) {
+            await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+            return;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    throw new Error(`Native screen did not enter ${expectedOrientation} orientation (reported ${currentOrientation}).`);
+}
+
+async function stopVideoPlayback(video) {
+    if (activeVideoPlayback && activeVideoPlayback.video !== video) return true;
+    video.pause();
+    if (activeVideoPlayback?.video === video) activeVideoPlayback = null;
     rotateDevicePrompt.hidden = true;
     delete videoScreen.dataset.orientationBlocked;
+    return restorePortraitOrientation();
+}
+
+async function failActiveVideoPlayback(video, error) {
+    const active = activeVideoPlayback;
+    if (active?.video !== video || active.failed) return;
+    active.failed = true;
+    await stopVideoPlayback(video);
+    active.onError(error);
 }
 
 function attemptActiveVideoPlayback() {
     const active = activeVideoPlayback;
-    if (!active || videoOrientationQuery.matches) return;
+    if (!active || (active.orientation === "landscape" && videoOrientationQuery.matches)) return;
     try {
         const playback = active.video.play();
         if (playback && typeof playback.catch === "function") {
-            playback.catch((error) => {
+            void playback.then(() => {
+                if (activeVideoPlayback !== active || active.playbackStarted) return;
+                active.playbackStarted = true;
+                active.onPlaybackStarted?.();
+            }, (error) => {
                 if (activeVideoPlayback !== active ||
                     (error.name === "AbortError" && active.video.paused)) return;
-                active.onError(error);
+                void failActiveVideoPlayback(active.video, error);
             });
         }
     } catch (error) {
-        active.onError(error);
+        failActiveVideoPlayback(active.video, error);
     }
 }
 
@@ -182,7 +347,11 @@ function updateVideoOrientation() {
     const active = activeVideoPlayback;
     if (!active) return;
     fitVideoFrame(active.video);
-    if (videoOrientationQuery.matches) {
+    const nativeOrientationConfirmed = Capacitor.isNativePlatform() &&
+        active.nativeOrientationConfirmed === true;
+    if (active.orientation === "landscape" &&
+        videoOrientationQuery.matches &&
+        !nativeOrientationConfirmed) {
         active.video.pause();
         videoScreen.dataset.orientationBlocked = "true";
         rotateDevicePrompt.hidden = false;
@@ -193,14 +362,76 @@ function updateVideoOrientation() {
     if (active.video.paused) attemptActiveVideoPlayback();
 }
 
-function playVideoInLandscape(video, onError) {
-    activeVideoPlayback = { video, onError };
+async function playVideoInOrientation(video, onError, onPlaybackStarted, orientation = "portrait") {
+    const active = {
+        video,
+        onError,
+        onPlaybackStarted,
+        orientation,
+        playbackStarted: false,
+        failed: false,
+        nativeOrientationConfirmed: false
+    };
+    activeVideoPlayback = active;
+    video.onerror = () => failActiveVideoPlayback(
+        video,
+        video.error || new Error("Video could not be decoded.")
+    );
+    try {
+        if (Capacitor.isNativePlatform()) {
+            if (Capacitor.getPlatform() === "android") {
+                await ImmersiveMode.setEnabled({ enabled: true });
+            }
+            await ScreenOrientation.lock({ orientation });
+            await waitForNativeOrientation(orientation);
+            active.nativeOrientationConfirmed = true;
+        }
+    } catch (error) {
+        await failActiveVideoPlayback(video, error);
+        return;
+    }
+    if (activeVideoPlayback !== active) return;
     updateVideoOrientation();
 }
 
 videoOrientationQuery.addEventListener("change", updateVideoOrientation);
 window.addEventListener("resize", updateVideoOrientation);
 window.screen.orientation?.addEventListener("change", updateVideoOrientation);
+document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "hidden" && activeVideoPlayback) {
+        void failActiveVideoPlayback(
+            activeVideoPlayback.video,
+            new Error("Video playback was interrupted when the app was backgrounded.")
+        );
+    }
+});
+if (Capacitor.isNativePlatform()) {
+    void App.addListener("appStateChange", ({ isActive }) => {
+        if (!isActive && activeVideoPlayback) {
+            void failActiveVideoPlayback(
+                activeVideoPlayback.video,
+                new Error("Video playback was interrupted when the app was backgrounded.")
+            );
+        }
+    }).catch((error) => console.error("Native video interruption listener could not be registered.", error));
+    void App.addListener("backButton", ({ canGoBack }) => {
+        if (!openingFlowFinished) return;
+        if (canGoBack) {
+            window.history.back();
+        } else {
+            void App.minimizeApp().catch((error) => {
+                console.error("The app could not be minimized from the back button.", error);
+            });
+        }
+    }).catch((error) => console.error("Native back-button handler could not be registered.", error));
+}
+document.addEventListener("keydown", (event) => {
+    if (openingFlowFinished) return;
+    if (["Backspace", "Escape", "Enter", " "].includes(event.key)) {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+    }
+}, true);
 
 function getContinueLevel() {
     return getCampaignStartLevel(player.completedLevels, player.lastLevel, player.unlockedLevel);
@@ -235,6 +466,7 @@ async function initializeBackend() {
     try {
         const session = await restoreOrCreatePlayerSession(supabase.auth);
         authUser = session.user;
+        loadGameAccessState();
 
         const { data: profile, error: profileError } = await supabase
             .from("player_profiles")
@@ -258,6 +490,7 @@ async function initializeBackend() {
             []
         ));
         await refreshOwnProgress();
+        await refreshGameAccessPoints();
         backendStatus = "Connected to the RelicGrid leaderboard.";
         savePlayer();
         renderProfile();
@@ -343,9 +576,13 @@ function renderProfile() {
     nextTelemetry.parentElement.setAttribute("aria-valuenow", String(Math.round(nextProgress)));
     document.getElementById("hero-current-sector").textContent =
         `LEVEL ${String(continueLevel).padStart(2, "0")}`;
-    document.getElementById("hero-sector-access").textContent =
-        levelsGloballyLocked ? "ALL SECTORS LOCKED" : "ALL SECTORS AVAILABLE";
-    document.getElementById("continue-game").disabled = levelsGloballyLocked;
+    const continueLevelCost = getLevelEconomy(continueLevel).entryCostCredits;
+    const hasContinueGameAccess = gameAccessPoints >= continueLevelCost;
+    document.getElementById("hero-sector-access").textContent = levelsGloballyLocked
+        ? hasContinueGameAccess ? "GAME ACCESS POINTS READY" : "ALL SECTORS LOCKED"
+        : "ALL SECTORS AVAILABLE";
+    document.getElementById("continue-game").disabled =
+        levelsGloballyLocked && !hasContinueGameAccess;
     const campaignMap = document.getElementById("campaign-map-grid");
     const campaignMapCells = document.createDocumentFragment();
     for (const level of levels) {
@@ -534,6 +771,7 @@ async function verifyAccountRecovery(event) {
         await requestAccountRecoveryPreflight();
         const recoveredUser = await verifyExistingAccountRecovery(supabase.auth, email, token);
         authUser = recoveredUser;
+        loadGameAccessState();
         pendingAccountEmail = "";
         player.name = "";
         player.playerId = recoveredUser.id;
@@ -554,6 +792,7 @@ async function verifyAccountRecovery(event) {
         backendReady = Promise.resolve(true);
         renderProfile();
         await refreshWallet();
+        await refreshGameAccessPoints();
         await refreshWithdrawalStatus();
         showNameOrHome();
         setAccountAuthStatus(
@@ -713,43 +952,35 @@ function renderLevels() {
         const meta = document.createElement("small");
         meta.textContent = `${level.par} MIRROR${level.par === 1 ? "" : "S"} REQUIRED · TIER ${level.band}`;
         const entryCostCredits = getLevelEconomy(level.number).entryCostCredits;
-        const verifiedBalance = walletStatusSnapshot?.balanceVerified === true &&
-            /^\d+$/.test(String(walletStatusSnapshot.balanceCredits))
-            ? BigInt(walletStatusSnapshot.balanceCredits)
-            : null;
-        const insufficientCredits = walletStatusSnapshot?.paidGameplayEnabled === true &&
-            verifiedBalance !== null &&
-            verifiedBalance < BigInt(entryCostCredits);
+        const hasGameAccessPoints = gameAccessPointsVerified && gameAccessPoints >= entryCostCredits;
+        const levelLocked = !hasGameAccessPoints;
         button.className =
-            `${levelsGloballyLocked ? "is-locked" : insufficientCredits ? "is-insufficient" : "is-unlocked"}${completed ? " is-complete" : ""}${current ? " is-current" : ""}`;
-        button.disabled = levelsGloballyLocked;
+            `${levelLocked ? "is-locked" : "is-unlocked"}${completed ? " is-complete" : ""}${current ? " is-current" : ""}`;
+        button.disabled = levelLocked;
         const entryCost = document.createElement("small");
         entryCost.className = "level-cost";
-        entryCost.textContent = insufficientCredits
-            ? `FREE PRACTICE · NEED ${formatCredits(entryCostCredits)} · HAVE ${formatCredits(verifiedBalance.toString())}`
-            : walletStatusSnapshot?.paidGameplayEnabled === true
-                ? `${formatCredits(entryCostCredits)} CREDIT ENTRY · PRACTICE AVAILABLE`
-                : `FREE PRACTICE · ${formatCredits(entryCostCredits)} CREDIT ENTRY NOT ACTIVE`;
+        entryCost.textContent = hasGameAccessPoints
+            ? `${formatCredits(entryCostCredits)} GAME POINTS`
+            : `${formatCredits(gameAccessPointsVerified ? gameAccessPoints : 0)} GAME POINTS · NEED ${formatCredits(entryCostCredits)}`;
         detail.append(title, meta);
         const badge = document.createElement("span");
         badge.className = "level-state";
-        badge.textContent = levelsGloballyLocked
+        badge.textContent = levelLocked
             ? "LOCKED"
-            : insufficientCredits ? "PRACTICE" : completed ? "CLEARED" : current ? "NEXT UP" : "PLAY";
+            : hasGameAccessPoints ? "ACCESS READY" : completed ? "CLEARED" : current ? "NEXT UP" : "PLAY";
         const cost = document.createElement("span");
         cost.className = "level-entry-cost";
         cost.append(entryCost);
         button.append(number, detail, cost, badge);
-        button.setAttribute("aria-label", levelsGloballyLocked
-            ? `Level ${level.number} is locked`
-            : insufficientCredits
-            ? `Practice level ${level.number}; paid entry requires ${formatCredits(entryCostCredits)} credits, verified balance ${formatCredits(verifiedBalance.toString())}`
-            : `Play level ${level.number}${walletStatusSnapshot?.paidGameplayEnabled === true ? `, ${formatCredits(entryCostCredits)} credit entry or free practice` : " in free practice"}`);
+        button.setAttribute("aria-label", levelLocked
+            ? `Level ${level.number} is locked until you have ${formatCredits(entryCostCredits)} game points`
+            : `Play level ${level.number} using ${formatCredits(entryCostCredits)} game points`);
         button.addEventListener("click", () => void startLevel(level.number));
         item.append(button);
         fragment.append(item);
     }
     list.replaceChildren(fragment);
+    renderGameAccessPoints();
 }
 
 function renderHome() {
@@ -758,6 +989,7 @@ function renderHome() {
     showScreen("home-screen");
     void refreshGameConfig();
     void refreshWallet();
+    void refreshGameAccessPoints();
 }
 
 async function refreshGameConfig() {
@@ -778,7 +1010,7 @@ async function refreshGameConfig() {
     if (levelStatus) {
         levelStatus.textContent = levelsGloballyLocked
             ? "All levels are temporarily locked. Your saved progress is unchanged."
-            : "All 99 sectors are available in free practice.";
+            : "Use server-managed game points to enter levels; each level has an entry cost.";
     }
 }
 
@@ -805,9 +1037,11 @@ function setLevelEntryMessage(message, state = "disabled") {
         status.dataset.state = state;
     }
 
-async function requestLevelEntry(levelNumber) {
+async function requestLegacyWalletLevelEntry(levelNumber) {
         if (levelEntryRequestInProgress) return null;
-        if (levelsGloballyLocked) {
+        const gameAccessCost = getLevelEconomy(levelNumber).entryCostCredits;
+        if (levelsGloballyLocked &&
+            (!gameAccessPointsVerified || gameAccessPoints < gameAccessCost)) {
             setLevelEntryMessage("All levels are temporarily locked. Your saved progress is unchanged.", "disabled");
             return null;
         }
@@ -825,6 +1059,24 @@ async function requestLevelEntry(levelNumber) {
                 entryCostCredits: null
             };
         };
+        if (gameAccessPoints >= gameAccessCost) {
+            return {
+                gameAccess: true,
+                sessionId: null,
+                balanceCredits: walletStatusSnapshot?.balanceVerified
+                    ? String(walletStatusSnapshot.balanceCredits)
+                    : "0",
+                entryCostCredits: null,
+                gameAccessPointsUsed: gameAccessCost
+            };
+        }
+        if (gameAccessPoints > 0 && walletStatusSnapshot?.paidGameplayEnabled !== true) {
+            setLevelEntryMessage(
+                `Level ${levelNumber} requires ${formatCredits(gameAccessCost)} game access points. Add more points to enter this level.`,
+                "disabled"
+            );
+            return null;
+        }
         if (!supabaseConfigured || !supabase) {
             return practiceEntry("Wallet verification is unavailable.");
         }
@@ -871,6 +1123,14 @@ async function requestLevelEntry(levelNumber) {
                 renderLevels();
             }
 
+            if (response.status === 402 && result.error === "insufficient_balance" &&
+                gameAccessPoints > 0) {
+                setLevelEntryMessage(
+                    `Level ${levelNumber} requires ${formatCredits(gameAccessCost)} game access points or enough verified wallet credits.`,
+                    "disabled"
+                );
+                return null;
+            }
             if (response.status === 402 && result.error === "insufficient_balance") {
                 const balanceMessage = /^\d+$/.test(String(result.balanceCredits))
                     ? `Your verified balance is ${formatCredits(result.balanceCredits)}.`
@@ -926,6 +1186,88 @@ async function requestLevelEntry(levelNumber) {
             return practiceEntry("Backend balance verification failed.");
         } finally {
             levelEntryRequestInProgress = false;
+    }
+}
+
+async function requestLevelEntry(levelNumber) {
+    if (levelEntryRequestInProgress) return null;
+    if (!supabaseConfigured || !supabase || !authUser) {
+        setLevelEntryMessage("Sign in to use your server-managed game points.", "disabled");
+        return null;
+    }
+
+    levelEntryRequestInProgress = true;
+    setLevelEntryMessage("Reserving game points for this level…", "pending");
+    const requestStorageKey = `relicgrid.level-entry.${authUser.id}.${levelNumber}`;
+    try {
+        const headers = await getWalletAuthorizationHeaders();
+        const storedRequestId = sessionStorage.getItem(requestStorageKey);
+        const requestId = pendingLevelEntryRequests.get(levelNumber) ?? storedRequestId ?? crypto.randomUUID();
+        pendingLevelEntryRequests.set(levelNumber, requestId);
+        sessionStorage.setItem(requestStorageKey, requestId);
+
+        const response = await fetch(apiUrl("game-points"), {
+            method: "POST",
+            headers,
+            body: JSON.stringify({ action: "start", levelNumber, requestId }),
+            cache: "no-store"
+        });
+        const result = await response.json().catch(() => ({}));
+        if (!response.ok && response.status < 500) {
+            pendingLevelEntryRequests.delete(levelNumber);
+            sessionStorage.removeItem(requestStorageKey);
+        }
+
+        if (/^\d+$/.test(String(result.balancePoints))) {
+            const balance = Number(result.balancePoints);
+            if (Number.isSafeInteger(balance)) {
+                gameAccessPoints = balance;
+                gameAccessPointsVerified = true;
+                renderGameAccessPoints();
+                renderLevels();
+            }
+        }
+        if (response.status === 402 && result.error === "insufficient_game_points") {
+            setLevelEntryMessage(
+                `Level ${levelNumber} requires ${formatCredits(getLevelEconomy(levelNumber).entryCostCredits)} game points. Add points to continue.`,
+                "disabled"
+            );
+            return null;
+        }
+        if (response.status === 409 && result.error === "level_session_active") {
+            setLevelEntryMessage("A level session is already active. Finish or wait for it to expire before starting another.", "disabled");
+            return null;
+        }
+        if (result.error === "game_points_migration_required" ||
+            result.error === "game_points_schema_not_installed") {
+            setLevelEntryMessage("The server-managed game-points database setup is required.", "error");
+            return null;
+        }
+        if (result.error === "authentication_required") {
+            setLevelEntryMessage("Sign in again to use your game points.", "error");
+            return null;
+        }
+        if (!response.ok || result.gamePoints !== true ||
+            typeof result.sessionId !== "string" ||
+            !/^\d+$/.test(String(result.balancePoints)) ||
+            !/^\d+$/.test(String(result.entryCostPoints))) {
+            throw new Error(result.error || `Game-points entry failed (${response.status}).`);
+        }
+        pendingLevelEntryRequests.delete(levelNumber);
+        sessionStorage.removeItem(requestStorageKey);
+        return {
+            gamePoints: true,
+            gameAccessPointsUsed: Number(result.entryCostPoints),
+            sessionId: result.sessionId,
+            balancePoints: String(result.balancePoints),
+            entryCostPoints: String(result.entryCostPoints)
+        };
+    } catch (error) {
+        console.error("Game-points level entry failed.", error);
+        setLevelEntryMessage(`Level entry failed. ${error.message}`, "error");
+        return null;
+    } finally {
+        levelEntryRequestInProgress = false;
     }
 }
 
@@ -1174,7 +1516,7 @@ async function refreshWithdrawalStatus() {
         if (tokenDecimals) tokenDecimals.dataset.decimals = String(decimals);
         addressInput.value = typeof result.walletAddress === "string" ? result.walletAddress.trim() : "";
         balanceValue.textContent = `${formatCredits(result.availableCredits || "0")} CREDITS`;
-        balanceNote.textContent = `${formatCredits(result.balanceCredits || "0")} total credits on file · ${formatCredits(result.availableCredits || "0")} eligible for withdrawal`;
+        balanceNote.textContent = `${formatCredits(result.balanceCredits || "0")} total credits on file · ${formatCredits(result.availableCredits || "0")} eligible after level requirement`;
         minimumValue.textContent = "Any positive amount";
         minimumNote.textContent = "Maximum is your available balance; limited to 5 requests per hour.";
         renderWithdrawalHistory(result.withdrawals || []);
@@ -1196,6 +1538,16 @@ async function refreshWithdrawalStatus() {
         if (hasActiveWithdrawal) {
             amountInput.disabled = true;
             setWithdrawalStatus("A withdrawal is already pending confirmation. Check the history below; another request is blocked to prevent duplicate payments.", "pending");
+            return;
+        }
+        if (result.level30Requirement?.met !== true) {
+            const completedLevels = Number.isInteger(result.level30Requirement?.completedLevels)
+                ? result.level30Requirement.completedLevels
+                : 0;
+            setWithdrawalStatus(
+                `Complete levels 1-30 to unlock withdrawals (${completedLevels}/30 server-saved clears).`,
+                "disabled"
+            );
             return;
         }
         if (!ready) {
@@ -1459,8 +1811,8 @@ async function refreshWallet() {
         renderWalletHistory(result.deposits);
         if (depositReady) {
             walletRequirement.textContent = currentDepositIntent
-                ? "Instructions are ready. Send at least the displayed amount and include the unique memo, then submit the transaction link."
-                : "Create deposit instructions first. Send at least the displayed amount with its unique memo, then submit the transaction link.";
+                ? "Instructions are ready. Send at least the displayed amount and include the unique memo, then paste the full Solscan transaction link."
+                : "Create deposit instructions first. Send at least the displayed amount with its unique memo, then paste the full Solscan transaction link.";
             setWalletMessage(walletRequirement.textContent, "ready");
         } else {
             const readinessMessage = typeof result.disabledMessage === "string" &&
@@ -1509,10 +1861,7 @@ function parseTokenAmount(amountText, decimals) {
 }
 
 async function loadSolanaWeb3() {
-    if (!solanaWeb3ModulePromise) {
-        solanaWeb3ModulePromise = import("https://esm.sh/@solana/web3.js@1.98.4?bundle");
-    }
-    return solanaWeb3ModulePromise;
+    return { PublicKey, Transaction, TransactionInstruction };
 }
 
 function getAssociatedTokenAddress(PublicKey, owner, mint, tokenProgramId) {
@@ -1923,33 +2272,20 @@ async function verifyDepositSignature(signatureOrLink) {
         transactionResult.hidden = true;
     }
     if (response.status === 202) {
-        setWalletMessage("Deposit not detected yet. Please wait and check again; no credits have been added.", "pending");
+        setWalletMessage("Transaction not confirmed yet. Wait for Solana finalization, then check again; no credits have been added.", "pending");
         return false;
     }
     if (response.status === 404 && result.error === "transaction_not_found") {
-        setWalletMessage("Deposit not detected yet. Please wait and check again; no credits have been added.", "pending");
+        setWalletMessage("Transaction not found on Solana yet. If you just sent it, wait briefly and check again; no credits have been added.", "pending");
         return false;
     }
 
     if (!response.ok) {
-        const messages = {
-            transaction_not_found: "Transaction was not found on Solana mainnet. Check again after it has been submitted.",
-            transaction_failed: "Solana reports this transaction failed. No credits were added.",
-            wrong_token_or_destination: "This transaction does not contain a verified CYFUR transfer to the exact treasury token account. No credits were added.",
-            wrong_amount: "The finalized CYFUR transfer is below the 1 CYFUR minimum. No credits were added.",
-            payment_intent_mismatch: "This transaction does not match an active deposit instruction for this account. No credits were added.",
-            transaction_already_claimed: "This transaction has already been claimed or credited to another player. No credits were added.",
-            deposit_rejected: "The deposit was rejected because it did not match the current verified account or deposit configuration.",
-            owner_approved_mint_not_configured: result.message,
-            invalid_treasury_address: "The configured treasury is not a valid wallet authority. Do not send CYFUR.",
-            invalid_treasury_token_account: "The treasury CYFUR account is missing or misconfigured. Deposits are disabled; do not send CYFUR.",
-            finalized_transaction_unavailable: "Solana could not provide finalized transaction details yet. No credits were added; retry verification later.",
-            mainnet_deposits_disabled: "Mainnet deposits are not enabled. Do not send CYFUR.",
-            deposits_disabled: result.message || "Deposit verification is disabled. Do not send CYFUR.",
-            direct_treasury_not_ready: result.message,
-            wallet_configuration_incomplete: result.message
-        };
-        throw new Error(`Rejected: ${messages[result.error] || result.message || result.error || `Deposit verification failed (${response.status}).`}`);
+        throw new Error(getDepositVerificationErrorMessage(
+            result.error,
+            result.message,
+            response.status
+        ));
     }
     if (result.status !== "confirmed" || !/^\d+$/.test(String(result.creditAmountCredits)) ||
         !/^\d+$/.test(String(result.balanceCredits))) {
@@ -1968,6 +2304,152 @@ async function verifyDepositSignature(signatureOrLink) {
         "confirmed"
     );
     return true;
+}
+
+let gameAccessClaimInProgress = false;
+
+async function claimLegacyLocalGameAccessPoints(event) {
+    event.preventDefault();
+    if (gameAccessClaimInProgress) return;
+    const input = document.getElementById("game-access-transaction-link");
+    const button = document.getElementById("game-access-claim");
+    const status = document.getElementById("game-access-status");
+    const signature = getSolscanSignature(input.value);
+    if (!signature) {
+        status.textContent = "Paste a full Solscan transaction link to claim game access points.";
+        status.dataset.state = "error";
+        return;
+    }
+    if (claimedGameAccessSignatures.includes(signature)) {
+        status.textContent = "Game access points were already claimed with this link.";
+        status.dataset.state = "pending";
+        return;
+    }
+    if (!Number.isSafeInteger(gameAccessPoints + 1_000)) {
+        status.textContent = "The game access points balance cannot be increased safely.";
+        status.dataset.state = "error";
+        return;
+    }
+
+    gameAccessClaimInProgress = true;
+    button.disabled = true;
+    button.textContent = "ADDING POINTS…";
+    input.disabled = true;
+    const ownerStorageKey = getGameAccessStorageKey();
+    try {
+        status.textContent = "Adding game access points…";
+        status.dataset.state = "pending";
+        await new Promise((resolve) => window.setTimeout(
+            resolve,
+            3_000 + Math.floor(Math.random() * 4_001)
+        ));
+        if (getGameAccessStorageKey() !== ownerStorageKey) {
+            throw new Error("The active player account changed before game access points were added.");
+        }
+        const nextPoints = gameAccessPoints + 1_000;
+        const nextSignatures = [...claimedGameAccessSignatures, signature];
+        localStorage.setItem(ownerStorageKey, JSON.stringify({
+            points: nextPoints,
+            claimedSignatures: nextSignatures
+        }));
+        gameAccessPoints = nextPoints;
+        claimedGameAccessSignatures = nextSignatures;
+        input.value = "";
+        status.textContent = `1,000 game access points added. Balance: ${formatCredits(String(gameAccessPoints))}.`;
+        status.dataset.state = "ready";
+        renderLevels();
+        renderProfile();
+    } catch (error) {
+        console.error("Game access points could not be saved.", error);
+        status.textContent = "Game access points could not be saved. Check device storage and try again.";
+        status.dataset.state = "error";
+    } finally {
+        gameAccessClaimInProgress = false;
+        button.disabled = false;
+        button.textContent = "ADD 1,000 GAME POINTS";
+        input.disabled = false;
+    }
+}
+
+async function claimGameAccessPoints(event) {
+    event.preventDefault();
+    if (gameAccessClaimInProgress) return;
+    const input = document.getElementById("game-access-transaction-link");
+    const button = document.getElementById("game-access-claim");
+    const status = document.getElementById("game-access-status");
+    const signature = getSolscanSignature(input.value);
+    if (!signature) {
+        status.textContent = "Paste a full Solscan transaction link to claim game access points.";
+        status.dataset.state = "error";
+        return;
+    }
+    if (!authUser || !supabase) {
+        status.textContent = "Sign in to save game points to your player account.";
+        status.dataset.state = "error";
+        return;
+    }
+
+    gameAccessClaimInProgress = true;
+    button.disabled = true;
+    button.textContent = "ADDING POINTS…";
+    input.disabled = true;
+    const ownerId = authUser.id;
+    try {
+        status.textContent = "Adding game access points…";
+        status.dataset.state = "pending";
+        await new Promise((resolve) => window.setTimeout(
+            resolve,
+            3_000 + Math.floor(Math.random() * 4_001)
+        ));
+        if (authUser?.id !== ownerId) {
+            throw new Error("The active player account changed before game access points were added.");
+        }
+
+        let response;
+        try {
+            response = await fetch(apiUrl("game-points"), {
+                method: "POST",
+                headers: await getWalletAuthorizationHeaders(),
+                body: JSON.stringify({ action: "claim", signature }),
+                cache: "no-store"
+            });
+        } catch (error) {
+            if (error instanceof TypeError) {
+                throw new Error(
+                    "Cannot reach the game-points API. Check the connection and confirm the API route is deployed with this app's CORS origin enabled."
+                );
+            }
+            throw error;
+        }
+        const result = await response.json().catch(() => ({}));
+        const balance = Number(result.balancePoints);
+        if (!response.ok || result.status !== "confirmed" ||
+            !/^\d+$/.test(String(result.balancePoints)) ||
+            !Number.isSafeInteger(balance)) {
+            throw new Error(result.error || `Game points could not be added (${response.status}).`);
+        }
+        gameAccessPoints = balance;
+        gameAccessPointsVerified = true;
+        claimedGameAccessSignatures = [...new Set([...claimedGameAccessSignatures, signature])];
+        saveGameAccessState();
+        renderGameAccessPoints();
+        renderLevels();
+        renderProfile();
+        input.value = "";
+        status.textContent = result.alreadyClaimed
+            ? `This link was already used. Current game-points balance: ${formatCredits(String(gameAccessPoints))}.`
+            : `1,000 game access points added. Balance: ${formatCredits(String(gameAccessPoints))}.`;
+        status.dataset.state = result.alreadyClaimed ? "pending" : "ready";
+    } catch (error) {
+        console.error("Server-managed game access points could not be added.", error);
+        status.textContent = `Game points could not be added. ${error.message}`;
+        status.dataset.state = "error";
+    } finally {
+        gameAccessClaimInProgress = false;
+        button.disabled = false;
+        button.textContent = "ADD 1,000 GAME POINTS";
+        input.disabled = false;
+    }
 }
 
 async function getWalletAuthorizationHeaders() {
@@ -2152,39 +2634,59 @@ function showNameOrHome() {
     }
 }
 
-function finishOpeningFlow() {
+async function finishOpeningFlow() {
     if (openingFlowFinished) return;
+    if (!await stopVideoPlayback(introVideo)) {
+        videoCaption.textContent = "Portrait orientation could not be restored. Retry to continue.";
+        videoAction.textContent = "RETRY PORTRAIT ORIENTATION";
+        videoAction.hidden = false;
+        videoAction.onclick = () => void finishOpeningFlow();
+        return;
+    }
     openingFlowFinished = true;
     player.watchedGameIntro = true;
     savePlayer();
-    stopVideoPlayback(introVideo);
-    stopVideoPlayback(transitionVideo);
-    introVideo.pause();
-    transitionVideo.pause();
     introVideo.hidden = true;
     transitionVideo.hidden = true;
     videoAction.hidden = true;
+    videoAction.onclick = null;
     videoSkip.hidden = true;
-    showNameOrHome();
+    videoSkip.onclick = null;
+    delete videoScreen.dataset.openingSequence;
+    delete videoScreen.dataset.companyIntro;
+    renderHome();
+    document.getElementById("wallet-card").scrollIntoView({ behavior: "auto", block: "start" });
+    if (player.name && new URL(window.location.href).searchParams.has("phantom_handoff")) {
+        void backendReady.then(() => refreshWallet());
+    }
+    if (pendingPhantomMobileCallback) {
+        const callback = pendingPhantomMobileCallback;
+        pendingPhantomMobileCallback = null;
+        await handlePhantomMobileCallback(callback);
+    }
 }
 
 function playCampaignEnding() {
     let finished = false;
-    const finish = () => {
+    const finish = async () => {
         if (finished) return;
+        if (!await stopVideoPlayback(transitionVideo)) {
+            offerContinue("Portrait orientation could not be restored. Retry to continue.");
+            return;
+        }
         finished = true;
-        stopVideoPlayback(transitionVideo);
-        transitionVideo.pause();
         transitionVideo.hidden = true;
         videoSkip.hidden = true;
+        videoSkip.onclick = null;
         videoAction.hidden = true;
         showNameOrHome();
     };
     const offerContinue = (message) => {
+        void stopVideoPlayback(transitionVideo);
         videoCaption.textContent = message;
         videoAction.textContent = "CONTINUE →";
         videoAction.hidden = false;
-        videoAction.onclick = finish;
+        videoAction.onclick = () => void finish();
     };
 
     showScreen("video-screen");
@@ -2204,33 +2706,33 @@ function playCampaignEnding() {
     videoCaption.textContent = "Campaign complete. Final transmission incoming…";
     videoSkip.textContent = "SKIP ENDING →";
     videoSkip.hidden = false;
-    videoSkip.onclick = finish;
-    transitionVideo.onended = finish;
-    transitionVideo.onerror = () => {
-        console.error("Campaign ending video could not be decoded.", transitionVideo.error);
-        offerContinue("The campaign ending video could not be played.");
-    };
-
-    playVideoInLandscape(transitionVideo, (error) => {
+    videoSkip.onclick = () => void finish();
+    transitionVideo.onended = () => void finish();
+    void playVideoInOrientation(transitionVideo, (error) => {
         console.warn("Campaign ending video could not autoplay.", error);
         videoCaption.textContent = "Tap to play the final transmission.";
         videoAction.textContent = "PLAY ENDING →";
         videoAction.hidden = false;
-        videoAction.onclick = () => playVideoInLandscape(transitionVideo, (retryError) => {
+        videoAction.onclick = () => void playVideoInOrientation(transitionVideo, (retryError) => {
             console.error("Campaign ending video could not start after interaction.", retryError);
             offerContinue("The campaign ending video could not be played.");
         });
     });
 }
 
-function playLevelTransition(nextLevel, milestone) {
+async function playLevelTransition(nextLevel, milestone) {
     if (transitionInProgress) return;
     transitionInProgress = true;
+    await stopVideoPlayback(introVideo);
     const transitionClips = ["levels1.mp4", "levels2.mp4"];
     const clip = transitionClips[(milestone / LEVEL_TRANSITION_INTERVAL - 1) % transitionClips.length];
     let finished = false;
-    const finish = () => {
+    const finish = async () => {
         if (finished) return;
+        if (!await stopVideoPlayback(transitionVideo)) {
+            offerContinue(new Error("Native portrait orientation could not be restored."));
+            return;
+        }
         finished = true;
         transitionInProgress = false;
         player.transitionMilestonesPlayed = [...new Set([
@@ -2238,23 +2740,21 @@ function playLevelTransition(nextLevel, milestone) {
             milestone
         ])];
         savePlayer();
-        stopVideoPlayback(transitionVideo);
-        transitionVideo.pause();
         transitionVideo.hidden = true;
         videoSkip.hidden = true;
         videoAction.hidden = true;
         startLevel(nextLevel, true);
     };
     const offerContinue = (error) => {
+        void stopVideoPlayback(transitionVideo);
         console.error(`Inter-level transmission ${clip} could not be played.`, error);
         videoCaption.textContent = "Transmission unavailable. Continue to the next sector when ready.";
         videoAction.textContent = "CONTINUE →";
         videoAction.hidden = false;
-        videoAction.onclick = finish;
+        videoAction.onclick = () => void finish();
     };
 
     showScreen("video-screen");
-    stopVideoPlayback(introVideo);
     introVideo.pause();
     introVideo.hidden = true;
     transitionVideo.pause();
@@ -2271,117 +2771,133 @@ function playLevelTransition(nextLevel, milestone) {
     videoCaption.textContent = `Sector ${String(nextLevel).padStart(2, "0")} transmission incoming…`;
     videoSkip.textContent = "SKIP TRANSMISSION →";
     videoSkip.hidden = false;
-    videoSkip.onclick = finish;
-    transitionVideo.onended = finish;
-    transitionVideo.onerror = () => offerContinue(transitionVideo.error);
-    playVideoInLandscape(transitionVideo, offerContinue);
+    videoSkip.onclick = () => void finish();
+    transitionVideo.onended = () => void finish();
+    await playVideoInOrientation(transitionVideo, offerContinue);
 }
 
-function continueAfterIntro() {
-    if (openingFlowFinished || projectVideoInProgress) return;
-    projectVideoInProgress = true;
-    let finished = false;
-    const finish = () => {
-        if (finished) return;
-        finished = true;
-        finishOpeningFlow();
-    };
-    const offerContinue = (error) => {
-        console.error("Project introduction video could not be played.", error);
-        videoCaption.textContent = "The project video is unavailable. Continue to the homepage when ready.";
-        videoAction.textContent = "CONTINUE TO HOMEPAGE →";
-        videoAction.classList.remove("video-action-ready");
-        videoAction.hidden = false;
-        videoAction.onclick = finish;
-    };
-
-    player.watchedGameIntro = true;
-    savePlayer();
-    stopVideoPlayback(introVideo);
+function clearCompletedOpeningVideo() {
     introVideo.pause();
-    introVideo.hidden = true;
-    showScreen("video-screen");
-    transitionVideo.pause();
-    transitionVideo.src = "gamevideo.mp4";
-    transitionVideo.currentTime = 0;
-    transitionVideo.muted = false;
-    transitionVideo.hidden = false;
-    videoAction.hidden = true;
-    videoAction.classList.remove("video-action-ready");
-    videoCaption.textContent = "Your next signal is coming online…";
-    videoSkip.textContent = "SKIP VIDEO →";
-    videoSkip.hidden = false;
-    videoSkip.onclick = finish;
-    transitionVideo.onended = finish;
-    transitionVideo.onerror = () => offerContinue(transitionVideo.error);
-    playVideoInLandscape(transitionVideo, (error) => {
-        console.warn("Project introduction video could not autoplay.", error);
-        videoCaption.textContent = "Tap to play the project video.";
-        videoAction.textContent = "PLAY PROJECT VIDEO →";
-        videoAction.hidden = false;
-        videoAction.onclick = () => {
-            videoAction.hidden = true;
-            playVideoInLandscape(transitionVideo, offerContinue);
-        };
-    });
+    introVideo.onerror = null;
+    introVideo.onended = null;
+    activeVideoPlayback = null;
+    rotateDevicePrompt.hidden = true;
+    delete videoScreen.dataset.orientationBlocked;
 }
 
-function showOpeningIntro() {
-    if (new URL(window.location.href).searchParams.has("phantom_handoff") && player.name) {
-        introVideo.pause();
-        transitionVideo.pause();
-        showNameOrHome();
-        document.getElementById("wallet-card").scrollIntoView({ behavior: "auto", block: "start" });
-        void backendReady.then(() => refreshWallet());
-        return;
-    }
-    stopVideoPlayback(transitionVideo);
+function playGameVideo() {
+    if (openingFlowFinished) return;
     showScreen("video-screen");
-    transitionVideo.hidden = true;
-    introVideo.hidden = false;
-    introVideo.muted = false;
-    fitVideoFrame(introVideo);
-    if (introVideo.readyState < HTMLMediaElement.HAVE_METADATA) {
-        introVideo.addEventListener("loadedmetadata", () => fitVideoFrame(introVideo), { once: true });
-    }
+    videoScreen.dataset.openingSequence = "true";
+    videoScreen.dataset.companyIntro = "false";
+    videoAction.hidden = true;
+    videoAction.onclick = null;
     videoSkip.textContent = "SKIP VIDEO  →";
     videoSkip.hidden = false;
-    videoSkip.onclick = finishOpeningFlow;
-    videoAction.textContent = "Play Now  →";
-    videoAction.classList.remove("video-action-ready");
+    videoSkip.onclick = () => void finishOpeningFlow();
+    playOpeningVideo("gamevideo.mp4", "Your next signal is coming online…", () => {
+        void finishOpeningFlow();
+    }, true);
+}
+
+function playOpeningVideo(source, caption, onEnded, allowSkip = false) {
+    const orientation = source === "gamevideo.mp4" ? "landscape" : "portrait";
+    introVideo.pause();
+    introVideo.onerror = null;
+    introVideo.onended = null;
+    introVideo.src = source;
+    introVideo.muted = true;
+    introVideo.load();
+    introVideo.hidden = false;
+    transitionVideo.hidden = true;
+    videoSkip.textContent = "SKIP VIDEO  →";
+    videoSkip.hidden = !allowSkip;
+    videoSkip.onclick = allowSkip ? () => void finishOpeningFlow() : null;
     videoAction.hidden = true;
-    videoAction.onclick = continueAfterIntro;
-    videoCaption.textContent = player.watchedGameIntro ? "Welcome back, pilot." : "Your first signal is ready.";
+    videoCaption.textContent = caption;
+    videoScreen.dataset.openingSequence = "true";
+    videoScreen.dataset.companyIntro = String(source === "companyintro.mp4");
+    if (introVideo.readyState < HTMLMediaElement.HAVE_METADATA) {
+        introVideo.addEventListener("loadedmetadata", () => fitVideoFrame(introVideo), { once: true });
+    } else {
+        fitVideoFrame(introVideo);
+    }
     introVideo.onended = () => {
-        videoCaption.textContent = player.watchedGameIntro
-            ? "Welcome back, pilot."
-            : "Your first signal is ready.";
-        videoAction.classList.remove("video-action-ready");
-        videoAction.hidden = false;
-        void videoAction.offsetWidth;
-        videoAction.classList.add("video-action-ready");
+        clearCompletedOpeningVideo();
+        if (source === "companyintro.mp4") {
+            playOpeningVideo("intro.mp4", "RelicGrid introduction", () => {
+                void finishCompanyIntro();
+            }, false);
+            return;
+        }
+        if (source === "intro.mp4") {
+            void finishCompanyIntro();
+            return;
+        }
+        onEnded();
     };
-    introVideo.onerror = () => {
-        console.error("Opening introduction video could not be decoded.", introVideo.error);
-        videoCaption.textContent = "The opening video is unavailable. Continue to the project video.";
-        videoAction.textContent = "PLAY NOW  →";
-        videoAction.classList.remove("video-action-ready");
+    const offerNext = (error) => {
+        console.error(`${caption} could not be played.`, error);
+        videoScreen.dataset.companyIntro = "false";
+        videoCaption.textContent = `${caption} could not be played.`;
+        videoAction.textContent = source === "gamevideo.mp4" ? "RETRY VIDEO  →" : "RETRY INTRO  →";
         videoAction.hidden = false;
-        void videoAction.offsetWidth;
-        videoAction.classList.add("video-action-ready");
+        videoAction.onclick = () => {
+            playOpeningVideo(source, caption, onEnded, allowSkip);
+        };
     };
-    playVideoInLandscape(introVideo, (error) => {
-        console.warn("Opening introduction video could not autoplay.", error);
-        videoCaption.textContent = "The introduction could not autoplay. Continue when ready.";
-        videoAction.textContent = "PLAY NOW  →";
-        videoAction.classList.remove("video-action-ready");
+    void playVideoInOrientation(
+        introVideo,
+        offerNext,
+        () => {
+        introVideo.muted = false;
+        if (allowSkip && source === "gamevideo.mp4") {
+            videoSkip.textContent = "SKIP GAME VIDEO  →";
+            videoSkip.hidden = false;
+            videoSkip.onclick = () => void finishOpeningFlow();
+        }
+        },
+        orientation
+    );
+}
+
+async function finishCompanyIntro() {
+    if (!await stopVideoPlayback(introVideo)) {
+        videoAction.textContent = "RETRY PORTRAIT ORIENTATION";
         videoAction.hidden = false;
-        void videoAction.offsetWidth;
-        videoAction.classList.add("video-action-ready");
-    });
+        videoAction.onclick = () => void finishCompanyIntro();
+        return;
+    }
+    introVideo.hidden = true;
+    videoSkip.hidden = true;
+    videoSkip.onclick = null;
+    videoAction.hidden = true;
+    videoAction.onclick = null;
+    delete videoScreen.dataset.openingSequence;
+    delete videoScreen.dataset.companyIntro;
+    showScreen("title-screen");
+}
+
+async function showOpeningIntro() {
+    if (openingFlowFinished) return;
+    await stopVideoPlayback(transitionVideo);
+    showScreen("video-screen");
+    videoScreen.dataset.openingSequence = "true";
+    videoScreen.dataset.companyIntro = "true";
+    videoAction.hidden = true;
+    videoAction.onclick = null;
+    videoSkip.hidden = true;
+    videoSkip.onclick = null;
+    videoCaption.textContent = "";
+    playOpeningVideo("companyintro.mp4", "", () => {}, false);
 }
 
 function fitVideoFrame(video) {
+    if (video === introVideo && videoScreen.dataset.openingSequence === "true") {
+        videoScreen.style.setProperty("--phone-width", "100vw");
+        videoScreen.style.setProperty("--phone-height", "100dvh");
+        return;
+    }
     if (!video.videoWidth || !video.videoHeight) return;
     const scale = Math.min(
         (window.innerWidth - 24) / video.videoWidth,
@@ -2393,12 +2909,14 @@ function fitVideoFrame(video) {
 
 async function startLevel(number, resumeMusic = false) {
     if (levelStartInProgress) return;
-    if (levelsGloballyLocked) {
+    const level = levels[number - 1];
+    if (!level) return;
+    const gameAccessCost = getLevelEconomy(number).entryCostCredits;
+    if (levelsGloballyLocked &&
+        (!gameAccessPointsVerified || gameAccessPoints < gameAccessCost)) {
         setLevelEntryMessage("All levels are temporarily locked. Your saved progress is unchanged.", "disabled");
         return;
     }
-    const level = levels[number - 1];
-    if (!level) return;
     levelStartInProgress = true;
     const musicWasPlaying = musicStarted && !backgroundMusic.paused;
     if (resumeMusic || !musicStarted || backgroundMusic.paused) startMusic();
@@ -2417,9 +2935,24 @@ async function startLevel(number, resumeMusic = false) {
         document.getElementById("first-level-tutorial").hidden = !showTutorial;
         document.getElementById("game-guide-toggle").setAttribute("aria-expanded", String(showTutorial));
         activeWalletLevelSessionId = entry.sessionId;
-        activeLevelEntryCostCredits = entry.practice ? null : Number(entry.entryCostCredits);
+        activeLevelEntryCostCredits = entry.gamePoints
+            ? Number(entry.entryCostPoints)
+            : entry.gameAccess || entry.practice
+                ? null
+                : Number(entry.entryCostCredits);
         walletTimerStartPromise = Promise.resolve(false);
-        if (!entry.practice) {
+        if (entry.gamePoints) {
+            const balance = Number(entry.balancePoints);
+            if (!Number.isSafeInteger(balance)) {
+                throw new Error("The server returned an invalid game-points balance.");
+            }
+            gameAccessPoints = balance;
+            gameAccessPointsVerified = true;
+            renderGameAccessPoints();
+            renderLevels();
+        }
+        activeLevelUsesGameAccessPoints = entry.gamePoints === true || entry.gameAccess === true;
+        if (!entry.practice && !entry.gamePoints) {
             document.getElementById("wallet-balance").textContent = formatCredits(entry.balanceCredits);
             document.getElementById("wallet-balance-state").textContent = "CREDITS · BACKEND VERIFIED";
             walletStatusSnapshot = {
@@ -2428,10 +2961,14 @@ async function startLevel(number, resumeMusic = false) {
                 balanceVerified: true
             };
         }
-        setLevelEntryMessage(entry.practice
-            ? `Level ${String(number).padStart(2, "0")} started in free practice. No credits were charged; progress and rewards will not be saved.`
-            : `Level ${String(number).padStart(2, "0")} started. ${formatCredits(entry.entryCostCredits)} credits deducted; verified balance ${formatCredits(entry.balanceCredits)}.`,
-        entry.practice ? "ready" : "success");
+        const entryMessage = entry.gamePoints
+            ? `Level ${String(number).padStart(2, "0")} started. ${formatCredits(entry.entryCostPoints)} game points deducted; balance ${formatCredits(entry.balancePoints)} points.`
+            : entry.gameAccess
+            ? `Level ${String(number).padStart(2, "0")} started. ${formatCredits(entry.gameAccessPointsUsed)} game access points used.`
+            : entry.practice
+                ? `Level ${String(number).padStart(2, "0")} started in free practice. No credits were charged; progress and rewards will not be saved.`
+                : `Level ${String(number).padStart(2, "0")} started. ${formatCredits(entry.entryCostCredits)} credits deducted; verified balance ${formatCredits(entry.balanceCredits)}.`;
+        setLevelEntryMessage(entryMessage, entry.practice ? "ready" : "success");
         player.lastLevel = number;
         pendingLevel = level;
         savePlayer();
@@ -2445,6 +2982,8 @@ async function startLevel(number, resumeMusic = false) {
                     level,
                     walletSessionId: activeWalletLevelSessionId,
                     entryCostCredits: activeLevelEntryCostCredits,
+                    gameAccessPointsUsed: entry.gameAccessPointsUsed ?? null,
+                    gamePointsSession: entry.gamePoints === true,
                     tutorial: showTutorial
                 }
             }));
@@ -2568,6 +3107,7 @@ document.getElementById("home-open-deposit").addEventListener("click", () => {
     document.getElementById("wallet-card").scrollIntoView({ behavior: "smooth", block: "start" });
     document.getElementById("deposit-signature").focus({ preventScroll: true });
 });
+document.getElementById("game-access-form").addEventListener("submit", claimGameAccessPoints);
 document.getElementById("deposit-create-intent").addEventListener("click", async () => {
     const button = document.getElementById("deposit-create-intent");
     button.disabled = true;
@@ -2601,7 +3141,7 @@ document.getElementById("deposit-create-intent").addEventListener("click", async
         document.getElementById("deposit-signature").disabled = false;
         document.getElementById("deposit-verify-button").disabled = false;
         document.getElementById("deposit-wallet-requirement").textContent =
-            "Send at least the displayed amount to the treasury and include the memo exactly. Then paste the transaction signature or Explorer/Solscan link.";
+            "Send at least the displayed amount to the treasury and include the memo exactly. Then paste the full Solscan transaction link.";
         setWalletMessage("Deposit instructions are ready. Include the unique memo so the payment can be credited to your account.", "ready");
     } catch (error) {
         console.error("Deposit instructions could not be created.", error);
@@ -2623,10 +3163,12 @@ document.getElementById("deposit-copy-memo").addEventListener("click", async () 
 });
 document.getElementById("deposit-signature-form").addEventListener("submit", async (event) => {
     event.preventDefault();
+    if (depositVerificationInProgress) return;
     const input = document.getElementById("deposit-signature");
     const button = document.getElementById("deposit-verify-button");
-    const signatureOrLink = input.value.trim();
+    const signatureOrLink = normalizeDepositSignatureInput(input.value);
     if (!signatureOrLink) return;
+    depositVerificationInProgress = true;
     button.disabled = true;
     button.textContent = "VERIFYING…";
     setWalletMessage("Verifying your CYFUR transaction on Solana…", "verifying");
@@ -2636,6 +3178,7 @@ document.getElementById("deposit-signature-form").addEventListener("submit", asy
         console.error("Deposit signature verification failed.", error);
         setWalletMessage(error.message, "error");
     } finally {
+        depositVerificationInProgress = false;
         button.disabled = walletStatusSnapshot?.depositsEnabled !== true;
         button.textContent = "VERIFY PAYMENT →";
     }
@@ -2681,12 +3224,18 @@ async function saveWalletLevelCompletion(detail) {
         body: JSON.stringify({
             sessionId: detail.walletSessionId,
             mirrors: detail.mirrors,
-            launchDirection: detail.launchDirection
+            launchDirection: detail.launchDirection,
+            gamePoints: detail.gamePointsSession === true
         }),
         cache: "no-store"
     });
     const result = await response.json().catch(() => ({}));
-    if (!response.ok || result.status !== "confirmed") {
+    const gamePointsSession = detail.gamePointsSession === true;
+    const rewardAmount = gamePointsSession ? result.rewardPoints : result.rewardCredits;
+    const balanceAmount = gamePointsSession ? result.balancePoints : result.balanceCredits;
+    if (!response.ok || result.status !== "confirmed" ||
+        !/^\d+$/.test(String(rewardAmount)) ||
+        !/^\d+$/.test(String(balanceAmount))) {
         throw new Error(result.error || `Secure completion failed (${response.status}).`);
     }
 
@@ -2697,26 +3246,47 @@ async function saveWalletLevelCompletion(detail) {
         document.getElementById("completion-time").textContent =
             `${(result.elapsedMilliseconds / 1000).toFixed(1)} s`;
     }
-    document.getElementById("wallet-balance").textContent = formatCredits(result.balanceCredits);
-    document.getElementById("wallet-balance-state").textContent = "CREDITS · BACKEND VERIFIED";
+    if (gamePointsSession) {
+        gameAccessPoints = Number(balanceAmount);
+        if (!Number.isSafeInteger(gameAccessPoints)) {
+            throw new Error("The completion response contained an invalid game-points balance.");
+        }
+        gameAccessPointsVerified = true;
+        renderGameAccessPoints();
+        renderLevels();
+        player.completedLevels = [...new Set([...player.completedLevels, detail.number])].sort((a, b) => a - b);
+        player.unlockedLevel = Math.min(99, Math.max(player.unlockedLevel, detail.number + 1));
+        player.lastLevel = Math.min(99, detail.number + 1);
+        savePlayer();
+    } else {
+        document.getElementById("wallet-balance").textContent = formatCredits(balanceAmount);
+        document.getElementById("wallet-balance-state").textContent = "CREDITS · BACKEND VERIFIED";
+    }
     document.getElementById("completion-points").textContent = result.duplicate ? "0" : "1";
     document.getElementById("completion-points-note").textContent = result.duplicate
-        ? "Repeat clear · leaderboard score unchanged"
-        : "Unique campaign clear · leaderboard score";
+        ? "Repeat clear · reward prevented"
+        : gamePointsSession
+            ? "Unique clear · server game-points record"
+            : "Unique campaign clear · leaderboard score";
+    const displayedRewardAmount = result.duplicate ? "0" : rewardAmount;
     const rewardLabel = document.getElementById("completion-reward-label");
     const reward = document.getElementById("completion-reward");
     const rewardNote = document.getElementById("completion-reward-note");
-    rewardLabel.textContent = result.rewardCredits === "0" ? "NO REWARD" : "CONFIRMED CREDIT REWARD";
-    reward.textContent = `${formatCredits(result.rewardCredits)} credits`;
+    rewardLabel.textContent = displayedRewardAmount === "0"
+        ? gamePointsSession ? "NO POINT REWARD" : "NO REWARD"
+        : gamePointsSession ? "CONFIRMED POINT REWARD" : "CONFIRMED CREDIT REWARD";
+    reward.textContent = `${formatCredits(displayedRewardAmount)} ${gamePointsSession ? "points" : "credits"}`;
     rewardNote.textContent = result.duplicate
         ? "Level already cleared · repeat reward prevented"
         : "Verified and credited by the server";
-    document.getElementById("completion-token-reward").textContent =
-        `${formatCreditsAsCyfur(result.rewardCredits)} CYFUR equivalent`;
-    document.getElementById("completion-balance").textContent =
-        `${formatCreditsAsCyfur(result.balanceCredits)} CYFUR`;
+    document.getElementById("completion-token-reward").textContent = "NONE";
+    document.getElementById("completion-balance").textContent = gamePointsSession
+        ? `${formatCredits(balanceAmount)} points`
+        : `${formatCreditsAsCyfur(balanceAmount)} CYFUR`;
     document.getElementById("completion-balance-note").textContent =
-        `${formatCredits(result.balanceCredits)} off-chain credits · backend verified`;
+        gamePointsSession
+            ? "Server-managed, non-withdrawable game points · verified"
+            : `${formatCredits(balanceAmount)} off-chain credits · backend verified`;
 
     await refreshOwnProgress();
     backendStatus = "Connected to the RelicGrid leaderboard.";
@@ -2759,6 +3329,7 @@ document.getElementById("withdrawal-refresh")?.addEventListener("click", () => {
 
 window.addEventListener("fluxgrid:level-timer-start", (event) => {
     const sessionId = event.detail?.walletSessionId;
+    const gamePoints = event.detail?.gamePointsSession === true;
     if (!sessionId || sessionId !== activeWalletLevelSessionId) return;
     walletTimerStartPromise = (async () => {
         const { data, error } = await supabase.auth.getSession();
@@ -2771,7 +3342,7 @@ window.addEventListener("fluxgrid:level-timer-start", (event) => {
                 Authorization: `Bearer ${accessToken}`,
                 "Content-Type": "application/json"
             },
-            body: JSON.stringify({ sessionId }),
+            body: JSON.stringify({ sessionId, gamePoints }),
             cache: "no-store"
         });
         const result = await response.json().catch(() => ({}));
@@ -2802,8 +3373,10 @@ window.addEventListener("fluxgrid:level-complete", async (event) => {
     if (detail.walletSessionId) {
         try {
             const result = await saveWalletLevelCompletion(detail);
+            const rewardAmount = detail.gamePointsSession ? result.rewardPoints : result.rewardCredits;
+            const rewardUnit = detail.gamePointsSession ? "game points" : "credits";
             setLevelEntryMessage(
-                `Level ${number} saved. ${result.rewardCredits} credits ${result.rewardCredits === "0" ? "awarded" : "confirmed"}; balance is backend verified.`,
+                `Level ${number} saved. ${rewardAmount} ${rewardUnit} ${rewardAmount === "0" ? "awarded" : "confirmed"}; balance is backend verified.`,
                 "success"
             );
         } catch (error) {
@@ -2812,6 +3385,25 @@ window.addEventListener("fluxgrid:level-complete", async (event) => {
                 `Level ${number} is not recorded and no reward was credited: ${error.message}`;
             return;
         }
+    } else if (activeLevelUsesGameAccessPoints) {
+        player.completedLevels = [...new Set([...player.completedLevels, number])].sort((a, b) => a - b);
+        player.unlockedLevel = Math.min(99, Math.max(player.unlockedLevel, number + 1));
+        player.lastLevel = Math.min(99, number + 1);
+        savePlayer();
+        renderProfile();
+        document.getElementById("completion-points").textContent = "1";
+        document.getElementById("completion-points-note").textContent = "Campaign progress saved on this device";
+        document.getElementById("completion-reward-label").textContent = "NO WALLET REWARD";
+        document.getElementById("completion-reward").textContent = "—";
+        document.getElementById("completion-reward-note").textContent = "Game access points do not add wallet credits";
+        document.getElementById("completion-token-reward").textContent = "NONE";
+        document.getElementById("completion-balance").textContent =
+            `${formatCredits(walletStatusSnapshot?.balanceVerified ? String(walletStatusSnapshot.balanceCredits) : "0")} credits`;
+        document.getElementById("completion-balance-note").textContent = "Wallet balance unchanged";
+        setLevelEntryMessage(
+            `Level ${number} complete. Campaign progress saved on this device.`,
+            "success"
+        );
     } else {
         const nextLevelButton = document.getElementById("next-level");
         nextLevelButton.hidden = false;
@@ -2824,24 +3416,63 @@ window.addEventListener("fluxgrid:level-complete", async (event) => {
     }
 
     const nextLevelButton = document.getElementById("next-level");
-    if (pendingLevel?.number === number) {
+    if (pendingLevel?.number === number && (detail.walletSessionId || activeLevelUsesGameAccessPoints)) {
         nextLevelButton.hidden = false;
         nextLevelButton.disabled = number >= 99;
         nextLevelButton.dataset.nextLevel = String(number + 1);
         nextLevelButton.textContent = number >= 99 ? "CAMPAIGN COMPLETE" : "NEXT LEVEL →";
     }
+    activeLevelUsesGameAccessPoints = false;
     renderProfile();
 });
 
 backendReady = initializeBackend();
-const phantomMobileCallback = readPhantomMobileCallback(window);
-if (phantomMobileCallback) {
-    showNameOrHome();
-    document.getElementById("wallet-card").scrollIntoView({ behavior: "auto", block: "start" });
-    void handlePhantomMobileCallback(phantomMobileCallback);
-} else if (new URL(window.location.href).searchParams.has("phantom_handoff") && player.name) {
-    showNameOrHome();
-    document.getElementById("wallet-card").scrollIntoView({ behavior: "auto", block: "start" });
-} else {
-    showOpeningIntro();
+if (Capacitor.isNativePlatform()) {
+    setNativePhantomCallback({
+        scheme: "relicgrid",
+        appUrl: new URL(GAME_API_BASE_URL).origin
+    });
+    void StatusBar.hide().catch((error) => {
+        console.warn("Native status bar could not be hidden.", error);
+    });
+    const handledNativeCallbacks = new Set();
+    const handleNativeAppUrl = (url) => {
+        if (!url) return;
+        if (handledNativeCallbacks.has(url)) return;
+        const callback = readPhantomMobileCallback(window, url);
+        if (!callback) return;
+        handledNativeCallbacks.add(url);
+        if (!openingFlowFinished) {
+            pendingPhantomMobileCallback = callback;
+            return;
+        }
+        showNameOrHome();
+        void handlePhantomMobileCallback(callback);
+    };
+    void App.addListener("appUrlOpen", ({ url }) => handleNativeAppUrl(url)).catch((error) => {
+        console.error("Native wallet return handler could not be registered.", error);
+    });
+    void App.getLaunchUrl().then((launch) => {
+        if (launch?.url) handleNativeAppUrl(launch.url);
+    }).catch((error) => {
+        console.error("Native app launch URL could not be checked.", error);
+    });
+    document.addEventListener("click", (event) => {
+        const anchor = event.target instanceof Element
+            ? event.target.closest('a[target="_blank"]')
+            : null;
+        if (!anchor) return;
+        const url = new URL(anchor.href);
+        if (url.protocol !== "https:") return;
+        event.preventDefault();
+        void Browser.open({ url: url.toString() }).catch((error) => {
+            console.error("External page could not be opened from the native app.", error);
+        });
+    }, true);
 }
+const phantomMobileCallback = readPhantomMobileCallback(window);
+pendingPhantomMobileCallback = phantomMobileCallback;
+document.getElementById("title-continue-button").addEventListener("click", () => {
+    playGameVideo();
+});
+void showOpeningIntro();

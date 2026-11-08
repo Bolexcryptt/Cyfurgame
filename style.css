@@ -317,6 +317,7 @@ button { -webkit-tap-highlight-color: transparent; }
     cursor: pointer;
     transition: transform .18s ease, background .18s ease, border-color .18s ease, box-shadow .18s ease;
 }
+.button[hidden] { display: none !important; }
 .button:hover:not(:disabled) { transform: translateY(-2px); }
 .button:focus-visible, button:focus-visible, input:focus-visible { outline: 2px solid #a3f3ff; outline-offset: 3px; }
 .button:disabled { cursor: not-allowed; opacity: .5; }
@@ -345,6 +346,14 @@ button { -webkit-tap-highlight-color: transparent; }
     place-items: center;
     overflow: hidden;
     background: radial-gradient(ellipse at center, #13202b 0, #080d14 43%, #03070d 78%);
+}
+.video-screen[data-opening-sequence="true"] #intro-video { pointer-events: none; }
+.video-screen[data-company-intro="true"] .video-brand,
+.video-screen[data-company-intro="true"] .video-action,
+.video-screen[data-company-intro="true"] .video-skip-button,
+.video-screen[data-company-intro="true"] .video-shade,
+.video-screen[data-company-intro="true"] .rotate-device-prompt {
+    visibility: hidden;
 }
 .video-screen[data-orientation-blocked="true"] .video-shade,
 .video-screen[data-orientation-blocked="true"] .video-brand,
@@ -1247,6 +1256,23 @@ button { -webkit-tap-highlight-color: transparent; }
     background: linear-gradient(135deg,#0b1721e8,#08111ae8);
     box-shadow: inset 0 1px #e3fcff08;
 }
+.game-access-panel { margin: 14px 0; }
+.game-access-panel h3 { margin: 0; color: #e3f8fa; font-size: 15px; }
+.game-access-panel > b { color: #b7ffe0; font: 700 20px "Consolas", monospace; }
+.game-access-panel > small { color: #9ab0bb; font-size: 9px; line-height: 1.5; }
+.game-access-form { display: grid; gap: 8px; }
+.game-access-form input {
+    width: 100%;
+    min-width: 0;
+    min-height: 44px;
+    padding: 0 12px;
+    border: 1px solid #91b3c44a;
+    border-radius: 6px;
+    background: #080f17;
+    color: #e3f8fa;
+    font: 11px "Consolas", monospace;
+}
+.game-access-form .button { min-height: 42px; }
 .wallet-field-label {
     color: #819eac;
     font: 700 7px/1.5 "Consolas",monospace;
@@ -1887,6 +1913,8 @@ button { -webkit-tap-highlight-color: transparent; }
 .deposit-steps strong { color: #dff5f4; font-size: 10px; letter-spacing: .09em; }
 .deposit-steps small { color: #91a8b1; font-size: 10px; line-height: 1.55; }
 .deposit-signature-form { display: grid; gap: 9px; }
+.deposit-signature-form .wallet-field-help { color: #b7c8ce; font-size: 11px; line-height: 1.55; }
+.deposit-signature-form .wallet-field-example { color: #8db4c4; font: 11px "Consolas", monospace; overflow-wrap: anywhere; }
 .deposit-signature-form input {
     width: 100%;
     min-width: 0;
@@ -2094,6 +2122,43 @@ body {
 .video-brand i { color: #c5a9ed; }
 .video-audio-status { color: #a9e7ec; }
 .video-action p { color: #f1e9ff; text-shadow: 0 2px 18px #000b; }
+.video-screen[data-opening-sequence="true"] {
+    position: fixed;
+    z-index: 20;
+    inset: 0;
+    width: 100vw;
+    height: 100vh;
+    height: 100dvh;
+    min-height: 0;
+    --phone-width: 100vw;
+    --phone-height: 100dvh;
+}
+.video-screen[data-opening-sequence="true"] .video-brand,
+.video-screen[data-opening-sequence="true"] .video-audio-status,
+.video-screen[data-opening-sequence="true"] .video-action p,
+.video-screen[data-opening-sequence="true"] .video-shade {
+    visibility: hidden;
+}
+.video-screen[data-opening-sequence="true"] #intro-video {
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    max-width: none;
+    max-height: none;
+    transform: none;
+    object-fit: contain;
+    border: 0;
+    border-radius: 0;
+    box-shadow: none;
+}
+.video-screen[data-opening-sequence="true"][data-company-intro="true"] #intro-video {
+    object-fit: cover;
+}
+.video-screen[data-opening-sequence="true"] .video-shade {
+    width: 100vw;
+    height: 100dvh;
+    border-radius: 0;
+}
 .name-screen {
     background:
         radial-gradient(ellipse at 22% 18%, #713e9d32, transparent 30rem),
@@ -4498,6 +4563,54 @@ body {
 }
 
 .level-section[hidden] { display: none !important; }
+
+.title-screen {
+    display: grid;
+    min-height: 100svh;
+    place-items: center;
+    padding: max(24px, env(safe-area-inset-top)) 24px max(24px, env(safe-area-inset-bottom));
+    background:
+        radial-gradient(ellipse at 50% 36%, #1a48514d, transparent 30rem),
+        linear-gradient(180deg, #0b1821, #060a11 78%);
+}
+
+.title-card {
+    width: min(100%, 440px);
+    padding: clamp(32px, 8vw, 58px) 28px;
+    border: 1px solid #79cbd34d;
+    background: linear-gradient(145deg, #101e28f2, #090e16f5);
+    box-shadow: 0 24px 80px #0009, inset 0 1px #fff2;
+    text-align: center;
+}
+
+.title-logo {
+    display: block;
+    width: 96px;
+    height: 96px;
+    margin: 0 auto 24px;
+    object-fit: contain;
+}
+
+.title-card .eyebrow {
+    color: #8bd6d8;
+    font: 700 9px "Consolas", monospace;
+    letter-spacing: .18em;
+}
+
+.title-card h1 {
+    margin: 14px 0 8px;
+    color: #f0f7f8;
+    font: 800 clamp(32px, 9vw, 46px) "Consolas", monospace;
+    letter-spacing: .08em;
+}
+
+.title-card p {
+    margin: 0 0 32px;
+    color: #a8bbc2;
+    font-size: 15px;
+}
+
+.title-card .button { min-height: 52px; }
 .section-heading { align-items: center; }
 .section-heading h2 { color: #e9f5f7; font-size: 25px; }
 .section-heading p { max-width: 650px; color: var(--console-muted); line-height: 1.5; }

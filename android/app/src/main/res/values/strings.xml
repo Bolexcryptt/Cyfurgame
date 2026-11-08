@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">RelicGrid</string>
+    <string name="title_activity_main">RelicGrid</string>
+    <string name="package_name">com.relicgrid.cyfurgame</string>
+    <string name="custom_url_scheme">com.relicgrid.cyfurgame</string>
+</resources>

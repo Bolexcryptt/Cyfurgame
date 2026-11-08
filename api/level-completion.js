@@ -28,27 +28,37 @@ module.exports = async function levelCompletion(request, response) {
         const user = await authenticate(request);
         if (!user) return sendJson(response, 401, { error: "authentication_required" });
 
-        const { sessionId, mirrors, launchDirection } = request.body ?? {};
+        const { sessionId, mirrors, launchDirection, gamePoints } = request.body ?? {};
+        if (gamePoints !== undefined && typeof gamePoints !== "boolean") {
+            return sendJson(response, 400, { error: "invalid_completion_proof" });
+        }
         if (typeof sessionId !== "string" ||
             !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(sessionId) ||
             !Array.isArray(mirrors) || ![1, 3].includes(launchDirection)) {
             return sendJson(response, 400, { error: "invalid_completion_proof" });
         }
 
+        const pointsSession = gamePoints === true;
         const sessions = await serviceRequest(
-            `wallet_level_sessions?select=id,player_id,level_number,timer_started_at,expires_at,completed_at&id=eq.${encodeURIComponent(sessionId)}&player_id=eq.${encodeURIComponent(user.id)}&limit=1`
+            `${pointsSession ? "game_point_level_sessions?select=id,player_id,level_number,timer_started_at,expires_at,completed_at" : "wallet_level_sessions?select=id,player_id,level_number,timer_started_at,expires_at,completed_at"}&id=eq.${encodeURIComponent(sessionId)}&player_id=eq.${encodeURIComponent(user.id)}&limit=1`
         );
         const session = sessions[0];
         if (!session) return sendJson(response, 403, { error: "level_session_not_found" });
+        const rpcName = pointsSession
+            ? "rpc/complete_game_point_level"
+            : "rpc/complete_wallet_level";
+        const rewardParameter = pointsSession ? "p_reward_points" : "p_reward_credits";
+        const rewardField = pointsSession ? "reward_points" : "reward_credits";
+        const balanceField = pointsSession ? "balance_points" : "balance_credits";
         if (session.completed_at) {
-            const [result] = await serviceRequest("rpc/complete_wallet_level", {
+            const [result] = await serviceRequest(rpcName, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
                     p_player_id: user.id,
                     p_session_id: sessionId,
                     p_stars: 1,
-                    p_reward_credits: 0,
+                    [rewardParameter]: 0,
                     p_elapsed_milliseconds: 0
                 })
             });
@@ -56,9 +66,9 @@ module.exports = async function levelCompletion(request, response) {
                 status: "confirmed",
                 duplicate: true,
                 stars: result.stars,
-                rewardCredits: String(result.reward_credits),
+                [pointsSession ? "rewardPoints" : "rewardCredits"]: String(result[rewardField]),
                 elapsedMilliseconds: Number(result.elapsed_milliseconds),
-                balanceCredits: String(result.balance_credits)
+                [pointsSession ? "balancePoints" : "balanceCredits"]: String(result[balanceField])
             });
         }
         if (!session.timer_started_at || Date.parse(session.expires_at) <= Date.now()) {
@@ -80,46 +90,54 @@ module.exports = async function levelCompletion(request, response) {
                 reason: proof.reason
             });
         }
-        const rewardCredits = starsResult.stars === 3
+        const rewardAmount = starsResult.stars === 3
             ? economy.threeStarPayoutCredits
             : starsResult.stars === 2
                 ? economy.twoStarRefundCredits
                 : 0;
 
-        const [completion] = await serviceRequest("rpc/complete_wallet_level", {
+        const [completion] = await serviceRequest(rpcName, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
                 p_player_id: user.id,
                 p_session_id: sessionId,
                 p_stars: starsResult.stars,
-                p_reward_credits: rewardCredits,
+                [rewardParameter]: rewardAmount,
                 p_elapsed_milliseconds: elapsedMilliseconds
             })
         });
-        if (!completion || !/^\d+$/.test(String(completion.balance_credits))) {
-            throw new Error("Wallet completion RPC returned an invalid result.");
+        if (!completion || !/^\d+$/.test(String(completion[balanceField]))) {
+            throw new Error("Level completion RPC returned an invalid result.");
         }
 
         return sendJson(response, 200, {
             status: "confirmed",
             duplicate: completion.already_completed === true,
             stars: completion.stars,
-            rewardCredits: String(completion.reward_credits),
+            [pointsSession ? "rewardPoints" : "rewardCredits"]: String(completion[rewardField]),
             elapsedMilliseconds: Number(completion.elapsed_milliseconds),
-            balanceCredits: String(completion.balance_credits),
-            entryCostCredits: economy.entryCostCredits
+            [pointsSession ? "balancePoints" : "balanceCredits"]: String(completion[balanceField]),
+            [pointsSession ? "entryCostPoints" : "entryCostCredits"]: economy.entryCostCredits
         });
     } catch (error) {
-        console.error("Wallet level completion failed closed.", {
+        console.error("Level completion failed closed.", {
             status: error.status ?? 500,
             code: error.code ?? "level_completion_failed"
         });
         if (error.status === 404 && error.code === "PGRST202") {
-            return sendJson(response, 503, { error: "wallet_migration_required" });
+            return sendJson(response, 503, {
+                error: request.body?.gamePoints === true
+                    ? "game_points_migration_required"
+                    : "wallet_migration_required"
+            });
         }
         if (error.status === 404 && error.code === "PGRST205") {
-            return sendJson(response, 503, { error: "wallet_schema_not_installed" });
+            return sendJson(response, 503, {
+                error: request.body?.gamePoints === true
+                    ? "game_points_schema_not_installed"
+                    : "wallet_schema_not_installed"
+            });
         }
         return sendJson(response, 502, { error: "level_completion_unavailable" });
     }
