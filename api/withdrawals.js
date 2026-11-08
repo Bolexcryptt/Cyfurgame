@@ -45,15 +45,16 @@ module.exports = async function withdrawals(request, response) {
         const user = await authenticate(request);
         if (!user) return sendJson(response, 401, { error: "authentication_required" });
 
-        const [[linkedWallet], [account], configs, history, completedLevels] = await Promise.all([
+        const [[linkedWallet], [account], configs, history, completedLevels, gamePointCompletions] = await Promise.all([
             serviceRequest(`player_solana_wallets?select=wallet_address,verified_at&player_id=eq.${encodeURIComponent(user.id)}&limit=1`),
             serviceRequest(`wallet_credit_accounts?select=balance_credits,updated_at&player_id=eq.${encodeURIComponent(user.id)}&limit=1`),
             readWalletSystemConfig(),
             serviceRequest(`wallet_withdrawals?select=id,status,amount_credits,amount_raw,transaction_signature,created_at&player_id=eq.${encodeURIComponent(user.id)}&order=created_at.desc&limit=20`),
-            serviceRequest(`level_completions?select=level_number&player_id=eq.${encodeURIComponent(user.id)}&level_number=lte.30`)
+            serviceRequest(`level_completions?select=level_number&player_id=eq.${encodeURIComponent(user.id)}&level_number=lte.30`),
+            serviceRequest(`game_point_level_completions?select=level_number&player_id=eq.${encodeURIComponent(user.id)}&level_number=lte.30`)
         ]);
 
-        const completedLevelNumbers = new Set(completedLevels
+        const completedLevelNumbers = new Set([...completedLevels, ...gamePointCompletions]
             .map((completion) => Number(completion.level_number))
             .filter((levelNumber) => Number.isInteger(levelNumber) && levelNumber >= 1 && levelNumber <= 30));
         const level30Requirement = {

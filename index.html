@@ -96,16 +96,6 @@
                 </div>
             </header>
 
-            <section class="home-treasury-bar" aria-label="CYFUR deposit address">
-                <div>
-                    <span class="wallet-field-label">SHARED CYFUR TREASURY</span>
-                    <code id="home-treasury-address">6KTSpvxGR2xvje3BG42QvmFjg2XLnFneCCSyVXhSKvys</code>
-                </div>
-                <button id="home-copy-treasury" class="button button-quiet" type="button">COPY ADDRESS</button>
-                <button id="home-open-deposit" class="button button-primary" type="button">PASTE TRANSACTION</button>
-                <small>Do not send CYFUR until the deposit status says READY.</small>
-            </section>
-
             <div class="home-content">
                 <section class="hero-panel">
                     <div class="hero-topline">
@@ -190,7 +180,7 @@
                         <div>
                             <span class="eyebrow">THE CAMPAIGN</span>
                             <h2 id="level-heading">Select a sector</h2>
-                            <p id="level-section-description">Choose a sector when campaign access is available. Your saved progress is preserved while levels are locked.</p>
+                            <p id="level-section-description">Choose a sector to enter with server game points, or play in free practice when you have not unlocked a saved entry.</p>
                         </div>
                         <div class="campaign-progress-card">
                             <span>SECTORS CLEARED</span>
@@ -210,16 +200,22 @@
                         <p class="wallet-description">Your verified credits and deposit activity, secured by RelicGrid's server-side payment checks.</p>
                         <p class="wallet-exchange-rate">EXCHANGE RATE <b id="wallet-exchange-rate">1 CYFUR = 10,000 CREDITS</b> · DISPLAY ONLY</p>
                         <section class="wallet-data-panel game-access-panel" aria-labelledby="game-access-heading">
-                            <span class="wallet-field-label">SEPARATE FROM WALLET CREDITS</span>
-                            <h3 id="game-access-heading">Game access points</h3>
-                            <b><span id="game-access-points">0</span> POINTS</b>
-                            <small>Paste a Solscan link to add 1,000 game access points. Use points to enter campaign levels; they stay on this device, are separate from wallet credits, and cannot be withdrawn.</small>
+                            <span class="wallet-field-label">LEGACY DEVICE-LOCAL BALANCE</span>
+                            <h3 id="game-access-heading">Legacy game access points</h3>
+                            <b><span id="legacy-game-access-points">0</span> POINTS</b>
+                            <small>Historical points and progress remain on this device exactly as saved. They are not imported, spent, synchronized, or eligible for withdrawal.</small>
+                            <div class="wallet-data-panel">
+                                <span class="wallet-field-label">AUTHENTICATED SERVER BALANCE</span>
+                                <b><span id="game-points-balance">—</span> POINTS</b>
+                                <small id="game-points-balance-state">SIGN IN TO LOAD SERVER GAME POINTS</small>
+                                <small>These non-withdrawable points are shared across your devices. The server deducts level entry costs and credits only validated star rewards.</small>
+                            </div>
                             <form id="game-access-form" class="game-access-form">
-                                <label class="wallet-field-label" for="game-access-transaction-link">SOLSCAN TRANSACTION LINK</label>
+                                <label class="wallet-field-label" for="game-access-transaction-link">SOLANA TRANSACTION LINK</label>
                                 <input id="game-access-transaction-link" type="url" inputmode="url" autocomplete="url" spellcheck="false" maxlength="300" placeholder="https://solscan.io/tx/…" required>
-                                <button id="game-access-claim" class="button button-quiet" type="submit">ADD 1,000 GAME POINTS</button>
+                                <button id="game-access-claim" class="button button-quiet" type="submit">CLAIM 1,000 SERVER GAME POINTS</button>
                             </form>
-                            <p id="game-access-status" class="wallet-api-status" role="status" aria-live="polite">Paste a Solscan link to add game access points.</p>
+                            <p id="game-access-status" class="wallet-api-status" role="status" aria-live="polite">A real, finalized, successful Solana transaction can be claimed once. No CYFUR payment is required.</p>
                         </section>
                         <div class="wallet-data-panel wallet-balance-panel">
                             <span class="wallet-field-label">VERIFIED IN-GAME BALANCE</span>
@@ -238,6 +234,7 @@
                             <span id="wallet-network-label" class="wallet-field-label">01 · PUBLIC SHARED CYFUR TREASURY ADDRESS</span>
                             <code id="wallet-address">6KTSpvxGR2xvje3BG42QvmFjg2XLnFneCCSyVXhSKvys</code>
                             <button id="wallet-copy-address" class="button button-quiet" type="button">COPY ADDRESS</button>
+                            <button id="home-open-deposit" class="button button-primary" type="button">GO TO TRANSACTION VERIFICATION</button>
                             <span id="wallet-address-copy-status" class="copy-confirmation" role="status" aria-live="polite">Address is available to copy. Do not send until funding status is READY.</span>
                         </div>
                         <ol class="deposit-steps">
@@ -270,9 +267,10 @@
                         </div>
                         <p id="deposit-transaction-result" class="wallet-api-status" hidden><a id="deposit-transaction-link" href="#" target="_blank" rel="noopener noreferrer">View transaction on Solana Explorer</a></p>
                         <div class="wallet-history-heading">
-                            <span class="wallet-field-label">DEPOSIT HISTORY</span>
+                            <span class="wallet-field-label">VERIFIED DEPOSIT HISTORY</span>
                             <button id="wallet-refresh" class="wallet-refresh" type="button">REFRESH</button>
                         </div>
+                        <small class="wallet-history-note">Each record shows the confirmed CYFUR amount, credited balance, and Solscan transaction link.</small>
                         <ol id="wallet-history" class="wallet-history" aria-label="Deposit history">
                             <li class="wallet-history-empty">No verified deposits recorded.</li>
                         </ol>
@@ -306,14 +304,22 @@
                         </div>
 
                         <form id="withdrawal-form" class="deposit-signature-form withdrawal-form">
-                            <label class="wallet-field-label" for="withdrawal-wallet-address">VERIFIED LINKED SOLANA WALLET</label>
-                            <input id="withdrawal-wallet-address" name="walletAddress" type="text" inputmode="text" autocomplete="off" spellcheck="false" maxlength="44" placeholder="Link and verify a Solana wallet first" readonly required>
+                            <label class="wallet-field-label" for="withdrawal-wallet-address">SOLANA RECEIVING ADDRESS</label>
+                            <input id="withdrawal-wallet-address" name="walletAddress" type="text" inputmode="text" autocomplete="off" spellcheck="false" maxlength="44" placeholder="Enter your public Solana receiving address" required>
                             <div class="withdrawal-inline-actions">
                                 <span id="withdrawal-wallet-verified" class="wallet-history-state" data-state="unknown">NOT VERIFIED</span>
-                                <button id="wallet-link-button" class="wallet-refresh" type="button">LINK RECEIVING WALLET</button>
+                                <button id="wallet-link-button" class="wallet-refresh" type="button">REQUEST SIGNING CHALLENGE</button>
                                 <button id="withdrawal-refresh" class="wallet-refresh" type="button">REFRESH WITHDRAWAL</button>
                             </div>
-                            <p id="withdrawal-link-status" class="wallet-api-status" role="status" aria-live="polite">Link a receiving wallet by connecting Phantom and signing a no-fee ownership message. No tokens will be sent.</p>
+                            <p id="withdrawal-link-status" class="wallet-api-status" role="status" aria-live="polite">Verify the address by signing a one-time message in your wallet app outside RelicGrid. No wallet connection, transaction, or fee is required.</p>
+                            <section id="withdrawal-challenge-panel" class="wallet-data-panel" hidden>
+                                <label class="wallet-field-label" for="wallet-link-challenge">ONE-TIME OWNERSHIP CHALLENGE</label>
+                                <textarea id="wallet-link-challenge" rows="5" readonly></textarea>
+                                <button id="wallet-link-copy-challenge" class="button button-quiet" type="button">COPY CHALLENGE</button>
+                                <label class="wallet-field-label" for="wallet-link-signature">PASTE WALLET SIGNATURE (BASE64 OR BASE58)</label>
+                                <textarea id="wallet-link-signature" rows="3" maxlength="200" spellcheck="false" autocomplete="off" placeholder="Paste the message signature from your wallet app"></textarea>
+                                <button id="wallet-link-verify-button" class="button button-primary" type="button">VERIFY AND SAVE ADDRESS</button>
+                            </section>
 
                             <label class="wallet-field-label" for="withdrawal-amount">WITHDRAWAL AMOUNT (CREDITS)</label>
                             <input id="withdrawal-amount" name="amountCredits" type="text" inputmode="numeric" autocomplete="off" spellcheck="false" maxlength="19" placeholder="Enter any whole amount up to your available balance" required>

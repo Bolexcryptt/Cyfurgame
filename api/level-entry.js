@@ -35,6 +35,42 @@ module.exports = async function levelEntry(request, response) {
         if (entryCostCredits === null) {
             return sendJson(response, 400, { error: "invalid_level_number" });
         }
+        if (request.body?.gamePoints !== undefined &&
+            typeof request.body.gamePoints !== "boolean") {
+            return sendJson(response, 400, { error: "invalid_level_entry" });
+        }
+
+        if (request.body?.gamePoints === true) {
+            const requestId = request.body?.requestId;
+            if (typeof requestId !== "string" ||
+                !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(requestId)) {
+                return sendJson(response, 400, { error: "invalid_entry_request_id" });
+            }
+            if (!hasServiceDatabaseEnvironment()) {
+                return sendJson(response, 503, { error: "game_points_api_not_configured" });
+            }
+            const [session] = await serviceRequest("rpc/start_game_point_level", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    p_player_id: user.id,
+                    p_level_number: levelNumber,
+                    p_request_id: requestId
+                })
+            });
+            if (!session || typeof session.session_id !== "string" ||
+                !/^\d+$/.test(String(session.balance_points)) ||
+                !/^\d+$/.test(String(session.entry_cost_points))) {
+                throw new Error("Game-points entry RPC returned an invalid session.");
+            }
+            return sendJson(response, 200, {
+                allowed: true,
+                gamePoints: true,
+                sessionId: session.session_id,
+                balancePoints: String(session.balance_points),
+                entryCostPoints: String(session.entry_cost_points)
+            });
+        }
 
         const accounts = await selectOwn(request, "wallet_credit_accounts", new URLSearchParams({
             select: "balance_credits",
@@ -103,6 +139,14 @@ module.exports = async function levelEntry(request, response) {
             status: error.status ?? 500,
             code: error.code ?? "level_access_check_failed"
         });
+        if (error.status === 404 && error.code === "PGRST205" &&
+            request.body?.gamePoints === true) {
+            return sendJson(response, 503, { error: "game_points_schema_not_installed" });
+        }
+        if (error.status === 404 && error.code === "PGRST202" &&
+            request.body?.gamePoints === true) {
+            return sendJson(response, 503, { error: "game_points_migration_required" });
+        }
         if (error.status === 404 && error.code === "PGRST205") {
             return sendJson(response, 503, { error: "wallet_schema_not_installed" });
         }
@@ -116,6 +160,17 @@ module.exports = async function levelEntry(request, response) {
             try {
                 const user = await authenticate(request);
                 if (!user) return sendJson(response, 401, { error: "authentication_required" });
+                if (request.body?.gamePoints === true) {
+                    const accounts = await serviceRequest(
+                        `game_point_accounts?select=balance_points&player_id=eq.${encodeURIComponent(user.id)}&limit=1`
+                    );
+                    const balance = accounts[0]?.balance_points ?? "0";
+                    return sendJson(response, 402, {
+                        error: "insufficient_game_points",
+                        balancePoints: String(balance),
+                        entryCostPoints: entryCostCredits
+                    });
+                }
                 const accounts = await selectOwn(request, "wallet_credit_accounts", new URLSearchParams({
                     select: "balance_credits",
                     player_id: `eq.${user.id}`,

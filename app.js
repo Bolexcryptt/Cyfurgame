@@ -143,15 +143,15 @@ function readPlayer() {
 }
 
 let player = readPlayer();
-let gameAccessPoints = 0;
-let gameAccessPointsVerified = false;
-let claimedGameAccessSignatures = [];
+let legacyGameAccessPoints = 0;
+let serverGamePoints = "0";
+let serverGamePointsVerified = false;
+let serverGamePointCompletions = [];
 let activeVideoPlayback = null;
 let transitionInProgress = false;
 let openingFlowFinished = false;
 let pendingLevel = null;
 let activeWalletLevelSessionId = null;
-let activeLevelUsesGameAccessPoints = false;
 let walletTimerStartPromise = Promise.resolve(false);
 const pendingLevelEntryRequests = new Map();
 let levelEntryRequestInProgress = false;
@@ -165,6 +165,10 @@ let levelsGloballyLocked = true;
 let currentDepositIntent = null;
 let activeLevelEntryCostCredits = null;
 let levelStartInProgress = false;
+let verifiedWithdrawalAddress = null;
+let withdrawalSystemReady = false;
+let withdrawalAvailableCredits = "0";
+let withdrawalHasActiveRequest = false;
 let pendingAccountEmail = "";
 let pendingAccountRecoveryPlayerId = null;
 let pendingPhantomMobileCallback = null;
@@ -182,47 +186,62 @@ function getGameAccessStorageKey() {
 }
 
 function loadGameAccessState() {
-    gameAccessPointsVerified = true;
     const saved = localStorage.getItem(getGameAccessStorageKey());
     if (!saved) {
-        gameAccessPoints = 0;
-        claimedGameAccessSignatures = [];
+        legacyGameAccessPoints = 0;
         return;
     }
 
     try {
         const parsed = JSON.parse(saved);
-        gameAccessPoints = Number.isSafeInteger(parsed.points) && parsed.points >= 0
+        legacyGameAccessPoints = Number.isSafeInteger(parsed.points) && parsed.points >= 0
             ? parsed.points
             : 0;
-        claimedGameAccessSignatures = Array.isArray(parsed.claimedSignatures)
-            ? [...new Set(parsed.claimedSignatures.filter((signature) =>
-                typeof signature === "string" && /^[1-9A-HJ-NP-Za-km-z]{80,100}$/.test(signature)
-            ))]
-            : [];
     } catch (error) {
-        console.error("Saved game-access points could not be read.", error);
-        gameAccessPoints = 0;
-        claimedGameAccessSignatures = [];
+        console.error("Legacy device-local game points could not be read.", error);
+        legacyGameAccessPoints = 0;
     }
 }
 
-function saveGameAccessState() {
-    localStorage.setItem(getGameAccessStorageKey(), JSON.stringify({
-        points: gameAccessPoints,
-        claimedSignatures: claimedGameAccessSignatures
-    }));
-}
-
 function renderGameAccessPoints() {
-    const balance = document.getElementById("game-access-points");
-    if (balance) balance.textContent = gameAccessPointsVerified
-        ? formatCredits(String(gameAccessPoints))
+    const legacyBalance = document.getElementById("legacy-game-access-points");
+    const serverBalance = document.getElementById("game-points-balance");
+    const serverState = document.getElementById("game-points-balance-state");
+    if (legacyBalance) legacyBalance.textContent = formatCredits(String(legacyGameAccessPoints));
+    if (serverBalance) serverBalance.textContent = serverGamePointsVerified
+        ? formatCredits(serverGamePoints)
         : "—";
+    if (serverState) serverState.textContent = serverGamePointsVerified
+        ? "SERVER VERIFIED · NON-WITHDRAWABLE"
+        : "SIGN IN TO LOAD SERVER GAME POINTS";
 }
 
-async function refreshGameAccessPoints() {
-    gameAccessPointsVerified = true;
+async function refreshServerGamePoints() {
+    serverGamePointsVerified = false;
+    renderGameAccessPoints();
+    if (!authUser || !supabaseConfigured || !supabase) {
+        serverGamePointCompletions = [];
+        renderLevels();
+        return false;
+    }
+
+    const headers = await getWalletAuthorizationHeaders();
+    const response = await fetch(apiUrl("game-points"), {
+        headers,
+        cache: "no-store"
+    });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok ||
+        !/^\d+$/.test(String(result.balancePoints)) ||
+        !Array.isArray(result.completedLevels)) {
+        throw new Error(result.error || `Server game points could not be loaded (${response.status}).`);
+    }
+
+    serverGamePoints = String(result.balancePoints);
+    serverGamePointCompletions = [...new Set(result.completedLevels
+        .map(Number)
+        .filter((levelNumber) => Number.isInteger(levelNumber) && levelNumber >= 1 && levelNumber <= 99))];
+    serverGamePointsVerified = true;
     renderGameAccessPoints();
     renderLevels();
     return true;
@@ -416,13 +435,23 @@ async function refreshOwnProgress() {
         .select("level_number")
         .eq("player_id", authUser.id);
     if (error) throw error;
+    let serverGameLevels = [];
+    try {
+        await refreshServerGamePoints();
+        serverGameLevels = serverGamePointCompletions;
+    } catch (gamePointsError) {
+        serverGamePointsVerified = false;
+        serverGamePointCompletions = [];
+        renderGameAccessPoints();
+        console.error("Server game-points balance or progress could not be loaded.", gamePointsError);
+    }
     const hydrated = hydratePlayerFromAuthenticatedAccount(
         player,
         authUser,
         { display_name: player.name },
         mergeCompletedLevels(
             player.completedLevels,
-            data.map((record) => record.level_number),
+            [...data.map((record) => record.level_number), ...serverGameLevels],
             !player.playerId || player.playerId === authUser.id
         )
     );
@@ -463,7 +492,6 @@ async function initializeBackend() {
             []
         ));
         await refreshOwnProgress();
-        await refreshGameAccessPoints();
         backendStatus = "Connected to the RelicGrid leaderboard.";
         savePlayer();
         renderProfile();
@@ -550,9 +578,10 @@ function renderProfile() {
     document.getElementById("hero-current-sector").textContent =
         `LEVEL ${String(continueLevel).padStart(2, "0")}`;
     const continueLevelCost = getLevelEconomy(continueLevel).entryCostCredits;
-    const hasContinueGameAccess = gameAccessPoints >= continueLevelCost;
+    const hasContinueGameAccess = serverGamePointsVerified &&
+        BigInt(serverGamePoints) >= BigInt(continueLevelCost);
     document.getElementById("hero-sector-access").textContent = levelsGloballyLocked
-        ? hasContinueGameAccess ? "GAME ACCESS POINTS READY" : "ALL SECTORS LOCKED"
+        ? hasContinueGameAccess ? "SERVER GAME POINTS READY" : "ALL SECTORS LOCKED"
         : "ALL SECTORS AVAILABLE";
     document.getElementById("continue-game").disabled =
         levelsGloballyLocked && !hasContinueGameAccess;
@@ -771,7 +800,7 @@ async function verifyAccountRecovery(event) {
         backendReady = Promise.resolve(true);
         renderProfile();
         await refreshWallet();
-        await refreshGameAccessPoints();
+        await refreshServerGamePoints();
         await refreshWithdrawalStatus();
         showNameOrHome();
         setAccountAuthStatus(
@@ -931,8 +960,9 @@ function renderLevels() {
         const meta = document.createElement("small");
         meta.textContent = `${level.par} MIRROR${level.par === 1 ? "" : "S"} REQUIRED · TIER ${level.band}`;
         const entryCostCredits = getLevelEconomy(level.number).entryCostCredits;
-        const hasGameAccessPoints = gameAccessPointsVerified && gameAccessPoints >= entryCostCredits;
-        const levelLocked = !hasGameAccessPoints;
+        const hasGameAccessPoints = serverGamePointsVerified &&
+            BigInt(serverGamePoints) >= BigInt(entryCostCredits);
+        const levelLocked = levelsGloballyLocked;
         button.className =
             `${levelLocked ? "is-locked" : "is-unlocked"}${completed ? " is-complete" : ""}${current ? " is-current" : ""}`;
         button.disabled = levelLocked;
@@ -940,20 +970,22 @@ function renderLevels() {
         entryCost.className = "level-cost";
         entryCost.textContent = hasGameAccessPoints
             ? `${formatCredits(entryCostCredits)} GAME POINTS`
-            : `${formatCredits(gameAccessPointsVerified ? gameAccessPoints : 0)} GAME POINTS · NEED ${formatCredits(entryCostCredits)}`;
+            : `${formatCredits(serverGamePointsVerified ? serverGamePoints : "0")} SERVER POINTS · NEED ${formatCredits(entryCostCredits)}`;
         detail.append(title, meta);
         const badge = document.createElement("span");
         badge.className = "level-state";
         badge.textContent = levelLocked
             ? "LOCKED"
-            : hasGameAccessPoints ? "ACCESS READY" : completed ? "CLEARED" : current ? "NEXT UP" : "PLAY";
+            : hasGameAccessPoints ? "ACCESS READY" : "FREE PRACTICE";
         const cost = document.createElement("span");
         cost.className = "level-entry-cost";
         cost.append(entryCost);
         button.append(number, detail, cost, badge);
         button.setAttribute("aria-label", levelLocked
-            ? `Level ${level.number} is locked until you have ${formatCredits(entryCostCredits)} game points`
-            : `Play level ${level.number} using ${formatCredits(entryCostCredits)} game points`);
+            ? `Level ${level.number} is locked`
+            : hasGameAccessPoints
+                ? `Play level ${level.number} using ${formatCredits(entryCostCredits)} server game points`
+                : `Practice level ${level.number}; ${formatCredits(entryCostCredits)} server game points are required for saved progress and rewards`);
         button.addEventListener("click", () => void startLevel(level.number));
         item.append(button);
         fragment.append(item);
@@ -968,7 +1000,7 @@ function renderHome() {
     showScreen("home-screen");
     void refreshGameConfig();
     void refreshWallet();
-    void refreshGameAccessPoints();
+    void refreshServerGamePoints();
 }
 
 async function refreshGameConfig() {
@@ -989,7 +1021,7 @@ async function refreshGameConfig() {
     if (levelStatus) {
         levelStatus.textContent = levelsGloballyLocked
             ? "All levels are temporarily locked. Your saved progress is unchanged."
-            : "Use your saved game access points to enter campaign levels.";
+            : "Use your authenticated server game points to enter campaign levels.";
     }
 }
 
@@ -1016,11 +1048,10 @@ function setLevelEntryMessage(message, state = "disabled") {
         status.dataset.state = state;
     }
 
-async function requestLevelEntry(levelNumber) {
+async function legacyRequestLevelEntry(levelNumber) {
         if (levelEntryRequestInProgress) return null;
         const gameAccessCost = getLevelEconomy(levelNumber).entryCostCredits;
-        if (levelsGloballyLocked &&
-            (!gameAccessPointsVerified || gameAccessPoints < gameAccessCost)) {
+        if (levelsGloballyLocked) {
             setLevelEntryMessage("All levels are temporarily locked. Your saved progress is unchanged.", "disabled");
             return null;
         }
@@ -1038,24 +1069,6 @@ async function requestLevelEntry(levelNumber) {
                 entryCostCredits: null
             };
         };
-        if (gameAccessPoints >= gameAccessCost) {
-            return {
-                gameAccess: true,
-                sessionId: null,
-                balanceCredits: walletStatusSnapshot?.balanceVerified
-                    ? String(walletStatusSnapshot.balanceCredits)
-                    : "0",
-                entryCostCredits: null,
-                gameAccessPointsUsed: gameAccessCost
-            };
-        }
-        if (gameAccessPoints > 0 && walletStatusSnapshot?.paidGameplayEnabled !== true) {
-            setLevelEntryMessage(
-                `Level ${levelNumber} requires ${formatCredits(gameAccessCost)} game access points. Add more points to enter this level.`,
-                "disabled"
-            );
-            return null;
-        }
         if (!supabaseConfigured || !supabase) {
             return practiceEntry("Wallet verification is unavailable.");
         }
@@ -1102,14 +1115,6 @@ async function requestLevelEntry(levelNumber) {
                 renderLevels();
             }
 
-            if (response.status === 402 && result.error === "insufficient_balance" &&
-                gameAccessPoints > 0) {
-                setLevelEntryMessage(
-                    `Level ${levelNumber} requires ${formatCredits(gameAccessCost)} game access points or enough verified wallet credits.`,
-                    "disabled"
-                );
-                return null;
-            }
             if (response.status === 402 && result.error === "insufficient_balance") {
                 const balanceMessage = /^\d+$/.test(String(result.balanceCredits))
                     ? `Your verified balance is ${formatCredits(result.balanceCredits)}.`
@@ -1165,6 +1170,86 @@ async function requestLevelEntry(levelNumber) {
             return practiceEntry("Backend balance verification failed.");
         } finally {
             levelEntryRequestInProgress = false;
+    }
+}
+
+async function requestLevelEntry(levelNumber) {
+    if (levelEntryRequestInProgress) return null;
+    const entryCostPoints = getLevelEconomy(levelNumber).entryCostCredits;
+    if (levelsGloballyLocked) {
+        setLevelEntryMessage("All levels are temporarily locked. Your saved progress is unchanged.", "disabled");
+        return null;
+    }
+
+    const practiceEntry = (reason) => {
+        setLevelEntryMessage(
+            `Level ${levelNumber} started in free practice. ${reason} No points were charged; progress and rewards will not be saved.`,
+            "ready"
+        );
+        return {
+            practice: true,
+            sessionId: null,
+            balanceCredits: "0",
+            entryCostCredits: null
+        };
+    };
+    if (!supabaseConfigured || !supabase || !authUser) {
+        return practiceEntry("Sign in to use server-managed game points.");
+    }
+
+    levelEntryRequestInProgress = true;
+    setLevelEntryMessage("Reserving the level entry with your server game points…", "pending");
+    try {
+        const headers = await getWalletAuthorizationHeaders();
+        const requestStorageKey = `relicgrid.level-entry.${authUser.id}.${levelNumber}`;
+        const storedRequestId = sessionStorage.getItem(requestStorageKey);
+        const requestId = pendingLevelEntryRequests.get(levelNumber) ?? storedRequestId ?? crypto.randomUUID();
+        pendingLevelEntryRequests.set(levelNumber, requestId);
+        sessionStorage.setItem(requestStorageKey, requestId);
+
+        const response = await fetch(apiUrl("level-entry"), {
+            method: "POST",
+            headers,
+            body: JSON.stringify({ levelNumber, requestId, gamePoints: true }),
+            cache: "no-store"
+        });
+        const result = await response.json().catch(() => ({}));
+        if (response.status === 402 && result.error === "insufficient_game_points") {
+            pendingLevelEntryRequests.delete(levelNumber);
+            sessionStorage.removeItem(requestStorageKey);
+            if (/^\d+$/.test(String(result.balancePoints))) {
+                serverGamePoints = String(result.balancePoints);
+                serverGamePointsVerified = true;
+                renderGameAccessPoints();
+                renderLevels();
+            }
+            setLevelEntryMessage(
+                `Level ${levelNumber} requires ${formatCredits(result.entryCostPoints || entryCostPoints)} server game points. Current balance: ${formatCredits(result.balancePoints || "0")}.`,
+                "disabled"
+            );
+            return practiceEntry("Your server game-points balance is below the entry cost.");
+        }
+        if (response.status === 423 && result.error === "levels_locked") {
+            levelsGloballyLocked = true;
+            renderProfile();
+            renderLevels();
+            setLevelEntryMessage("All levels are temporarily locked. Your saved progress is unchanged.", "disabled");
+            return null;
+        }
+        if (!response.ok || result.allowed !== true || result.gamePoints !== true ||
+            typeof result.sessionId !== "string" ||
+            !/^\d+$/.test(String(result.balancePoints)) ||
+            !/^\d+$/.test(String(result.entryCostPoints))) {
+            throw new Error(result.message || result.error || `Server game-points entry failed (${response.status}).`);
+        }
+        pendingLevelEntryRequests.delete(levelNumber);
+        sessionStorage.removeItem(requestStorageKey);
+        return result;
+    } catch (error) {
+        console.error("Server game-points entry is unavailable.", error);
+        return practiceEntry("The server could not verify an entry.");
+    } finally {
+        levelEntryRequestInProgress = false;
     }
 }
 
@@ -1251,11 +1336,26 @@ function renderWalletHistory(deposits) {
         const detail = document.createElement("span");
         detail.className = "wallet-history-detail";
         const amount = document.createElement("b");
-        amount.textContent = `${formatTokenAmount(deposit.amount_raw, deposit.token_decimals)} CYFUR`;
+        const tokenAmount = formatTokenAmount(deposit.amount_raw, deposit.token_decimals);
+        const creditedAmount = /^\d+$/.test(String(deposit.credit_amount_credits))
+            ? `${formatCredits(String(deposit.credit_amount_credits))} CREDITS`
+            : "CREDITS NOT CONFIRMED";
+        amount.textContent = `${tokenAmount} CYFUR · ${creditedAmount}`;
         const signature = document.createElement("small");
-        signature.textContent = typeof deposit.transaction_signature === "string"
-            ? `${deposit.transaction_signature.slice(0, 8)}…${deposit.transaction_signature.slice(-8)}`
-            : "Transaction reference unavailable";
+        const transactionSignature = deposit.transaction_signature;
+        if (typeof transactionSignature === "string" &&
+            /^[1-9A-HJ-NP-Za-km-z]{80,100}$/.test(transactionSignature)) {
+            const transactionLink = document.createElement("a");
+            const solscanUrl = new URL(`https://solscan.io/tx/${encodeURIComponent(transactionSignature)}`);
+            if (deposit.network === "devnet") solscanUrl.searchParams.set("cluster", "devnet");
+            transactionLink.href = solscanUrl.href;
+            transactionLink.target = "_blank";
+            transactionLink.rel = "noopener noreferrer";
+            transactionLink.textContent = `VIEW TRANSACTION · ${transactionSignature.slice(0, 8)}…${transactionSignature.slice(-8)}`;
+            signature.append(transactionLink);
+        } else {
+            signature.textContent = "Transaction reference unavailable";
+        }
         detail.append(amount, signature);
 
         const state = document.createElement("span");
@@ -1352,6 +1452,28 @@ function updateWithdrawalPreview() {
     preview.textContent = `${formatTokenAmount(rawAmount.toString(), decimals)} CYFUR`;
 }
 
+function updateWithdrawalDestinationState() {
+    const address = document.getElementById("withdrawal-wallet-address");
+    const verifiedBadge = document.getElementById("withdrawal-wallet-verified");
+    const amountInput = document.getElementById("withdrawal-amount");
+    const maxButton = document.getElementById("withdrawal-max");
+    const submit = document.getElementById("withdrawal-submit");
+    if (!address || !verifiedBadge || !amountInput || !maxButton || !submit) return;
+
+    const destinationVerified = Boolean(verifiedWithdrawalAddress) &&
+        address.value.trim() === verifiedWithdrawalAddress;
+    verifiedBadge.dataset.state = destinationVerified ? "confirmed" : "failed";
+    verifiedBadge.textContent = destinationVerified ? "VERIFIED" : "NOT VERIFIED";
+    const amount = amountInput.value.trim();
+    const amountIsValid = /^\d+$/.test(amount) &&
+        BigInt(amount) > 0n &&
+        BigInt(amount) <= BigInt(withdrawalAvailableCredits);
+    const canWithdraw = withdrawalSystemReady && destinationVerified && !withdrawalHasActiveRequest;
+    amountInput.disabled = !canWithdraw;
+    maxButton.disabled = !canWithdraw || BigInt(withdrawalAvailableCredits) <= 0n;
+    submit.disabled = !canWithdraw || !amountIsValid;
+}
+
 async function refreshWithdrawalStatus() {
     const addressInput = document.getElementById("withdrawal-wallet-address");
     const submit = document.getElementById("withdrawal-submit");
@@ -1366,11 +1488,13 @@ async function refreshWithdrawalStatus() {
     const tokenDecimals = document.getElementById("withdrawal-token-decimals");
     if (!addressInput || !submit || !verifiedBadge || !amountInput || !maxButton ||
         !balanceValue || !balanceNote || !minimumValue || !minimumNote || !history) return;
+    withdrawalSystemReady = false;
+    withdrawalAvailableCredits = "0";
+    withdrawalHasActiveRequest = false;
     setWithdrawalStatus("Loading withdrawal details…", "pending");
     submit.disabled = true;
     maxButton.disabled = true;
     amountInput.disabled = true;
-    addressInput.readOnly = true;
     verifiedBadge.dataset.state = "unknown";
     verifiedBadge.textContent = "CHECKING";
     minimumValue.textContent = "Any positive amount";
@@ -1411,7 +1535,6 @@ async function refreshWithdrawalStatus() {
         const availableCredits = BigInt(result.availableCredits || "0");
         const decimals = Number(result.config?.tokenDecimals ?? 8);
         if (tokenDecimals) tokenDecimals.dataset.decimals = String(decimals);
-        addressInput.value = typeof result.walletAddress === "string" ? result.walletAddress.trim() : "";
         balanceValue.textContent = `${formatCredits(result.availableCredits || "0")} CREDITS`;
         balanceNote.textContent = `${formatCredits(result.balanceCredits || "0")} total credits on file · ${formatCredits(result.availableCredits || "0")} eligible after level requirement`;
         minimumValue.textContent = "Any positive amount";
@@ -1420,16 +1543,28 @@ async function refreshWithdrawalStatus() {
         const walletVerified = result.walletVerified === true &&
             typeof result.walletAddress === "string" &&
             /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(result.walletAddress);
-        verifiedBadge.dataset.state = walletVerified ? "confirmed" : "failed";
-        verifiedBadge.textContent = walletVerified ? "VERIFIED" : "NOT VERIFIED";
-        const ready = result.withdrawalEnabled === true && walletVerified;
-        const hasActiveWithdrawal = result.activeWithdrawal === true;
+        const serverWalletAddress = walletVerified ? result.walletAddress.trim() : "";
+        const previousAddress = addressInput.value.trim();
+        const preserveEnteredAddress = previousAddress &&
+            previousAddress !== verifiedWithdrawalAddress &&
+            previousAddress !== serverWalletAddress;
+        verifiedWithdrawalAddress = serverWalletAddress || null;
+        if (!preserveEnteredAddress) addressInput.value = serverWalletAddress;
+        withdrawalSystemReady = result.withdrawalEnabled === true;
+        withdrawalAvailableCredits = result.availableCredits || "0";
+        withdrawalHasActiveRequest = result.activeWithdrawal === true;
+        const destinationVerified = walletVerified &&
+            addressInput.value.trim() === serverWalletAddress;
+        verifiedBadge.dataset.state = destinationVerified ? "confirmed" : "failed";
+        verifiedBadge.textContent = destinationVerified ? "VERIFIED" : "NOT VERIFIED";
+        const ready = withdrawalSystemReady && destinationVerified;
+        const hasActiveWithdrawal = withdrawalHasActiveRequest;
         const enteredAmount = amountInput.value.trim();
         const amountWithinBalance = /^\d+$/.test(enteredAmount) &&
             BigInt(enteredAmount) > 0n &&
             BigInt(enteredAmount) <= availableCredits;
         submit.disabled = !ready || hasActiveWithdrawal || !amountWithinBalance;
-        amountInput.disabled = !ready;
+        amountInput.disabled = !ready || hasActiveWithdrawal;
         maxButton.disabled = !ready || hasActiveWithdrawal || availableCredits <= 0n;
         maxButton.dataset.availableCredits = result.availableCredits || "0";
         if (hasActiveWithdrawal) {
@@ -1449,12 +1584,14 @@ async function refreshWithdrawalStatus() {
         }
         if (!ready) {
             setWithdrawalStatus(walletVerified
-                ? "Withdrawals are temporarily unavailable. Please try again later."
-                : "Link and verify a Solana wallet to this game account before withdrawing.", "error");
+                ? destinationVerified
+                    ? "Withdrawals are temporarily unavailable. Please try again later."
+                    : "Verify the entered receiving address with a one-time signed message before withdrawing."
+                : "Verify a Solana receiving address with a one-time signed message before withdrawing.", "error");
             return;
         }
         updateWithdrawalPreview();
-        setWithdrawalStatus("Choose any positive credit amount up to your available balance. The verified linked wallet is the receiving address.", "ready");
+        setWithdrawalStatus("Choose any positive credit amount up to your available balance. The signed, verified address is the receiving address.", "ready");
     } catch (error) {
         console.error("Withdrawal status failed to load.", error);
         setWithdrawalStatus(error.message || "Withdrawal details could not be loaded.", "error");
@@ -1473,6 +1610,10 @@ async function submitWithdrawalRequest(event) {
     const amountCredits = (amountInput.value || "").trim();
     if (!/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(walletAddress)) {
         setWithdrawalStatus("Link and verify a Solana wallet before requesting a withdrawal.", "error");
+        return;
+    }
+    if (!verifiedWithdrawalAddress || walletAddress !== verifiedWithdrawalAddress) {
+        setWithdrawalStatus("Verify the entered receiving address with a one-time signed message before withdrawing.", "error");
         return;
     }
     if (!/^\d+$/.test(amountCredits) || BigInt(amountCredits) <= 0n) {
@@ -2035,6 +2176,109 @@ async function fetchWithTimeout(url, options, operation, timeoutMs = 20000) {
     }
 }
 
+async function requestWithdrawalWalletChallenge() {
+    const addressInput = document.getElementById("withdrawal-wallet-address");
+    const button = document.getElementById("wallet-link-button");
+    const challengePanel = document.getElementById("withdrawal-challenge-panel");
+    const challengeField = document.getElementById("wallet-link-challenge");
+    const signatureField = document.getElementById("wallet-link-signature");
+    const walletAddress = (addressInput?.value || "").trim();
+    if (!/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(walletAddress)) {
+        setWithdrawalLinkStatus("Enter a valid public Solana address before requesting a challenge.", "error");
+        return;
+    }
+    if (!button || !challengePanel || !challengeField || !signatureField) {
+        throw new Error("The receiving-address challenge controls are unavailable.");
+    }
+    button.disabled = true;
+    button.textContent = "REQUESTING…";
+    challengePanel.hidden = true;
+    try {
+        const headers = await getWalletAuthorizationHeaders();
+        const response = await fetch(apiUrl("wallet-link"), {
+            method: "POST",
+            headers,
+            body: JSON.stringify({ action: "challenge", walletAddress }),
+            cache: "no-store"
+        });
+        const result = await response.json().catch(() => ({}));
+        if (!response.ok || typeof result.challenge !== "string") {
+            throw new Error(result.message || result.error || `Challenge request failed (${response.status}).`);
+        }
+        challengeField.value = result.challenge;
+        signatureField.value = "";
+        challengePanel.hidden = false;
+        setWithdrawalLinkStatus("Challenge ready. Sign the exact message in your wallet app outside RelicGrid, then paste its signature below. This does not send a transaction.", "pending");
+    } catch (error) {
+        console.error("Withdrawal wallet challenge could not be created.", error);
+        setWithdrawalLinkStatus(`No address was verified. ${error.message}`, "error");
+    } finally {
+        button.disabled = false;
+        button.textContent = "REQUEST SIGNING CHALLENGE";
+    }
+}
+
+async function copyWithdrawalWalletChallenge() {
+    const challenge = document.getElementById("wallet-link-challenge")?.value;
+    if (!challenge) {
+        setWithdrawalLinkStatus("Request a signing challenge before copying it.", "error");
+        return;
+    }
+    try {
+        await navigator.clipboard.writeText(challenge);
+        setWithdrawalLinkStatus("Challenge copied. Sign it as a message in your wallet app; do not send it as a transaction.", "ready");
+    } catch (error) {
+        console.error("Withdrawal signing challenge could not be copied.", error);
+        setWithdrawalLinkStatus("Clipboard access failed. Select and copy the challenge text manually.", "error");
+    }
+}
+
+async function verifyWithdrawalWalletChallenge() {
+    const addressInput = document.getElementById("withdrawal-wallet-address");
+    const button = document.getElementById("wallet-link-verify-button");
+    const challengePanel = document.getElementById("withdrawal-challenge-panel");
+    const challengeField = document.getElementById("wallet-link-challenge");
+    const signatureField = document.getElementById("wallet-link-signature");
+    const walletAddress = (addressInput?.value || "").trim();
+    const signature = (signatureField?.value || "").trim();
+    if (!challengeField?.value || !signature) {
+        setWithdrawalLinkStatus("Request a challenge and paste the wallet's message signature.", "error");
+        return;
+    }
+    if (!button || !challengePanel) {
+        throw new Error("The signature verification control is unavailable.");
+    }
+    button.disabled = true;
+    button.textContent = "VERIFYING…";
+    setWithdrawalLinkStatus("Verifying the signed challenge with the server…", "pending");
+    try {
+        const headers = await getWalletAuthorizationHeaders();
+        const response = await fetch(apiUrl("wallet-link"), {
+            method: "POST",
+            headers,
+            body: JSON.stringify({ action: "verify", walletAddress, signature }),
+            cache: "no-store"
+        });
+        const result = await response.json().catch(() => ({}));
+        if (!response.ok || result.linked !== true || result.walletAddress !== walletAddress) {
+            throw new Error(result.message || result.error || `Signature verification failed (${response.status}).`);
+        }
+        verifiedWithdrawalAddress = walletAddress;
+        challengePanel.hidden = true;
+        challengeField.value = "";
+        signatureField.value = "";
+        setWithdrawalLinkStatus("Receiving address ownership verified and saved. No wallet connection or transfer was used.", "ready");
+        await refreshWithdrawalStatus();
+        await refreshWallet();
+    } catch (error) {
+        console.error("Withdrawal receiving address could not be verified.", error);
+        setWithdrawalLinkStatus(`Address not verified. ${error.message}`, "error");
+    } finally {
+        button.disabled = false;
+        button.textContent = "VERIFY AND SAVE ADDRESS";
+    }
+}
+
 function setWithdrawalLinkStatus(message, state = "") {
     const status = document.getElementById("withdrawal-link-status");
     if (!status) return;
@@ -2184,7 +2428,9 @@ async function verifyDepositSignature(signatureOrLink) {
             response.status
         ));
     }
-    if (result.status !== "confirmed" || !/^\d+$/.test(String(result.creditAmountCredits)) ||
+    if (result.status !== "confirmed" || !/^\d+$/.test(String(result.amountRaw)) ||
+        !Number.isInteger(result.tokenDecimals) ||
+        !/^\d+$/.test(String(result.creditAmountCredits)) ||
         !/^\d+$/.test(String(result.balanceCredits))) {
         throw new Error("Backend did not return a confirmed deposit and verified balance.");
     }
@@ -2194,10 +2440,11 @@ async function verifyDepositSignature(signatureOrLink) {
     document.getElementById("deposit-intent-panel").hidden = true;
     document.getElementById("deposit-signature").value = "";
     await refreshWallet();
+    const confirmedTokenAmount = `${formatTokenAmount(result.amountRaw, result.tokenDecimals)} CYFUR`;
     setWalletMessage(
         result.alreadyProcessed
-            ? `This finalized deposit was already credited. Current verified balance: ${formatCredits(result.balanceCredits)} credits.`
-            : `Deposit finalized and credited: ${formatCredits(result.creditAmountCredits)} credits. Current verified balance: ${formatCredits(result.balanceCredits)} credits.`,
+            ? `${confirmedTokenAmount} was already credited as ${formatCredits(result.creditAmountCredits)} credits. Current verified balance: ${formatCredits(result.balanceCredits)} credits.`
+            : `Deposit finalized: ${confirmedTokenAmount} → ${formatCredits(result.creditAmountCredits)} credits. Current verified balance: ${formatCredits(result.balanceCredits)} credits.`,
         "confirmed"
     );
     return true;
@@ -2205,7 +2452,7 @@ async function verifyDepositSignature(signatureOrLink) {
 
 let gameAccessClaimInProgress = false;
 
-async function claimLegacyLocalGameAccessPoints(event) {
+async function claimServerGamePoints(event) {
     event.preventDefault();
     if (gameAccessClaimInProgress) return;
     const input = document.getElementById("game-access-transaction-link");
@@ -2213,58 +2460,58 @@ async function claimLegacyLocalGameAccessPoints(event) {
     const status = document.getElementById("game-access-status");
     const signature = getSolscanSignature(input.value);
     if (!signature) {
-        status.textContent = "Paste a full Solscan transaction link to claim game access points.";
-        status.dataset.state = "error";
-        return;
-    }
-    if (claimedGameAccessSignatures.includes(signature)) {
-        status.textContent = "Game access points were already claimed with this link.";
-        status.dataset.state = "pending";
-        return;
-    }
-    if (!Number.isSafeInteger(gameAccessPoints + 1_000)) {
-        status.textContent = "The game access points balance cannot be increased safely.";
+        status.textContent = "Paste a valid Solscan transaction link to claim server game points.";
         status.dataset.state = "error";
         return;
     }
 
     gameAccessClaimInProgress = true;
     button.disabled = true;
-    button.textContent = "ADDING POINTS…";
+    button.textContent = "VERIFYING TRANSACTION…";
     input.disabled = true;
-    const ownerStorageKey = getGameAccessStorageKey();
     try {
-        status.textContent = "Adding game access points…";
+        status.textContent = "Checking the transaction's network, finality, and success with Solana…";
         status.dataset.state = "pending";
-        await new Promise((resolve) => window.setTimeout(
-            resolve,
-            3_000 + Math.floor(Math.random() * 4_001)
-        ));
-        if (getGameAccessStorageKey() !== ownerStorageKey) {
-            throw new Error("The active player account changed before game access points were added.");
+        const headers = await getWalletAuthorizationHeaders();
+        const response = await fetch(apiUrl("game-points"), {
+            method: "POST",
+            headers,
+            body: JSON.stringify({ action: "claim", signature }),
+            cache: "no-store"
+        });
+        const result = await response.json().catch(() => ({}));
+        if (typeof result.balancePoints === "string" && /^\d+$/.test(result.balancePoints)) {
+            serverGamePoints = result.balancePoints;
+            serverGamePointsVerified = true;
+            renderGameAccessPoints();
+            renderLevels();
+            renderProfile();
         }
-        const nextPoints = gameAccessPoints + 1_000;
-        const nextSignatures = [...claimedGameAccessSignatures, signature];
-        localStorage.setItem(ownerStorageKey, JSON.stringify({
-            points: nextPoints,
-            claimedSignatures: nextSignatures
-        }));
-        gameAccessPoints = nextPoints;
-        gameAccessPointsVerified = true;
-        claimedGameAccessSignatures = nextSignatures;
-        input.value = "";
-        status.textContent = `1,000 game access points added. Balance: ${formatCredits(String(gameAccessPoints))}.`;
+        if (response.status === 202 && result.status === "pending") {
+            status.textContent = "Transaction is not finalized yet. Wait for finality, then retry the same link.";
+            status.dataset.state = "pending";
+            return;
+        }
+        if (response.status === 409 && result.error === "transaction_already_claimed") {
+            status.textContent = `This transaction was already claimed. Current server balance: ${formatCredits(result.balancePoints || serverGamePoints)} points.`;
+            status.dataset.state = "pending";
+            return;
+        }
+        if (!response.ok || result.claimed !== true || !/^\d+$/.test(String(result.claimedPoints)) ||
+            !/^\d+$/.test(String(result.balancePoints))) {
+            throw new Error(result.message || result.error || `Transaction could not be claimed (${response.status}).`);
+        }
+        status.textContent = `${formatCredits(result.claimedPoints)} server game points added. Verified balance: ${formatCredits(result.balancePoints)}.`;
         status.dataset.state = "ready";
-        renderLevels();
-        renderProfile();
+        input.value = "";
     } catch (error) {
-        console.error("Game access points could not be saved.", error);
-        status.textContent = "Game access points could not be saved. Check device storage and try again.";
+        console.error("Server game-points transaction claim failed.", error);
+        status.textContent = `No points were credited. ${error.message}`;
         status.dataset.state = "error";
     } finally {
         gameAccessClaimInProgress = false;
         button.disabled = false;
-        button.textContent = "ADD 1,000 GAME POINTS";
+        button.textContent = "CLAIM 1,000 SERVER GAME POINTS";
         input.disabled = false;
     }
 }
@@ -2669,12 +2916,17 @@ function playOpeningVideo(source, caption, onEnded, allowSkip = false) {
         introVideo,
         offerNext,
         () => {
-        introVideo.muted = false;
-        if (allowSkip && source === "gamevideo.mp4") {
-            videoSkip.textContent = "SKIP GAME VIDEO  →";
-            videoSkip.hidden = false;
-            videoSkip.onclick = () => void finishOpeningFlow();
-        }
+            introVideo.muted = false;
+            if (source === "intro.mp4") {
+                videoAction.textContent = "NEXT  →";
+                videoAction.hidden = false;
+                videoAction.onclick = () => void finishCompanyIntro();
+            }
+            if (allowSkip && source === "gamevideo.mp4") {
+                videoSkip.textContent = "SKIP GAME VIDEO  →";
+                videoSkip.hidden = false;
+                videoSkip.onclick = () => void finishOpeningFlow();
+            }
         },
         orientation
     );
@@ -2730,9 +2982,7 @@ async function startLevel(number, resumeMusic = false) {
     if (levelStartInProgress) return;
     const level = levels[number - 1];
     if (!level) return;
-    const gameAccessCost = getLevelEconomy(number).entryCostCredits;
-    if (levelsGloballyLocked &&
-        (!gameAccessPointsVerified || gameAccessPoints < gameAccessCost)) {
+    if (levelsGloballyLocked) {
         setLevelEntryMessage("All levels are temporarily locked. Your saved progress is unchanged.", "disabled");
         return;
     }
@@ -2754,23 +3004,18 @@ async function startLevel(number, resumeMusic = false) {
         document.getElementById("first-level-tutorial").hidden = !showTutorial;
         document.getElementById("game-guide-toggle").setAttribute("aria-expanded", String(showTutorial));
         activeWalletLevelSessionId = entry.sessionId;
-        activeLevelEntryCostCredits = entry.gamePoints
-            ? Number(entry.entryCostPoints)
-            : entry.gameAccess || entry.practice
-                ? null
-                : Number(entry.entryCostCredits);
+        activeLevelEntryCostCredits = entry.gamePoints ? Number(entry.entryCostPoints) : null;
         walletTimerStartPromise = Promise.resolve(false);
         if (entry.gamePoints) {
-            const balance = Number(entry.balancePoints);
-            if (!Number.isSafeInteger(balance)) {
+            const balance = String(entry.balancePoints);
+            if (!/^\d+$/.test(balance)) {
                 throw new Error("The server returned an invalid game-points balance.");
             }
-            gameAccessPoints = balance;
-            gameAccessPointsVerified = true;
+            serverGamePoints = balance;
+            serverGamePointsVerified = true;
             renderGameAccessPoints();
             renderLevels();
         }
-        activeLevelUsesGameAccessPoints = entry.gamePoints === true || entry.gameAccess === true;
         if (!entry.practice && !entry.gamePoints) {
             document.getElementById("wallet-balance").textContent = formatCredits(entry.balanceCredits);
             document.getElementById("wallet-balance-state").textContent = "CREDITS · BACKEND VERIFIED";
@@ -2782,8 +3027,6 @@ async function startLevel(number, resumeMusic = false) {
         }
         const entryMessage = entry.gamePoints
             ? `Level ${String(number).padStart(2, "0")} started. ${formatCredits(entry.entryCostPoints)} game points deducted; balance ${formatCredits(entry.balancePoints)} points.`
-            : entry.gameAccess
-            ? `Level ${String(number).padStart(2, "0")} started. ${formatCredits(entry.gameAccessPointsUsed)} game access points used.`
             : entry.practice
                 ? `Level ${String(number).padStart(2, "0")} started in free practice. No credits were charged; progress and rewards will not be saved.`
                 : `Level ${String(number).padStart(2, "0")} started. ${formatCredits(entry.entryCostCredits)} credits deducted; verified balance ${formatCredits(entry.balanceCredits)}.`;
@@ -2801,7 +3044,6 @@ async function startLevel(number, resumeMusic = false) {
                     level,
                     walletSessionId: activeWalletLevelSessionId,
                     entryCostCredits: activeLevelEntryCostCredits,
-                    gameAccessPointsUsed: entry.gameAccessPointsUsed ?? null,
                     gamePointsSession: entry.gamePoints === true,
                     tutorial: showTutorial
                 }
@@ -2911,22 +3153,11 @@ document.getElementById("wallet-copy-address").addEventListener("click", async (
         setWalletMessage(`Address copy failed. Select and copy it manually. ${error.message}`, "error");
     }
 });
-document.getElementById("home-copy-treasury").addEventListener("click", async () => {
-    const address = document.getElementById("home-treasury-address").textContent.trim();
-    try {
-        await navigator.clipboard.writeText(address);
-        document.getElementById("home-copy-treasury").textContent = "COPIED";
-    } catch (error) {
-        console.error("Homepage treasury address could not be copied.", error);
-        document.getElementById("home-copy-treasury").textContent = "SELECT ADDRESS";
-        setWalletMessage(`Address copy failed. Select and copy the address manually. ${error.message}`, "error");
-    }
-});
 document.getElementById("home-open-deposit").addEventListener("click", () => {
     document.getElementById("wallet-card").scrollIntoView({ behavior: "smooth", block: "start" });
     document.getElementById("deposit-signature").focus({ preventScroll: true });
 });
-document.getElementById("game-access-form").addEventListener("submit", claimLegacyLocalGameAccessPoints);
+document.getElementById("game-access-form").addEventListener("submit", claimServerGamePoints);
 document.getElementById("deposit-create-intent").addEventListener("click", async () => {
     const button = document.getElementById("deposit-create-intent");
     button.disabled = true;
@@ -3066,11 +3297,11 @@ async function saveWalletLevelCompletion(detail) {
             `${(result.elapsedMilliseconds / 1000).toFixed(1)} s`;
     }
     if (gamePointsSession) {
-        gameAccessPoints = Number(balanceAmount);
-        if (!Number.isSafeInteger(gameAccessPoints)) {
+        serverGamePoints = String(balanceAmount);
+        if (!/^\d+$/.test(serverGamePoints)) {
             throw new Error("The completion response contained an invalid game-points balance.");
         }
-        gameAccessPointsVerified = true;
+        serverGamePointsVerified = true;
         renderGameAccessPoints();
         renderLevels();
         player.completedLevels = [...new Set([...player.completedLevels, detail.number])].sort((a, b) => a - b);
@@ -3140,7 +3371,25 @@ if (withdrawalForm && withdrawalAddressInput && withdrawalAmountInput && withdra
     withdrawalForm.addEventListener("submit", submitWithdrawalRequest);
 }
 document.getElementById("wallet-link-button")?.addEventListener("click", () => {
-    void connectSolanaWallet();
+    void requestWithdrawalWalletChallenge();
+});
+document.getElementById("wallet-link-copy-challenge")?.addEventListener("click", () => {
+    void copyWithdrawalWalletChallenge();
+});
+document.getElementById("wallet-link-verify-button")?.addEventListener("click", () => {
+    void verifyWithdrawalWalletChallenge();
+});
+withdrawalAddressInput?.addEventListener("input", () => {
+    const challengePanel = document.getElementById("withdrawal-challenge-panel");
+    const challenge = document.getElementById("wallet-link-challenge");
+    const signature = document.getElementById("wallet-link-signature");
+    if (challengePanel && withdrawalAddressInput.value.trim() !== verifiedWithdrawalAddress) {
+        challengePanel.hidden = true;
+        if (challenge) challenge.value = "";
+        if (signature) signature.value = "";
+        setWithdrawalLinkStatus("Address changed. Request and sign a fresh challenge to verify it.", "pending");
+    }
+    updateWithdrawalDestinationState();
 });
 document.getElementById("withdrawal-refresh")?.addEventListener("click", () => {
     void refreshWithdrawalStatus();
@@ -3204,25 +3453,6 @@ window.addEventListener("fluxgrid:level-complete", async (event) => {
                 `Level ${number} is not recorded and no reward was credited: ${error.message}`;
             return;
         }
-    } else if (activeLevelUsesGameAccessPoints) {
-        player.completedLevels = [...new Set([...player.completedLevels, number])].sort((a, b) => a - b);
-        player.unlockedLevel = Math.min(99, Math.max(player.unlockedLevel, number + 1));
-        player.lastLevel = Math.min(99, number + 1);
-        savePlayer();
-        renderProfile();
-        document.getElementById("completion-points").textContent = "1";
-        document.getElementById("completion-points-note").textContent = "Campaign progress saved on this device";
-        document.getElementById("completion-reward-label").textContent = "NO WALLET REWARD";
-        document.getElementById("completion-reward").textContent = "—";
-        document.getElementById("completion-reward-note").textContent = "Game access points do not add wallet credits";
-        document.getElementById("completion-token-reward").textContent = "NONE";
-        document.getElementById("completion-balance").textContent =
-            `${formatCredits(walletStatusSnapshot?.balanceVerified ? String(walletStatusSnapshot.balanceCredits) : "0")} credits`;
-        document.getElementById("completion-balance-note").textContent = "Wallet balance unchanged";
-        setLevelEntryMessage(
-            `Level ${number} complete. Campaign progress saved on this device.`,
-            "success"
-        );
     } else {
         const nextLevelButton = document.getElementById("next-level");
         nextLevelButton.hidden = false;
@@ -3235,13 +3465,12 @@ window.addEventListener("fluxgrid:level-complete", async (event) => {
     }
 
     const nextLevelButton = document.getElementById("next-level");
-    if (pendingLevel?.number === number && (detail.walletSessionId || activeLevelUsesGameAccessPoints)) {
+    if (pendingLevel?.number === number && detail.walletSessionId) {
         nextLevelButton.hidden = false;
         nextLevelButton.disabled = number >= 99;
         nextLevelButton.dataset.nextLevel = String(number + 1);
         nextLevelButton.textContent = number >= 99 ? "CAMPAIGN COMPLETE" : "NEXT LEVEL →";
     }
-    activeLevelUsesGameAccessPoints = false;
     renderProfile();
 });
 

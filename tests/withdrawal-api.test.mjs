@@ -43,12 +43,14 @@ function resetScenario({
     balance = 10000n,
     transferOutcome = "success",
     readBalanceOverride = null,
-    completedLevels = Array.from({ length: 30 }, (_, index) => index + 1)
+    completedLevels = Array.from({ length: 30 }, (_, index) => index + 1),
+    gamePointCompletions = []
 } = {}) {
     scenario = {
         actualBalance: balance,
         readBalanceOverride,
         completedLevels,
+        gamePointCompletions,
         transferOutcome,
         rateLimited: false,
         records: new Map(),
@@ -113,6 +115,9 @@ function installFakeFetch() {
         }
         if (path.startsWith("level_completions")) {
             return dbResponse(200, scenario.completedLevels.map((level_number) => ({ level_number })));
+        }
+        if (path.startsWith("game_point_level_completions")) {
+            return dbResponse(200, scenario.gamePointCompletions.map((level_number) => ({ level_number })));
         }
         if (path === "rpc/reserve_wallet_withdrawal") {
             if (scenario.rateLimited) {
@@ -308,6 +313,20 @@ test("withdrawal status stays disabled until all first 30 server-saved levels ar
         remainingLevels: 1,
         met: false
     });
+});
+
+test("withdrawal eligibility combines persisted server point clears without double-counting overlaps", async () => {
+    scenario.completedLevels = Array.from({ length: 15 }, (_, index) => index + 1);
+    scenario.gamePointCompletions = [
+        ...Array.from({ length: 15 }, (_, index) => index + 16),
+        15
+    ];
+
+    const response = await getWithdrawalStatus();
+
+    assert.equal(response.statusCode, 200);
+    assert.equal(response.payload.level30Requirement.met, true);
+    assert.equal(response.payload.level30Requirement.completedLevels, 30);
 });
 
 test("withdrawal request is rejected before reservation until levels 1 through 30 are server-saved", async () => {

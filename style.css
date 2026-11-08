@@ -537,27 +537,6 @@ button { -webkit-tap-highlight-color: transparent; }
     animation: ambient-drift 22s ease-in-out infinite;
 }
 .home-content { position: relative; z-index: 1; }
-.home-treasury-bar {
-    position: relative;
-    z-index: 2;
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    padding: 10px max(5vw, 20px);
-    border-bottom: 1px solid #9bb7cc1d;
-    background: #08111bd9;
-}
-.home-treasury-bar > div { display: grid; min-width: 0; gap: 4px; margin-right: auto; }
-.home-treasury-bar code {
-    overflow-wrap: anywhere;
-    color: #c4e5e9;
-    font: 10px/1.5 "Consolas", monospace;
-}
-.home-treasury-bar > small {
-    flex-basis: 100%;
-    color: #bea96f;
-    font: 8px/1.5 "Consolas", monospace;
-}
 .site-header {
     position: sticky;
     z-index: 5;
@@ -586,18 +565,6 @@ button { -webkit-tap-highlight-color: transparent; }
 .profile-chip small { margin-top: 3px; color: #91a3b1; font-size: 9px; }
 .profile-chevron { margin-left: auto; color: #91a3b1; }
 .home-content { width: min(100% - 40px, 1040px); margin: 0 auto; padding: 28px 0 18px; }
-@media (max-width: 680px) {
-    .home-treasury-bar {
-        display: grid;
-        grid-template-columns: 1fr 1fr;
-        gap: 8px;
-        padding: 12px 20px;
-    }
-
-    .home-treasury-bar > div,
-    .home-treasury-bar > small { grid-column: 1 / -1; }
-    .home-treasury-bar .button { width: 100%; }
-}
 .hero-panel {
     position: relative; display: flex; min-height: 335px; align-items: center; overflow: hidden;
     padding: clamp(26px, 5vw, 58px); border: 1px solid #a7c3d122; border-radius: 8px;
@@ -1326,6 +1293,7 @@ button { -webkit-tap-highlight-color: transparent; }
     padding-top: 9px;
     border-top: 1px solid #a5bdcf1c;
 }
+.wallet-history-note { position: relative; z-index: 1; color: #90a5af; font-size: 8px; line-height: 1.5; }
 .wallet-refresh {
     padding: 4px 7px;
     border: 1px solid #91cddb2e;
@@ -1362,6 +1330,7 @@ button { -webkit-tap-highlight-color: transparent; }
 .wallet-history-detail { display: grid; min-width: 0; gap: 3px; }
 .wallet-history-detail b { overflow: hidden; color: #d6e9ed; font: 700 9px "Consolas",monospace; text-overflow: ellipsis; }
 .wallet-history-detail small { overflow: hidden; color: #748b98; font: 7px "Consolas",monospace; text-overflow: ellipsis; }
+.wallet-history-detail a { color: #8edbe0; text-decoration: underline; text-underline-offset: 2px; }
 #withdrawal-history .wallet-history-detail small { overflow-wrap: anywhere; overflow: visible; text-overflow: clip; }
 .wallet-history-state {
     flex: 0 0 auto;
@@ -1895,6 +1864,7 @@ button { -webkit-tap-highlight-color: transparent; }
 .deposit-memo-panel code { overflow-wrap: anywhere; color: #bcf2df; font: 11px/1.5 "Consolas", monospace; }
 .deposit-memo-panel .button { min-height: 34px; }
 .wallet-address-panel .button { grid-column: 2; grid-row: 2; min-height: 38px; }
+.wallet-address-panel #home-open-deposit { grid-column: 1 / -1; grid-row: auto; justify-self: stretch; }
 .copy-confirmation { grid-column: 1 / -1; min-height: 14px; color: #8bf2c8; font-size: 10px; }
 .deposit-steps { display: grid; gap: 10px; margin: 2px 0; padding: 0; list-style: none; }
 .deposit-steps li { display: grid; grid-template-columns: 32px minmax(0, 1fr); align-items: start; gap: 11px; }

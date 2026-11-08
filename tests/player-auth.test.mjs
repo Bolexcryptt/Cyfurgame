@@ -335,13 +335,19 @@ test("player records remain keyed to auth user IDs and web sessions persist", ()
     assert.match(client, /persistSession:\s*true/);
 });
 
-test("the withdrawal UI exposes and wires explicit signed receiving-wallet verification", () => {
+test("the withdrawal UI supports off-app signed receiving-address verification", () => {
     const app = readFileSync(new URL("../app.js", import.meta.url), "utf8");
     const html = readFileSync(new URL("../index.html", import.meta.url), "utf8");
-    assert.match(html, /id="wallet-link-button"[^>]*>LINK RECEIVING WALLET/);
+    assert.match(html, /id="wallet-link-button"[^>]*>REQUEST SIGNING CHALLENGE/);
     assert.match(html, /id="withdrawal-link-status"/);
-    assert.match(app, /getElementById\("wallet-link-button"\)\?\.addEventListener\("click",\s*\(\) => \{\s*void connectSolanaWallet\(\)/);
+    assert.match(html, /id="wallet-link-challenge"[^>]*readonly/);
+    assert.match(html, /id="wallet-link-signature"/);
+    assert.match(app, /getElementById\("wallet-link-button"\)\?\.addEventListener\("click",\s*\(\) => \{\s*void requestWithdrawalWalletChallenge\(\)/);
+    assert.match(app, /getElementById\("wallet-link-verify-button"\)\?\.addEventListener/);
     assert.match(app, /action:\s*"challenge",\s*walletAddress/);
     assert.match(app, /action:\s*"verify",\s*walletAddress,\s*signature/);
+    assert.match(app, /navigator\.clipboard\.writeText\(challenge\)/);
+    assert.match(app, /walletAddress !== verifiedWithdrawalAddress/);
+    assert.doesNotMatch(app, /void connectSolanaWallet\(\)/);
     assert.match(app, /await refreshWithdrawalStatus\(\)/);
 });

@@ -35,6 +35,7 @@ import {
     formatCyfurCredits,
     getCampaignStartLevel,
     getLevelEconomy,
+    getLevelRewardPoints,
     getPendingLevelTransition,
     getLevelStarTimeTargets,
     LEVEL_TRANSITION_INTERVAL,
@@ -675,6 +676,11 @@ test("Level 1 economy keeps star ratings separate from credit amounts", () => {
         twoStarRefundCredits: 40,
         oneStarPayoutCredits: 0
     });
+    assert.equal(getLevelRewardPoints(1, 3), 160);
+    assert.equal(getLevelRewardPoints(1, 2), 40);
+    assert.equal(getLevelRewardPoints(1, 1), 0);
+    assert.equal(getLevelRewardPoints(1, 0), 0);
+    assert.throws(() => getLevelRewardPoints(1, 4), /star rating/);
 });
 
 test("intro launch selects a current or next unlocked level and formats ledger credits separately", () => {
@@ -714,6 +720,7 @@ test("company intro and game video play in landscape before the portrait title s
     assert.match(openingFlow, /playOpeningVideo\("companyintro\.mp4", "", \(\) => \{\}, false\)/);
     assert.match(openingFlow, /if \(source === "companyintro\.mp4"\) \{\s*playOpeningVideo\("intro\.mp4", "RelicGrid introduction"/);
     assert.match(openingFlow, /if \(source === "intro\.mp4"\) \{\s*void finishCompanyIntro\(\)/);
+    assert.match(openingFlow, /if \(source === "intro\.mp4"\) \{\s*videoAction\.textContent = "NEXT\s+→";\s*videoAction\.hidden = false;\s*videoAction\.onclick = \(\) => void finishCompanyIntro\(\);/);
     assert.match(openingFlow, /async function finishCompanyIntro\(\)[\s\S]*?showScreen\("title-screen"\)/);
     const openingCompletion = app.slice(
         app.indexOf("async function finishOpeningFlow"),
@@ -978,7 +985,7 @@ test("backend level entry costs match the campaign economy for all 99 levels", (
     assert.equal(getLevelEntryCostCredits(100), null);
 });
 
-test("campaign levels use saved game access points before wallet entry", () => {
+test("campaign levels reserve authenticated server game points and keep legacy points read-only", () => {
     const app = readFileSync(new URL("../app.js", import.meta.url), "utf8");
     const startIndex = app.indexOf("async function startLevel");
     const endIndex = app.indexOf("\nfunction leaveGameplay", startIndex);
@@ -994,10 +1001,15 @@ test("campaign levels use saved game access points before wallet entry", () => {
     assert.match(startLevel, /activeWalletLevelSessionId = entry\.sessionId/);
     assert.match(startLevel, /entryCostCredits: activeLevelEntryCostCredits/);
     assert.match(app, /getLevelEconomy\(level\.number\)\.entryCostCredits/);
-    assert.match(entryFlow, /if \(gameAccessPoints >= gameAccessCost\)/);
-    assert.match(entryFlow, /gameAccess: true/);
+    assert.match(entryFlow, /gamePoints: true/);
     assert.match(entryFlow, /apiUrl\("level-entry"\)/);
-    assert.doesNotMatch(app, /apiUrl\("game-points"\)/);
+    assert.match(entryFlow, /insufficient_game_points/);
+    assert.doesNotMatch(entryFlow, /saveGameAccessState|wallet_credit_accounts|start_wallet_level/);
+    assert.match(entryFlow, /apiUrl\("level-entry"\)/);
+    assert.match(app, /apiUrl\("game-points"\)/);
+    assert.match(app, /function refreshServerGamePoints\(\)/);
+    assert.match(app, /getElementById\("legacy-game-access-points"\)/);
+    assert.doesNotMatch(app.slice(app.indexOf("async function claimServerGamePoints"), app.indexOf("\nasync function getWalletAuthorizationHeaders")), /saveGameAccessState|localStorage\.setItem/);
     assert.match(app, /Practice complete\. No credits, leaderboard points, or saved progress were awarded/);
 
     const scene = readFileSync(new URL("../script.js", import.meta.url), "utf8");
@@ -1102,26 +1114,28 @@ test("RelicGrid branding is used in the game and hidden scenes stop rendering", 
     assert.match(html, /id="title-continue-button"[^>]*>PLAY NOW/);
     assert.match(html, /id="video-action-button"[^>]*hidden>Next/);
     assert.match(html, /id="game-access-form"/);
-    assert.match(html, /id="game-access-points"/);
-    assert.match(html, /cannot be withdrawn/);
+    assert.match(html, /id="legacy-game-access-points"/);
+    assert.match(html, /id="game-points-balance"/);
+    assert.match(html, /non-withdrawable/);
     assert.match(html, /id="rotate-device-prompt"/);
     const gameAccessClaim = app.slice(
-        app.indexOf("async function claimLegacyLocalGameAccessPoints"),
+        app.indexOf("async function claimServerGamePoints"),
         app.indexOf("\nasync function getWalletAuthorizationHeaders")
     );
     assert.match(gameAccessClaim, /getSolscanSignature\(input\.value\)/);
-    assert.match(gameAccessClaim, /3_000 \+ Math\.floor\(Math\.random\(\) \* 4_001\)/);
-    assert.match(gameAccessClaim, /localStorage\.setItem\(ownerStorageKey/);
-    assert.match(app, /game-access-form"\)\.addEventListener\("submit", claimLegacyLocalGameAccessPoints\)/);
-    assert.doesNotMatch(gameAccessClaim, /fetch\(|apiUrl\(/);
-    assert.match(app, /async function refreshGameAccessPoints\(\) \{\s*gameAccessPointsVerified = true/);
+    assert.match(gameAccessClaim, /fetch\(apiUrl\("game-points"\)/);
+    assert.match(app, /game-access-form"\)\.addEventListener\("submit", claimServerGamePoints\)/);
+    assert.match(gameAccessClaim, /transaction_already_claimed/);
     assert.doesNotMatch(gameAccessClaim, /verifyDepositSignature|wallet_balance|wallet_credit_accounts/);
-    assert.match(app, /gameAccessPointsVerified && gameAccessPoints >= entryCostCredits/);
+    assert.match(app, /serverGamePointsVerified &&\s*BigInt\(serverGamePoints\) >= BigInt\(entryCostCredits\)/);
     const pointEntryLevelStart = app.slice(app.indexOf("async function startLevel"), app.indexOf("\nfunction leaveGameplay"));
-    assert.doesNotMatch(pointEntryLevelStart, /gameAccessPoints\s*-/);
-    assert.match(pointEntryLevelStart, /gameAccessPointsVerified \|\| gameAccessPoints < gameAccessCost/);
-    assert.match(app, /activeLevelUsesGameAccessPoints[\s\S]*?Campaign progress saved on this device/);
-    assert.match(scene, /Game access points are separate from wallet credits/);
+    assert.doesNotMatch(pointEntryLevelStart, /serverGamePoints\s*-/);
+    assert.match(pointEntryLevelStart, /const balance = String\(entry\.balancePoints\)/);
+    const requestPointEntry = app.slice(app.indexOf("async function requestLevelEntry"), app.indexOf("\nasync function startLevel"));
+    assert.match(requestPointEntry, /gamePoints: true/);
+    assert.doesNotMatch(requestPointEntry, /localStorage|wallet_credit_accounts/);
+    assert.doesNotMatch(app, /awardGameAccessCompletionPoints/);
+    assert.doesNotMatch(scene, /gameAccessCompletionId|gameAccessPointsUsed/);
     assert.match(app, /function fitVideoFrame\(video\)/);
     assert.match(html, /id="intro-video"[^>]*playsinline/);
     assert.match(app, /introVideo\.src = "companyintro\.mp4"/);
@@ -1157,10 +1171,12 @@ test("deposit UI creates an account-bound payment memo before accepting a transa
     const html = readFileSync(new URL("../index.html", import.meta.url), "utf8");
     assert.match(html, /FUND YOUR RELICGRID ACCOUNT/);
     assert.match(html, /Minimum deposit: 1 CYFUR/);
+    assert.match(html, /VERIFIED DEPOSIT HISTORY/);
+    assert.match(html, /confirmed CYFUR amount, credited balance, and Solscan transaction link/);
     assert.match(html, /id="wallet-address">6KTSpvxGR2xvje3BG42QvmFjg2XLnFneCCSyVXhSKvys<\/code>/);
     assert.match(html, /id="wallet-copy-address"[^>]*>COPY ADDRESS<\/button>/);
-    assert.match(html, /id="home-treasury-address">6KTSpvxGR2xvje3BG42QvmFjg2XLnFneCCSyVXhSKvys<\/code>/);
-    assert.match(html, /id="home-copy-treasury"/);
+    assert.equal((html.match(/6KTSpvxGR2xvje3BG42QvmFjg2XLnFneCCSyVXhSKvys/g) ?? []).length, 1);
+    assert.doesNotMatch(html, /home-treasury-address|home-copy-treasury/);
     assert.match(html, /id="home-open-deposit"/);
     assert.match(html, /id="deposit-create-intent"/);
     assert.match(html, /id="deposit-intent-memo"/);
@@ -1182,6 +1198,18 @@ test("deposit UI creates an account-bound payment memo before accepting a transa
     assert.doesNotMatch(app, /address\.textContent = depositReady/);
     assert.match(app, /balanceState\.textContent = "SIGN IN TO VIEW BALANCE"/);
     assert.match(app, /typeof result\.disabledMessage === "string"/);
+    assert.match(app, /deposit\.credit_amount_credits/);
+    assert.match(app, /formatTokenAmount\(deposit\.amount_raw, deposit\.token_decimals\)/);
+    assert.match(app, /https:\/\/solscan\.io\/tx\/\$\{encodeURIComponent\(transactionSignature\)\}/);
+    assert.match(app, /Deposit finalized: \$\{confirmedTokenAmount\} → \$\{formatCredits\(result\.creditAmountCredits\)\} credits/);
+    const walletApi = readFileSync(new URL("../api/wallet.js", import.meta.url), "utf8");
+    assert.match(walletApi, /transaction_signature,amount_raw,token_decimals,status,credit_amount_credits/);
+    assert.match(app, /serverGamePoints = String\(balanceAmount\)/);
+    assert.match(app, /result\.duplicate \? "0" : rewardAmount/);
+    assert.doesNotMatch(app, /saveGameAccessState|relicgrid\.game-access\.[^`]*setItem/);
+    const gamePointsMigration = readFileSync(new URL("../supabase-game-points.sql", import.meta.url), "utf8");
+    assert.match(gamePointsMigration, /when 3 then floor\(v_session\.entry_cost_points \* 1\.6\)/i);
+    assert.match(gamePointsMigration, /when 2 then floor\(v_session\.entry_cost_points \* 0\.4\)/i);
     assert.doesNotMatch(app, /SOLANA_TREASURY_ADDRESS must exactly match Supabase treasury_address/);
     assert.doesNotMatch(app, /wallet_system_config\.deposits_enabled/);
     assert.match(app, /Deposits are temporarily unavailable\. Please check back later\./);
@@ -1333,16 +1361,16 @@ test("wallet API returns verified zero for a player with no credit account or le
     }
 });
 
-test("campaign levels remain locked until the saved game-points balance covers entry", () => {
+test("campaign levels use server points for saved entries and otherwise remain available for practice", () => {
     const app = readFileSync(new URL("../app.js", import.meta.url), "utf8");
     const levelPicker = app.slice(app.indexOf("function renderLevels"), app.indexOf("\nfunction renderHome"));
     const startLevel = app.slice(app.indexOf("async function startLevel"), app.indexOf("\nfunction leaveGameplay"));
-    assert.match(levelPicker, /const hasGameAccessPoints = gameAccessPointsVerified && gameAccessPoints >= entryCostCredits/);
-    assert.match(levelPicker, /const levelLocked = !hasGameAccessPoints/);
+    assert.match(levelPicker, /const hasGameAccessPoints = serverGamePointsVerified &&\s*BigInt\(serverGamePoints\) >= BigInt\(entryCostCredits\)/);
+    assert.match(levelPicker, /const levelLocked = levelsGloballyLocked/);
     assert.match(levelPicker, /button\.disabled = levelLocked/);
-    assert.match(levelPicker, /levelLocked\s*\?\s*"LOCKED"/);
-    assert.doesNotMatch(levelPicker, /FREE PRACTICE/);
-    assert.match(startLevel, /gameAccessPointsVerified \|\| gameAccessPoints < gameAccessCost/);
+    assert.match(levelPicker, /hasGameAccessPoints \? "ACCESS READY" : "FREE PRACTICE"/);
+    assert.match(startLevel, /if \(levelsGloballyLocked\)/);
+    assert.match(app, /Your server game-points balance is below the entry cost/);
     assert.match(app, /fetch\(apiUrl\("game-config"\)/);
 
     const html = readFileSync(new URL("../index.html", import.meta.url), "utf8");
@@ -1362,6 +1390,7 @@ test("campaign levels remain locked until the saved game-points balance covers e
 
 test("deposit conversion uses precise integer arithmetic and requires explicit rounding", () => {
     assert.equal(getDepositCreditAmount("100000000", 8, "reject_fraction"), "10000");
+    assert.equal(getDepositCreditAmount("800000000", 8, "floor"), "80000");
     assert.equal(getDepositCreditAmount("10000", 8, "reject_fraction"), "1");
     assert.throws(
         () => getDepositCreditAmount("1", 8, "reject_fraction"),
@@ -1441,9 +1470,10 @@ test("wallet ownership proof verifies Ed25519 signatures and rejects altered mes
     const { publicKey, privateKey } = generateKeyPairSync("ed25519");
     const walletAddress = encodeBase58(publicKey.export({ format: "der", type: "spki" }).subarray(-32));
     const challenge = "RelicGrid Solana wallet ownership proof\nNonce: test";
-    const signature = signMessage(null, Buffer.from(challenge), privateKey).toString("base64");
-    assert.equal(verifyWalletSignature(walletAddress, challenge, signature), true);
-    assert.equal(verifyWalletSignature(walletAddress, `${challenge}\nchanged`, signature), false);
+    const signatureBytes = signMessage(null, Buffer.from(challenge), privateKey);
+    assert.equal(verifyWalletSignature(walletAddress, challenge, signatureBytes.toString("base64")), true);
+    assert.equal(verifyWalletSignature(walletAddress, challenge, encodeBase58(signatureBytes)), true);
+    assert.equal(verifyWalletSignature(walletAddress, `${challenge}\nchanged`, signatureBytes.toString("base64")), false);
     assert.equal(verifyWalletSignature(walletAddress, challenge, "invalid"), false);
 });
 
@@ -1550,6 +1580,45 @@ test("wallet-link API validates the configured cluster and fee-payer account bef
             commitment: "confirmed",
             encoding: "base64"
         });
+
+        const secondPair = generateKeyPairSync("ed25519");
+        const secondWalletAddress = encodeBase58(
+            secondPair.publicKey.export({ format: "der", type: "spki" }).subarray(-32)
+        );
+        const secondChallengeResponse = makeResponse();
+        await endpoint({
+            method: "POST",
+            headers,
+            body: { action: "challenge", walletAddress: secondWalletAddress }
+        }, secondChallengeResponse);
+        assert.equal(secondChallengeResponse.statusCode, 200);
+        assert.match(secondChallengeResponse.payload.challenge, new RegExp(`Wallet: ${secondWalletAddress}`));
+        const staleSignatureResponse = makeResponse();
+        await endpoint({
+            method: "POST",
+            headers,
+            body: { action: "verify", walletAddress: secondWalletAddress, signature }
+        }, staleSignatureResponse);
+        assert.equal(staleSignatureResponse.statusCode, 422);
+        assert.equal(staleSignatureResponse.payload.error, "wallet_signature_invalid");
+        const secondSignature = encodeBase58(signMessage(
+            null,
+            Buffer.from(secondChallengeResponse.payload.challenge),
+            secondPair.privateKey
+        ));
+        const secondLinkResponse = makeResponse();
+        await endpoint({
+            method: "POST",
+            headers,
+            body: {
+                action: "verify",
+                walletAddress: secondWalletAddress,
+                signature: secondSignature
+            }
+        }, secondLinkResponse);
+        assert.equal(secondLinkResponse.statusCode, 200);
+        assert.equal(secondLinkResponse.payload.walletAddress, secondWalletAddress);
+        assert.equal(linkedWallet.p_wallet_address, secondWalletAddress);
 
         rpcGenesisHash = "EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG";
         const wrongClusterChallenge = makeResponse();

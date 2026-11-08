@@ -252,6 +252,53 @@ async function solanaRpc(rpcUrl, method, params, fetchImpl = fetch) {
     return payload.result;
 }
 
+async function verifyFinalizedSuccessfulTransaction({
+    signature,
+    network,
+    rpcUrl,
+    fetchImpl = fetch
+}) {
+    if (!isBase58(signature, 64)) {
+        throw new TypeError("Invalid Solana transaction signature.");
+    }
+    if (!Object.prototype.hasOwnProperty.call(GENESIS_HASHES, network)) {
+        return { state: "unsupported_network" };
+    }
+    if (typeof rpcUrl !== "string" || !/^https:\/\//i.test(rpcUrl)) {
+        throw new TypeError("A trusted HTTPS Solana RPC URL is required.");
+    }
+
+    const genesisHash = await solanaRpc(rpcUrl, "getGenesisHash", [], fetchImpl);
+    if (genesisHash !== GENESIS_HASHES[network]) {
+        return { state: "network_mismatch" };
+    }
+    const statuses = await solanaRpc(rpcUrl, "getSignatureStatuses", [[signature], {
+        searchTransactionHistory: true
+    }], fetchImpl);
+    const status = statuses?.value?.[0];
+    if (!status) return { state: "not_found" };
+    if (status.err) return { state: "failed" };
+    if (status.confirmationStatus !== "finalized") return { state: "pending" };
+    if (!Number.isSafeInteger(status.slot) || status.slot <= 0) {
+        return { state: "unavailable" };
+    }
+
+    const transaction = await solanaRpc(rpcUrl, "getTransaction", [signature, {
+        commitment: "finalized",
+        encoding: "jsonParsed",
+        maxSupportedTransactionVersion: 0
+    }], fetchImpl);
+    if (!transaction || !Number.isSafeInteger(transaction.slot) ||
+        transaction.slot !== status.slot ||
+        !transaction.transaction?.signatures?.includes(signature) ||
+        !transaction.meta) {
+        return { state: "unavailable" };
+    }
+    if (transaction.meta.err) return { state: "failed" };
+
+    return { state: "finalized", slot: transaction.slot };
+}
+
 async function verifyFinalizedDeposit({
     signature,
     depositAddress,
@@ -500,5 +547,6 @@ module.exports = {
     sanitizeRpcErrorMessage,
     sanitizeRpcErrorData,
     solanaRpc,
+    verifyFinalizedSuccessfulTransaction,
     verifyFinalizedDeposit
 };

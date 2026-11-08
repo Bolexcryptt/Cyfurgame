@@ -5,11 +5,19 @@ const ED25519_SPKI_PREFIX = Buffer.from("302a300506032b6570032100", "hex");
 
 function verifyWalletSignature(walletAddress, message, signatureBase64) {
     if (!isBase58(walletAddress, 32) || typeof message !== "string" ||
-        typeof signatureBase64 !== "string" || !/^[A-Za-z0-9+/]{86}==$/.test(signatureBase64)) {
+        typeof signatureBase64 !== "string") {
         return false;
     }
-    const signature = Buffer.from(signatureBase64, "base64");
-    if (signature.length !== 64 || signature.toString("base64") !== signatureBase64) return false;
+    let signature;
+    if (/^[A-Za-z0-9+/]{86}==$/.test(signatureBase64)) {
+        signature = Buffer.from(signatureBase64, "base64");
+        if (signature.length !== 64 || signature.toString("base64") !== signatureBase64) return false;
+    } else if (isBase58(signatureBase64, 64)) {
+        signature = decodeBase58(signatureBase64);
+        if (signature.length !== 64) return false;
+    } else {
+        return false;
+    }
     const publicKey = createPublicKey({
         key: Buffer.concat([ED25519_SPKI_PREFIX, decodeBase58(walletAddress)]),
         format: "der",

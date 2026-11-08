@@ -323,6 +323,16 @@ export function getLevelEconomy(levelNumber) {
     };
 }
 
+export function getLevelRewardPoints(levelNumber, stars) {
+    if (!Number.isInteger(stars) || stars < 0 || stars > 3) {
+        throw new TypeError("A level star rating from zero to three is required.");
+    }
+    const economy = getLevelEconomy(levelNumber);
+    if (stars === 3) return economy.threeStarPayoutCredits;
+    if (stars === 2) return economy.twoStarRefundCredits;
+    return 0;
+}
+
 export function evaluateLevelStars(level, elapsedMilliseconds, connected = true) {
     if (!level || !Number.isFinite(elapsedMilliseconds) || elapsedMilliseconds < 0 || !connected) {
         return { stars: 0, rewardCredits: 0, status: "fail" };

@@ -65,55 +65,6 @@ grant select, insert, update on public.game_point_level_sessions to service_role
 grant select, insert on public.game_point_level_completions to service_role;
 grant usage, select on sequence public.game_point_ledger_id_seq to service_role;
 
-create or replace function public.claim_game_points(
-    p_player_id uuid,
-    p_transaction_signature text
-)
-returns table (balance_points bigint, already_claimed boolean)
-language plpgsql
-security definer
-set search_path = ''
-as $$
-declare
-    v_inserted_rows integer;
-    v_balance bigint;
-begin
-    if coalesce(auth.role(), '') <> 'service_role' then
-        raise exception 'Server authorization is required.' using errcode = '42501';
-    end if;
-    if p_player_id is null or p_transaction_signature !~ '^[1-9A-HJ-NP-Za-km-z]{80,100}$' then
-        raise exception 'Invalid game-points claim.' using errcode = '22023';
-    end if;
-
-    perform 1 from public.player_profiles where id = p_player_id for update;
-    if not found then
-        raise exception 'Player profile was not found.' using errcode = 'P0002';
-    end if;
-
-    insert into public.game_point_accounts (player_id) values (p_player_id)
-    on conflict (player_id) do nothing;
-    perform 1 from public.game_point_accounts where player_id = p_player_id for update;
-
-    insert into public.game_point_ledger (
-        player_id, entry_type, amount_points, idempotency_key
-    )
-    values (p_player_id, 'link_claim', 1000, 'link-claim:' || p_transaction_signature)
-    on conflict (idempotency_key) do nothing;
-    get diagnostics v_inserted_rows = row_count;
-
-    if v_inserted_rows = 1 then
-        update public.game_point_accounts
-        set balance_points = balance_points + 1000,
-            updated_at = now()
-        where player_id = p_player_id;
-    end if;
-
-    select balance_points into v_balance
-    from public.game_point_accounts where player_id = p_player_id;
-    return query select v_balance, v_inserted_rows = 0;
-end;
-$$;
-
 create or replace function public.start_game_point_level(
     p_player_id uuid,
     p_level_number integer,
@@ -334,15 +285,12 @@ begin
 end;
 $$;
 
-revoke all on function public.claim_game_points(uuid, text)
-    from public, anon, authenticated;
 revoke all on function public.start_game_point_level(uuid, integer, uuid)
     from public, anon, authenticated;
 revoke all on function public.start_game_point_level_timer(uuid, uuid)
     from public, anon, authenticated;
 revoke all on function public.complete_game_point_level(uuid, uuid, integer, bigint, bigint)
     from public, anon, authenticated;
-grant execute on function public.claim_game_points(uuid, text) to service_role;
 grant execute on function public.start_game_point_level(uuid, integer, uuid) to service_role;
 grant execute on function public.start_game_point_level_timer(uuid, uuid) to service_role;
 grant execute on function public.complete_game_point_level(uuid, uuid, integer, bigint, bigint)

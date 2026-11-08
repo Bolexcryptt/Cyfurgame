@@ -2,7 +2,7 @@
 
 ## Current design and safety
 
-RelicGrid uses direct, non-custodial Solana deposits to the configured owner-controlled treasury. Players do not connect or link a wallet for deposits; they can send from any Solana wallet and submit the transaction signature as an untrusted lookup identifier. Withdrawals use a separately linked and ownership-verified receiving wallet. RelicGrid does not request, store, or use player private keys. The shared treasury address is not a unique player wallet: each authenticated deposit intent supplies a unique memo to identify the player and exact amount.
+RelicGrid uses direct, non-custodial Solana deposits to the configured owner-controlled treasury. Players do not connect or link a wallet for deposits; they can send from any Solana wallet and submit the transaction signature as an untrusted lookup identifier. Withdrawals use a separately linked and ownership-verified receiving address. Players sign a server-issued challenge in their wallet app outside RelicGrid and paste the signature; the app does not require an embedded wallet connection or submit a transaction for this proof. RelicGrid does not request, store, or use player private keys. The shared treasury address is not a unique player wallet: each authenticated deposit intent supplies a unique memo to identify the player and exact amount.
 
 ## Player authentication and account recovery
 
@@ -10,7 +10,7 @@ The browser restores a persisted Supabase session and verifies it with Supabase 
 
 On a new device, a player can request an email OTP for an existing account. The flow disables user creation and the server allows switching from the new anonymous identity only after a read-only check confirms that identity has no saved player data. It fails closed if records cannot be checked or any player data exists. The recovery OTP signs into the original Supabase user; the game then discards local cached progress and reloads the server profile and progress under that Auth user ID. Never merge balances by callsign, email text, or a client-supplied ID.
 
-Enable anonymous sign-ins, manual identity linking, and the Supabase email provider for the project. Configure the email templates to include the six-digit OTP used by the game. For a future Android or iOS client, use the same Supabase project and Auth user IDs, persist sessions with the platform's secure storage adapter, and send the Supabase access token as the API bearer token. Solana wallet ownership remains a separate proof: the user signs a server-issued message, and the game stores only the verified public address. No seed phrase or private key is requested.
+Enable anonymous sign-ins, manual identity linking, and the Supabase email provider for the project. Configure the email templates to include the six-digit OTP used by the game. For a future Android or iOS client, use the same Supabase project and Auth user IDs, persist sessions with the platform's secure storage adapter, and send the Supabase access token as the API bearer token. Solana wallet ownership remains a separate proof: the user signs a server-issued message in an external wallet app, and the game stores only the verified public address. No seed phrase or private key is requested.
 
 The server independently verifies the configured Solana network, exact CYFUR mint and token program, treasury token-account balance delta, exact amount, unique payment memo, successful finalized transaction, and a transaction signer. After the active account-bound intent passes verification, the API waits five seconds before calling the service-only Supabase RPC, which rechecks the intent and treasury configuration, records the transaction signature uniquely, and applies the credit ledger entry atomically. Repeated submissions return the existing result rather than awarding credits again. The wallet used to send must support adding a transaction memo.
 
@@ -20,7 +20,13 @@ The authenticated deposit flow creates a 15-minute server-side intent tied to th
 
 The configured treasury address has one code source of truth: `RELICGRID_TREASURY_ADDRESS` in `server/lib/solana-deposit.js` (`6KTSpvxGR2xvje3BG42QvmFjg2XLnFneCCSyVXhSKvys`). Supabase `wallet_system_config.treasury_address` must mirror that address and is rejected if it differs. The browser displays the server-returned address; no separate Vercel treasury-address variable is used. This code value is not independent proof of treasury ownership or owner approval.
 
-The campaign and leaderboard are unchanged. Depositing does not open Phantom or sign/broadcast a transaction from the game. After the player sends the transfer externally, the server checks it at finalized commitment and credits only after the verifier and atomic ledger RPC confirm it. A missing or not-yet-finalized transaction can be retried with the same signature; duplicate credit is prevented. A failed transfer, wrong destination, wrong mint, wrong amount, missing memo, expired intent, or unfinalized transfer receives no credit.
+The deposit rate is exactly 10,000 off-chain wallet credits per CYFUR. With 8 CYFUR (800,000,000 raw units at 8 decimals), a verified deposit produces 80,000 credits. The server derives this amount from the finalized on-chain transfer, not from the submitted link. Deposit history displays the verified amount, credited balance, and transaction link. A submitted link is only an untrusted lookup identifier.
+
+## Server game points
+
+Device-local legacy points and progress remain separate and are not imported, spent, reset, or used for withdrawal eligibility. New server game points are authenticated, synchronized across devices, non-withdrawable, and separate from CYFUR tokens and wallet credits. A 1,000-point claim is allowed only after the API verifies that the submitted Solana transaction is real, successful, finalized on the configured network. The unique transaction signature can be claimed only once globally. It is not a CYFUR payment and does not credit the wallet balance.
+
+New campaign entries use the server points ledger. Entry cost is `floor(100 × 1.08^(level - 1))`; the server deducts it once when reserving the level session. On a validated clear, 3 stars award 160% of the entry cost, 2 stars award 40%, and 1 star or a failed attempt awards 0. The backend determines the rating from server time, verifies the submitted puzzle solution, and enforces duplicate-completion protection. The completion screen displays the confirmed point reward and updated server points balance. Local-only practice can display a clear but cannot create server completion records or withdrawal eligibility. Server-saved game-point completions may count toward the existing first-30-level withdrawal gate; game points themselves are never withdrawable, and withdrawals continue to debit only the existing wallet-credit ledger.
 
 ## One-time treasury test transfer
 
@@ -34,31 +40,31 @@ Apply `supabase-cyfur-treasury-test-transfer.sql` to the same Supabase project u
 
 ## Campaign access
 
-All 99 levels can be selected in any order. Free practice is available even when authentication, wallet APIs, paid gameplay, or entry credits are unavailable; practice does not charge credits or save leaderboard progress/rewards. When paid gameplay is enabled and a player has enough verified credits, the server may still authorize a paid entry and record its verified completion. The obsolete `LEVELS_LOCKED` environment variable is ignored so a stale deployment setting cannot lock the game.
-
-Game access points are stored locally on the player's device and are separate from wallet credits; they cannot be withdrawn or transferred. Pasting a valid Solscan transaction link adds 1,000 points after a short loading delay. The game does not verify a Solana payment for this claim. This local access-point flow does not use a game-points API or modify wallet, CYFUR token, leaderboard, or withdrawal records.
+All 99 levels can be selected in any order. Free practice is available when the player is unauthenticated or the server cannot verify an entry; practice does not charge points or save server progress/rewards. Authenticated campaign entries are reserved and charged by the game-points API. The `LEVELS_LOCKED=true` server setting blocks new level sessions.
 
 ## Required setup
 
 Apply these SQL files in order in the Supabase SQL Editor if not already applied:
 
 1. `supabase-leaderboard.sql`
-2. `supabase-wallet.sql`
-3. `supabase-wallet-deposit-processing.sql`
-4. `supabase-direct-treasury-deposits.sql`
-5. `supabase-payment-intents.sql`
-6. `supabase-walletless-deposits.sql`
-7. `supabase-shared-treasury-deposit-attribution.sql`
-8. `supabase-deposit-readiness.sql`
-9. `supabase-relicgrid-treasury.sql` (only after the required production review and owner approval)
-10. `supabase-wallet-withdrawals.sql`
-11. `supabase-wallet-level-entry-safety.sql`
-12. `supabase-wallet-all-levels-access.sql`
-13. `supabase-cyfur-treasury-test-transfer.sql` (only when preparing the separate, owner-authorized one-time test)
+2. `supabase-game-points.sql`
+3. `supabase-game-points-verified-claims.sql`
+4. `supabase-wallet.sql`
+5. `supabase-wallet-deposit-processing.sql`
+6. `supabase-direct-treasury-deposits.sql`
+7. `supabase-payment-intents.sql`
+8. `supabase-walletless-deposits.sql`
+9. `supabase-shared-treasury-deposit-attribution.sql`
+10. `supabase-deposit-readiness.sql`
+11. `supabase-wallet-withdrawals.sql`
+12. `supabase-wallet-level-entry-safety.sql`
+13. `supabase-wallet-all-levels-access.sql`
+14. `supabase-relicgrid-treasury.sql` (only after the required production review and owner approval)
+15. `supabase-cyfur-treasury-test-transfer.sql` (only when preparing the separate, owner-authorized one-time test)
 
-The direct-treasury migration adds the treasury address and service-only RPCs. The wallet-link tables remain for compatibility but are not required for deposits. The wallet-less migration makes pending intents sender-independent while preserving finalized verification and atomic duplicate protection. The shared-treasury attribution migration stores the verified on-chain sender but credits the account identified by its unique payment-intent memo; it does not require the player to link that wallet. Re-run it after updating this function if an earlier version of the migration enforced linked-wallet ownership. The read-only deposit-readiness migration checks that the required tables, RPCs, service-role permissions, unique transaction constraints, and ledger idempotency constraint exist; missing schema or access fails closed. It does not enable deposits or change player data. The treasury migration updates `wallet_system_config.treasury_address` to the code value and enables deposits while keeping paid gameplay disabled. Do not apply it until the owner approves enabling live deposits after all readiness checks and testing. The withdrawal migration adds `withdrawals_enabled=false`, a `withdrawal_rate_limit_per_hour=5` setting, and service-only reserve, submit, confirm, and release RPCs. It records negative reservation and positive release entries in the existing credit ledger; it does not change current balances, game scores, progress, or leaderboard rows during migration. A database insert trigger serializes and enforces the five-request rolling-hour limit. The current migration was applied to the production Supabase project and verified to have the limit set to five, the trigger active, and no pending/submitted records. Reapplying `supabase-wallet-withdrawals.sql` is idempotent; editing this file alone does not update a live database. Existing pending/submitted withdrawal rows must be reconciled before new withdrawals; never clear them manually to free a reservation.
+The direct-treasury migration adds the treasury address and service-only RPCs. The wallet-link tables remain for compatibility but are not required for deposits. The wallet-less migration makes pending intents sender-independent while preserving finalized verification and atomic duplicate protection. The shared-treasury attribution migration stores the verified on-chain sender but credits the account identified by its unique payment-intent memo; it does not require the player to link that wallet. Re-run it after updating this function if an earlier version of the migration enforced linked-wallet ownership. The read-only deposit-readiness migration checks that the required tables, RPCs, service-role permissions, unique transaction constraints, and ledger idempotency constraint exist; missing schema or access fails closed. It does not enable deposits or change player data. The treasury migration updates `wallet_system_config.treasury_address` to the code value and enables deposits while keeping paid gameplay disabled. Do not apply it until the owner approves enabling live deposits after all readiness checks and testing. The withdrawal migration adds `withdrawals_enabled=false`, a `withdrawal_rate_limit_per_hour=5` setting, and service-only reserve, submit, confirm, and release RPCs. It records negative reservation and positive release entries in the existing credit ledger; it does not change current balances, game scores, progress, or leaderboard rows during migration. A database insert trigger serializes and enforces the five-request rolling-hour limit. Production database state cannot be verified from this repository; apply and check migrations in the intended Supabase project before deployment. Reapplying `supabase-wallet-withdrawals.sql` is idempotent; editing this file alone does not update a live database. Existing pending/submitted withdrawal rows must be reconciled before new withdrawals; never clear them manually to free a reservation.
 
-The level-entry safety migration replaces only `start_wallet_level`. Under the existing per-player profile lock, it reuses an active session for the same level (including retries with a new request ID) without charging again, and rejects a different level while that session is active. The all-level access migration then removes only the completion-order restriction: it retains the active-session check, verified-balance check, and atomic entry debit. Neither migration changes existing balances, ledger rows, level progress, scores, or leaderboard data, enables paid gameplay, or changes treasury settings. Apply both after the wallet processing migration; code changes alone do not update a live Supabase function.
+The legacy wallet-level-entry migrations continue to protect their historical RPCs; the current frontend uses the separate `start_game_point_level` and `complete_game_point_level` RPCs. `supabase-game-points.sql` creates the server points accounts, ledger, sessions, and idempotent entry/completion operations. Apply `supabase-game-points-verified-claims.sql` after it: this additive migration preserves existing balances, backfills prior claims for duplicate protection, and removes the old unverified claim RPC. Apply both before deploying the new game-points API. Code changes alone do not update a live Supabase schema or API.
 
 Configure these Vercel variables in the project that hosts the API:
 
@@ -123,5 +129,7 @@ Existing economy rules are unchanged:
 - Three-star payout: `floor(entry cost × 1.6)`
 - Two-star refund: `floor(entry cost × 0.4)`
 - One-star completion or failure: `0`
+
+These same rates apply to local game-access-point play. Its entry cost is deducted from the device's separate game-access balance, and a successful completion credits the star-rated reward to that balance once per local completion. It does not change wallet credits or transfer CYFUR. Pasted-link game-access points are also local and are not a verified CYFUR deposit.
 
 When deliberately enabled, paid level entry and completion use server-side sessions and atomic ledger RPCs. Entry requires sufficient verified credits; the server starts the timer, validates the submitted puzzle solution, calculates stars from elapsed server time, and awards a first-clear reward once. Automated tests do not replace live Supabase and production verification.
