@@ -494,11 +494,22 @@ async function verifyFinalizedDeposit({
             !["transfer", "transferChecked"].includes(instruction.parsed?.type)) continue;
         const info = instruction.parsed.info;
         if (!recipientAccounts.has(info?.destination)) continue;
+        const authority = info?.authority ?? info?.multisigAuthority;
         if (expectedSourceWallet !== undefined &&
-            (!sourceAccounts.has(info?.source) || info?.authority !== expectedSourceWallet)) {
+            (!sourceAccounts.has(info?.source) || authority !== expectedSourceWallet)) {
             return { state: "wrong_destination_or_token" };
         }
-        if (!isBase58(info?.authority, 32) || !transactionSigners.has(info.authority)) {
+        if (!isBase58(authority, 32)) {
+            return { state: "wrong_destination_or_token" };
+        }
+        if (info?.authority) {
+            if (!transactionSigners.has(info.authority)) {
+                return { state: "wrong_destination_or_token" };
+            }
+        } else if (!Array.isArray(info?.signers) || info.signers.length === 0 ||
+            !info.signers.every((signer) =>
+                isBase58(signer, 32) && transactionSigners.has(signer)
+            )) {
             return { state: "wrong_destination_or_token" };
         }
         if (info.mint && info.mint !== officialMint) {
@@ -507,7 +518,7 @@ async function verifyFinalizedDeposit({
         const amount = getInstructionAmount(info);
         if (amount === null || amount <= 0n) throw new Error("Transaction contains an invalid token transfer amount.");
         instructionAmount += amount;
-        sourceWallets.add(info.authority);
+        sourceWallets.add(authority);
     }
     if (instructionAmount !== receivedAmount || sourceWallets.size !== 1) {
         return { state: "wrong_destination_or_token" };

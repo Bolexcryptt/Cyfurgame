@@ -212,20 +212,6 @@ async function refreshServerGamePoints() {
     return true;
 }
 
-function getSolscanSignature(value) {
-    try {
-        const url = new URL(value.trim());
-        const match = url.protocol === "https:" &&
-            url.hostname === "solscan.io" &&
-            !url.username &&
-            !url.password &&
-            url.pathname.match(/^\/tx\/([1-9A-HJ-NP-Za-km-z]{80,100})\/?$/);
-        return match ? match[1] : null;
-    } catch {
-        return null;
-    }
-}
-
 async function restorePortraitOrientation() {
     if (!Capacitor.isNativePlatform()) return true;
     try {
@@ -2431,83 +2417,6 @@ async function verifyDepositSignature(signatureOrLink) {
     return true;
 }
 
-let gamePointsDepositVerificationInProgress = false;
-
-async function verifyCyfurGamePointsDeposit(event) {
-    event.preventDefault();
-    if (gamePointsDepositVerificationInProgress) return;
-    const input = document.getElementById("game-access-transaction-link");
-    const button = document.getElementById("game-access-verify");
-    const status = document.getElementById("game-access-status");
-    const signature = getSolscanSignature(input.value);
-    if (!signature) {
-        status.textContent = "Paste a valid Solana transaction link to verify your CYFUR transfer.";
-        status.dataset.state = "error";
-        return;
-    }
-
-    gamePointsDepositVerificationInProgress = true;
-    button.disabled = true;
-    button.textContent = "VERIFYING TRANSACTION…";
-    input.disabled = true;
-    try {
-        status.textContent = "Verifying the finalized CYFUR transfer, destination, amount, and linked sender…";
-        status.dataset.state = "pending";
-        const headers = await getWalletAuthorizationHeaders();
-        const response = await fetch(apiUrl("game-points"), {
-            method: "POST",
-            headers,
-            body: JSON.stringify({ action: "verify-deposit", signature }),
-            cache: "no-store"
-        });
-        const result = await response.json().catch(() => ({}));
-        if (typeof result.balancePoints === "string" && /^\d+$/.test(result.balancePoints)) {
-            serverGamePoints = result.balancePoints;
-            serverGamePointsVerified = true;
-            renderLevels();
-            renderProfile();
-        }
-        if (response.status === 202 && result.status === "pending") {
-            status.textContent = "Transaction is not finalized yet. Wait for finality, then retry the same link.";
-            status.dataset.state = "pending";
-            return;
-        }
-        if (response.status === 409 && result.error === "transaction_already_claimed") {
-            status.textContent = "This transaction was already claimed. No additional game points were awarded.";
-            status.dataset.state = "pending";
-            return;
-        }
-        if (response.status === 409 && result.error === "transaction_already_credited") {
-            status.textContent = "This transaction has already been used for a wallet deposit. No additional points were awarded.";
-            status.dataset.state = "pending";
-            return;
-        }
-        if (!response.ok || result.claimed !== true || !/^\d+$/.test(String(result.claimedPoints)) ||
-            !/^\d+$/.test(String(result.balancePoints))) {
-            const messages = {
-                cyfur_transfer_not_found: "No finalized CYFUR transfer to the RelicGrid treasury was found for this transaction ID.",
-                cyfur_amount_too_small: "This transfer converts to less than one whole game point.",
-                game_points_deposit_not_configured: "CYFUR game-point deposits are not configured on the server yet.",
-                solana_rpc_network_mismatch: "The configured Solana RPC is connected to the wrong network."
-            };
-            throw new Error(messages[result.error] || result.message || result.error ||
-                `CYFUR transfer could not be verified (${response.status}).`);
-        }
-        status.textContent = `${formatTokenAmount(result.amountRaw, result.tokenDecimals)} CYFUR verified → ${formatCredits(result.claimedPoints)} game points added. Verified balance: ${formatCredits(result.balancePoints)}.`;
-        status.dataset.state = "ready";
-        input.value = "";
-    } catch (error) {
-        console.error("Server game-points CYFUR deposit verification failed.", error);
-        status.textContent = `No points were credited. ${error.message}`;
-        status.dataset.state = "error";
-    } finally {
-        gamePointsDepositVerificationInProgress = false;
-        button.disabled = false;
-        button.textContent = "VERIFY CYFUR DEPOSIT";
-        input.disabled = false;
-    }
-}
-
 async function getWalletAuthorizationHeaders() {
     if (!supabaseConfigured || !supabase) throw new Error("RelicGrid sign-in is unavailable.");
     const { data, error } = await supabase.auth.getSession();
@@ -2710,6 +2619,7 @@ async function finishOpeningFlow() {
     videoSkip.onclick = null;
     delete videoScreen.dataset.openingSequence;
     delete videoScreen.dataset.companyIntro;
+    delete videoScreen.dataset.openingVideoSize;
     await enterGameMenu();
 }
 
@@ -2887,7 +2797,9 @@ function playGameVideo() {
 }
 
 function playOpeningVideo(source, caption, onEnded, allowSkip = false) {
-    const orientation = source === "gamevideo.mp4" ? "landscape" : "portrait";
+    const orientation = source === "companyintro.mp4" || source === "gamevideo.mp4"
+        ? "landscape"
+        : "portrait";
     introVideo.pause();
     introVideo.onerror = null;
     introVideo.onended = null;
@@ -2899,10 +2811,14 @@ function playOpeningVideo(source, caption, onEnded, allowSkip = false) {
     videoSkip.textContent = "SKIP VIDEO  →";
     videoSkip.hidden = !allowSkip;
     videoSkip.onclick = allowSkip ? () => void finishOpeningFlow() : null;
-    videoAction.hidden = true;
+    const showPlayNow = source === "intro.mp4";
+    videoAction.textContent = "PLAY NOW →";
+    videoAction.hidden = !showPlayNow;
+    videoAction.onclick = showPlayNow ? () => void finishOpeningFlow() : null;
     videoCaption.textContent = caption;
     videoScreen.dataset.openingSequence = "true";
     videoScreen.dataset.companyIntro = String(source === "companyintro.mp4");
+    videoScreen.dataset.openingVideoSize = source === "intro.mp4" ? "fit" : "fullscreen";
     if (introVideo.readyState < HTMLMediaElement.HAVE_METADATA) {
         introVideo.addEventListener("loadedmetadata", () => fitVideoFrame(introVideo), { once: true });
     } else {
@@ -2977,7 +2893,9 @@ async function showOpeningIntro() {
 
 function fitVideoFrame(video) {
     if (videoScreen.dataset.fullscreenVideo === "true" ||
-        (video === introVideo && videoScreen.dataset.openingSequence === "true")) {
+        (video === introVideo &&
+            videoScreen.dataset.openingSequence === "true" &&
+            videoScreen.dataset.openingVideoSize === "fullscreen")) {
         videoScreen.style.setProperty("--phone-width", "100vw");
         videoScreen.style.setProperty("--phone-height", "100dvh");
         return;
@@ -3169,7 +3087,6 @@ document.getElementById("home-open-deposit").addEventListener("click", () => {
     document.getElementById("wallet-card").scrollIntoView({ behavior: "smooth", block: "start" });
     document.getElementById("deposit-signature").focus({ preventScroll: true });
 });
-document.getElementById("game-access-form").addEventListener("submit", verifyCyfurGamePointsDeposit);
 document.getElementById("deposit-signature-form").addEventListener("submit", async (event) => {
     event.preventDefault();
     if (depositVerificationInProgress) return;

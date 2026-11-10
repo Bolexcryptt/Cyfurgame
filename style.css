@@ -1237,22 +1237,6 @@ button { -webkit-tap-highlight-color: transparent; }
     background: linear-gradient(135deg,#0b1721e8,#08111ae8);
     box-shadow: inset 0 1px #e3fcff08;
 }
-.game-access-panel { margin: 14px 0; }
-.game-access-panel h3 { margin: 0; color: #e3f8fa; font-size: 15px; }
-.game-access-panel > small { color: #9ab0bb; font-size: 9px; line-height: 1.5; }
-.game-access-form { display: grid; gap: 8px; }
-.game-access-form input {
-    width: 100%;
-    min-width: 0;
-    min-height: 44px;
-    padding: 0 12px;
-    border: 1px solid #91b3c44a;
-    border-radius: 6px;
-    background: #080f17;
-    color: #e3f8fa;
-    font: 11px "Consolas", monospace;
-}
-.game-access-form .button { min-height: 42px; }
 .wallet-field-label {
     color: #819eac;
     font: 700 7px/1.5 "Consolas",monospace;

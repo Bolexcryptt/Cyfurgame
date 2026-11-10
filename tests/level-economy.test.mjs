@@ -731,7 +731,10 @@ test("startup plays company and player introductions, then game video, then open
     assert.match(app, /await waitForNativeOrientation\(orientation\);\s*active\.nativeOrientationConfirmed = true/);
     assert.match(app, /videoOrientationQuery\.matches &&\s*!nativeOrientationConfirmed/);
     assert.match(openingFlow, /function playGameVideo\(\)[\s\S]*?videoSkip\.hidden = false[\s\S]*?videoSkip\.onclick = \(\) => void finishOpeningFlow\(\)[\s\S]*?playOpeningVideo\("gamevideo\.mp4"[\s\S]*?true\)/);
-    assert.match(openingFlow, /const orientation = source === "gamevideo\.mp4" \? "landscape" : "portrait"/);
+    assert.match(openingFlow, /const orientation = source === "companyintro\.mp4" \|\| source === "gamevideo\.mp4"[\s\S]*?"landscape"[\s\S]*?"portrait"/);
+    assert.match(openingFlow, /const showPlayNow = source === "intro\.mp4"[\s\S]*?videoAction\.textContent = "PLAY NOW →"[\s\S]*?videoAction\.onclick = showPlayNow \? \(\) => void finishOpeningFlow\(\) : null/);
+    assert.match(app, /videoScreen\.dataset\.openingVideoSize = source === "intro\.mp4" \? "fit" : "fullscreen"/);
+    assert.match(app, /videoScreen\.dataset\.openingVideoSize === "fullscreen"/);
     assert.match(openingFlow, /void playVideoInOrientation\(\s*introVideo,\s*offerNext,[\s\S]*?orientation\s*\)/);
     assert.match(openingFlow, /videoSkip\.hidden = !allowSkip/);
     assert.match(openingFlow, /videoSkip\.onclick = allowSkip \? \(\) => void finishOpeningFlow\(\) : null/);
@@ -1005,7 +1008,7 @@ test("campaign levels use authenticated server game points without a duplicate w
     assert.match(app, /apiUrl\("game-points"\)/);
     assert.match(app, /function refreshServerGamePoints\(\)/);
     assert.doesNotMatch(app, /legacyGameAccessPoints|relicgrid\.game-access\./);
-    assert.doesNotMatch(app.slice(app.indexOf("async function verifyCyfurGamePointsDeposit"), app.indexOf("\nasync function getWalletAuthorizationHeaders")), /saveGameAccessState|localStorage\.setItem/);
+    assert.doesNotMatch(app, /verifyCyfurGamePointsDeposit|getSolscanSignature|game-access-form/);
     assert.match(app, /Practice complete\. No credits, leaderboard points, or saved progress were awarded/);
 
     const scene = readFileSync(new URL("../script.js", import.meta.url), "utf8");
@@ -1109,24 +1112,16 @@ test("RelicGrid branding is used in the game and hidden scenes stop rendering", 
     assert.match(app, /async function playVideoInOrientation\(video, onError, onPlaybackStarted, orientation = "portrait"\)/);
     assert.doesNotMatch(html, /title-screen|title-continue-button|PLAY NOW/);
     assert.match(html, /id="video-action-button"[^>]*hidden>Next/);
-    assert.match(html, /id="game-access-form"/);
+    assert.doesNotMatch(html, /game-access-form|game-access-transaction-link|game-access-verify|game-access-status/);
+    assert.equal((html.match(/id="deposit-signature"/g) || []).length, 1);
     assert.doesNotMatch(html, /id="legacy-game-access-points"|id="game-points-balance"/);
     assert.equal((html.match(/id="wallet-balance"/g) || []).length, 1);
     assert.match(html, /id="wallet-protect-account"/);
-    assert.match(html, /non-withdrawable/);
+    const walletArchitecture = readFileSync(new URL("../WALLET-ARCHITECTURE.md", import.meta.url), "utf8");
+    assert.match(walletArchitecture, /non-withdrawable/);
     assert.match(html, /id="rotate-device-prompt"/);
-    const gameAccessVerification = app.slice(
-        app.indexOf("async function verifyCyfurGamePointsDeposit"),
-        app.indexOf("\nasync function getWalletAuthorizationHeaders")
-    );
-    assert.match(gameAccessVerification, /getSolscanSignature\(input\.value\)/);
-    assert.match(gameAccessVerification, /fetch\(apiUrl\("game-points"\)/);
-    assert.match(gameAccessVerification, /action: "verify-deposit"/);
-    assert.match(app, /game-access-form"\)\.addEventListener\("submit", verifyCyfurGamePointsDeposit\)/);
-    assert.match(gameAccessVerification, /transaction_already_claimed/);
-    assert.match(gameAccessVerification, /formatTokenAmount\(result\.amountRaw, result\.tokenDecimals\)/);
+    assert.doesNotMatch(app, /verifyCyfurGamePointsDeposit|getSolscanSignature|game-access-form/);
     assert.doesNotMatch(html, /CLAIM 1,000 SERVER GAME POINTS|No CYFUR payment is required/i);
-    assert.doesNotMatch(gameAccessVerification, /verifyDepositSignature|wallet_balance|wallet_credit_accounts/);
     assert.match(app, /serverGamePointsVerified &&\s*BigInt\(serverGamePoints\) >= BigInt\(entryCostCredits\)/);
     const pointEntryLevelStart = app.slice(app.indexOf("async function startLevel"), app.indexOf("\nfunction leaveGameplay"));
     assert.doesNotMatch(pointEntryLevelStart, /serverGamePoints\s*-/);
@@ -1236,7 +1231,7 @@ test("deposit UI shows only the treasury wallet and accepts a transaction ID wit
     assert.doesNotMatch(depositApi, /CREDIT_DELAY_MS|process_verified_payment_intent/);
 });
 
-test("Android RelicGrid app stays portrait including during videos", () => {
+test("Android RelicGrid app supports landscape videos and restores portrait", () => {
     const config = JSON.parse(readFileSync(new URL("../capacitor.config.json", import.meta.url), "utf8"));
     const manifest = readFileSync(new URL("../android/app/src/main/AndroidManifest.xml", import.meta.url), "utf8");
     const strings = readFileSync(new URL("../android/app/src/main/res/values/strings.xml", import.meta.url), "utf8");
@@ -1244,7 +1239,7 @@ test("Android RelicGrid app stays portrait including during videos", () => {
     assert.equal(config.appId, "com.relicgrid.cyfurgame");
     assert.equal(config.appName, "RelicGrid");
     assert.equal(config.plugins.ScreenOrientation.orientation, "portrait");
-    assert.match(manifest, /android:screenOrientation="portrait"/);
+    assert.match(manifest, /android:screenOrientation="fullSensor"/);
     assert.match(strings, /<string name="app_name">RelicGrid<\/string>/);
     assert.match(strings, /<string name="title_activity_main">RelicGrid<\/string>/);
     assert.match(app, /ScreenOrientation\.lock\(\{ orientation \}\)/);
@@ -2110,6 +2105,25 @@ test("Solana verifier credits only successful finalized transfers to the mapped 
         finalizedSlot: 500,
         finalizedAt: 1700000000
     });
+    const multisigTransaction = structuredClone(transaction);
+    const multisigTransfer = multisigTransaction.transaction.message.instructions[0].parsed.info;
+    delete multisigTransfer.authority;
+    multisigTransfer.multisigAuthority = sourceWallet;
+    multisigTransfer.signers = [sourceWallet];
+    transaction = multisigTransaction;
+    assert.deepEqual(await verifyFinalizedDeposit(options), {
+        state: "finalized",
+        amountRaw: "10000",
+        sourceWalletAddress: sourceWallet,
+        finalizedSlot: 500,
+        finalizedAt: 1700000000
+    });
+    multisigTransfer.signers = ["Stake11111111111111111111111111111111111111"];
+    assert.deepEqual(await verifyFinalizedDeposit(options), {
+        state: "wrong_destination_or_token"
+    });
+    transaction = structuredClone(transaction);
+    transaction.transaction.message.instructions[0].parsed.info.signers = [sourceWallet];
     const finalizedTransaction = structuredClone(transaction);
     const directTreasuryTransaction = structuredClone(transaction);
     directTreasuryTransaction.meta.preTokenBalances = [{
