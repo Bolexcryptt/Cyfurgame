@@ -2892,7 +2892,7 @@ function playGameVideo() {
 }
 
 function playOpeningVideo(source, caption, onEnded, allowSkip = false) {
-    const orientation = source === "intro.mp4" ? "portrait" : "landscape";
+    const orientation = source === "gamevideo.mp4" ? "landscape" : "portrait";
     introVideo.pause();
     introVideo.onerror = null;
     introVideo.onended = null;

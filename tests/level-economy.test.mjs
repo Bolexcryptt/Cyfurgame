@@ -731,7 +731,7 @@ test("startup plays company and player introductions, then game video, then open
     assert.match(app, /await waitForNativeOrientation\(orientation\);\s*active\.nativeOrientationConfirmed = true/);
     assert.match(app, /videoOrientationQuery\.matches &&\s*!nativeOrientationConfirmed/);
     assert.match(openingFlow, /function playGameVideo\(\)[\s\S]*?videoSkip\.hidden = false[\s\S]*?videoSkip\.onclick = \(\) => void finishOpeningFlow\(\)[\s\S]*?playOpeningVideo\("gamevideo\.mp4"[\s\S]*?true\)/);
-    assert.match(openingFlow, /const orientation = source === "intro\.mp4" \? "portrait" : "landscape"/);
+    assert.match(openingFlow, /const orientation = source === "gamevideo\.mp4" \? "landscape" : "portrait"/);
     assert.match(openingFlow, /void playVideoInOrientation\(\s*introVideo,\s*offerNext,[\s\S]*?orientation\s*\)/);
     assert.match(openingFlow, /videoSkip\.hidden = !allowSkip/);
     assert.match(openingFlow, /videoSkip\.onclick = allowSkip \? \(\) => void finishOpeningFlow\(\) : null/);
