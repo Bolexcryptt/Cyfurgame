@@ -1003,6 +1003,9 @@ test("campaign levels use authenticated wallet credits for entry", () => {
     assert.match(entryFlow, /apiUrl\("level-entry"\)/);
     assert.match(entryFlow, /insufficient_balance/);
     assert.match(entryFlow, /paid_gameplay_disabled/);
+    assert.match(entryFlow, /const rejectPaidEntry = \(message\)/);
+    assert.match(entryFlow, /Wallet-credit entry could not be verified/);
+    assert.doesNotMatch(entryFlow, /continuing in free practice/);
     assert.match(entryFlow, /wallet_credit_accounts|balanceCredits/);
     assert.doesNotMatch(entryFlow, /gamePoints: true|insufficient_game_points/);
     assert.match(entryFlow, /apiUrl\("level-entry"\)/);
@@ -1013,7 +1016,9 @@ test("campaign levels use authenticated wallet credits for entry", () => {
     assert.match(app, /Practice complete\. No credits, leaderboard points, or saved progress were awarded/);
 
     const scene = readFileSync(new URL("../script.js", import.meta.url), "utf8");
-    assert.match(scene, /ESTIMATED REWARD/);
+    assert.match(scene, /ESTIMATED CREDIT REWARD/);
+    assert.match(scene, /PRACTICE REWARD/);
+    assert.match(scene, /Practice clears do not earn rewards/);
     assert.match(scene, /Pending server confirmation; not yet credited/);
     assert.match(scene, /ESTIMATED POINT REWARD/);
     assert.match(scene, /No reward is credited for a failed attempt/);
@@ -1449,6 +1454,9 @@ test("campaign levels use authenticated wallet credits and remain globally locka
     assert.match(html, /id="game-guide-toggle"/);
     assert.match(html, /id="game-guide"/);
     assert.match(html, /Charge crystals in order/);
+    assert.match(html, /Choose a sector to enter using verified wallet credits/);
+    assert.match(html, /WALLET CREDIT BALANCE/);
+    assert.doesNotMatch(html, /GAME POINT BALANCE/);
     assert.match(html, /LIVE TUTORIAL/);
     assert.match(app, /game-guide-close/);
     const scene = readFileSync(new URL("../script.js", import.meta.url), "utf8");

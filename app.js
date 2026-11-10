@@ -1020,10 +1020,10 @@ function formatCreditsAsCyfur(value) {
 }
 
 function setLevelEntryMessage(message, state = "disabled") {
-        const status = document.getElementById("level-entry-status");
-        status.textContent = message;
-        status.dataset.state = state;
-    }
+    const status = document.getElementById("level-entry-status");
+    status.textContent = message;
+    status.dataset.state = state;
+}
 
 async function requestLevelEntry(levelNumber) {
         if (levelEntryRequestInProgress) return null;
@@ -1044,6 +1044,10 @@ async function requestLevelEntry(levelNumber) {
                     : "0",
                 entryCostCredits: null
             };
+        };
+        const rejectPaidEntry = (message) => {
+            setLevelEntryMessage(message, "error");
+            return null;
         };
         if (!supabaseConfigured || !supabase) {
             return practiceEntry("Wallet verification is unavailable.");
@@ -1098,10 +1102,10 @@ async function requestLevelEntry(levelNumber) {
                 const costMessage = /^\d+$/.test(String(result.entryCostCredits))
                     ? `Level ${levelNumber} requires ${formatCredits(result.entryCostCredits)} credits.`
                     : `Level ${levelNumber} could not be charged.`;
-                return practiceEntry(`Paid entry is unavailable. ${costMessage} ${balanceMessage}`);
+                return rejectPaidEntry(`${costMessage} ${balanceMessage} No level was started.`);
             }
             if (response.status === 409 && result.error === "level_session_active") {
-                return practiceEntry("A paid session is already active.");
+                return rejectPaidEntry("A paid level session is already active. Finish it or wait for it to expire before starting another.");
             }
             if (response.status === 423 && result.error === "levels_locked") {
                 levelsGloballyLocked = true;
@@ -1111,25 +1115,25 @@ async function requestLevelEntry(levelNumber) {
                 return null;
             }
             if (result.error === "paid_gameplay_disabled") {
-                return practiceEntry("Paid entries are not enabled.");
+                return rejectPaidEntry("Paid level entry is disabled in the backend. No level was started.");
             }
             if (result.error === "wallet_schema_not_installed") {
-                return practiceEntry("Wallet database setup is incomplete.");
+                return rejectPaidEntry("Wallet database setup is incomplete. No level was started.");
             }
             if (result.error === "wallet_migration_required") {
-                return practiceEntry("The latest wallet access migration is not available.");
+                return rejectPaidEntry("The wallet level-entry migration is missing or outdated. No level was started.");
             }
             if (result.error === "verified_balance_unavailable") {
-                return practiceEntry("A verified credit balance is unavailable.");
+                return rejectPaidEntry("The server could not verify your wallet-credit balance. No level was started.");
             }
             if (result.error === "wallet_api_not_configured") {
-                return practiceEntry("The server wallet API is not configured.");
+                return rejectPaidEntry("The wallet API is not configured. No level was started.");
             }
             if (result.error === "authentication_required") {
-                return practiceEntry("The backend could not authenticate this player.");
+                return rejectPaidEntry("Your sign-in expired before level entry. Sign in again; no level was started.");
             }
             if (response.status === 404 || response.status === 501) {
-                return practiceEntry("This host does not provide the paid-entry API.");
+                return rejectPaidEntry("This deployment is missing the paid-entry API. No level was started.");
             }
             if (response.ok && result.allowed === true && result.balanceVerified === true &&
                 typeof result.sessionId === "string" &&
@@ -1142,8 +1146,10 @@ async function requestLevelEntry(levelNumber) {
 
             throw new Error(result.error || `Level entry check failed (${response.status}).`);
         } catch (error) {
-            console.warn("Wallet-credit level entry is unavailable; continuing in free practice.", error);
-            return practiceEntry("Backend balance verification failed.");
+            console.error("Wallet-credit level entry could not be verified.", error);
+            return rejectPaidEntry(
+                `Wallet-credit entry could not be verified (${error.message}). No level was started.`
+            );
         } finally {
             levelEntryRequestInProgress = false;
     }
@@ -2887,6 +2893,8 @@ async function saveWalletLevelCompletion(detail) {
             balanceCredits: String(balanceAmount),
             balanceVerified: true
         };
+        document.getElementById("completion-balance-note").textContent =
+            `${formatCredits(balanceAmount)} off-chain wallet credits · backend verified`;
         renderLevels();
     }
     document.getElementById("completion-points").textContent = result.duplicate ? "0" : "1";

@@ -1782,25 +1782,34 @@ function startScene() {
             `3★ ≤ ${timeTargets.threeSeconds}s · 2★ ≤ ${timeTargets.twoSeconds}s`;
         const formattedEntryCost = Number.isSafeInteger(walletLevelEntryCostCredits)
             ? `${walletLevelEntryCostCredits.toLocaleString("en-US")} ${gamePointsSession ? "game points" : "credits"}`
-                : "Unavailable";
+            : walletLevelSessionId ? "Unavailable" : "FREE PRACTICE";
         document.getElementById("completion-entry-cost").textContent = formattedEntryCost;
         document.querySelector("#completion-entry-cost + small").textContent =
             walletLevelSessionId
                 ? "Deducted once when the server session began"
-                : "No points charged in free practice";
+                : "No wallet credits charged; progress and rewards are not saved";
 
         const rewardLabel = document.getElementById("completion-reward-label");
         const reward = document.getElementById("completion-reward");
         const rewardNote = document.getElementById("completion-reward-note");
-        rewardLabel.textContent = gamePointsSession ? "ESTIMATED POINT REWARD" : "ESTIMATED REWARD";
-        reward.textContent = `${result.rewardCredits.toLocaleString("en-US")} ${gamePointsSession ? "points" : "credits"}`;
-        rewardNote.textContent = "Pending server confirmation; not yet credited";
+        rewardLabel.textContent = walletLevelSessionId
+            ? gamePointsSession ? "ESTIMATED POINT REWARD" : "ESTIMATED CREDIT REWARD"
+            : "PRACTICE REWARD";
+        reward.textContent = walletLevelSessionId
+            ? `${result.rewardCredits.toLocaleString("en-US")} ${gamePointsSession ? "points" : "credits"}`
+            : "0 credits";
+        rewardNote.textContent = walletLevelSessionId
+            ? "Pending server confirmation; not yet credited"
+            : "Practice clears do not earn rewards";
         document.getElementById("completion-token-reward").textContent = "NONE";
-        document.getElementById("completion-balance").textContent = "Not confirmed";
+        document.getElementById("completion-balance").textContent =
+            walletLevelSessionId ? "Pending confirmation" : "Practice only";
         document.getElementById("completion-balance-note").textContent =
-            gamePointsSession
-                ? "Points balance refreshes after server confirmation"
-                : "Refreshes only after backend confirmation";
+            walletLevelSessionId
+                ? gamePointsSession
+                    ? "Points balance refreshes after server confirmation"
+                    : "Wallet-credit balance refreshes after server confirmation"
+                : "No wallet credits or saved progress were awarded";
         const nextLevelButton = document.getElementById("next-level");
         nextLevelButton.hidden = false;
         nextLevelButton.disabled = true;
