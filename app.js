@@ -2646,6 +2646,10 @@ async function startLevel(number, resumeMusic = false) {
         if (!entry.practice) {
             document.getElementById("wallet-balance").textContent = formatCredits(entry.balanceCredits);
             document.getElementById("wallet-balance-state").textContent = "CREDITS · BACKEND VERIFIED";
+            document.getElementById("completion-balance").textContent =
+                `${formatCredits(entry.balanceCredits)} credits`;
+            document.getElementById("completion-balance-note").textContent =
+                "Available after entry fee";
             walletStatusSnapshot = {
                 ...walletStatusSnapshot,
                 balanceCredits: String(entry.balanceCredits),
@@ -2898,31 +2902,26 @@ async function saveWalletLevelCompletion(detail) {
             `${formatCredits(balanceAmount)} off-chain wallet credits · backend verified`;
         renderLevels();
     }
-    document.getElementById("completion-points").textContent = result.duplicate ? "0" : "1";
-    document.getElementById("completion-points-note").textContent = result.duplicate
-        ? "Repeat clear · reward prevented"
-        : gamePointsSession
-            ? "Unique clear · server game-points record"
-            : "Unique campaign clear · leaderboard score";
     const displayedRewardAmount = result.duplicate ? "0" : rewardAmount;
     const rewardLabel = document.getElementById("completion-reward-label");
     const reward = document.getElementById("completion-reward");
     const rewardNote = document.getElementById("completion-reward-note");
     rewardLabel.textContent = displayedRewardAmount === "0"
-        ? gamePointsSession ? "NO POINT REWARD" : "NO REWARD"
+        ? gamePointsSession ? "NO POINT REWARD" : "NO CREDIT REWARD"
         : gamePointsSession ? "CONFIRMED POINT REWARD" : "CONFIRMED CREDIT REWARD";
     reward.textContent = `${formatCredits(displayedRewardAmount)} ${gamePointsSession ? "points" : "credits"}`;
     rewardNote.textContent = result.duplicate
         ? "Level already cleared · repeat reward prevented"
-        : "Verified and credited by the server";
-    document.getElementById("completion-token-reward").textContent = "NONE";
+        : displayedRewardAmount === "0"
+            ? "No reward for this star rating"
+            : "Credited to available balance";
     document.getElementById("completion-balance").textContent = gamePointsSession
         ? `${formatCredits(balanceAmount)} points`
-        : `${formatCreditsAsCyfur(balanceAmount)} CYFUR`;
+        : `${formatCredits(balanceAmount)} credits`;
     document.getElementById("completion-balance-note").textContent =
         gamePointsSession
-            ? "Server-managed, non-withdrawable game points · verified"
-            : `${formatCredits(balanceAmount)} off-chain credits · backend verified`;
+            ? "Available game points"
+            : "Available wallet credits";
 
     await refreshOwnProgress();
     backendStatus = "Connected to the RelicGrid leaderboard.";
@@ -3012,6 +3011,10 @@ window.addEventListener("fluxgrid:level-complete", async (event) => {
             );
         } catch (error) {
             console.error("Server-verified level completion could not be saved.", error);
+            document.getElementById("completion-reward-note").textContent =
+                `Credit not confirmed: ${error.message}`;
+            document.getElementById("completion-balance-note").textContent =
+                "Showing the last server-confirmed balance";
             document.getElementById("game-status").textContent =
                 `Level ${number} is not recorded and no reward was credited: ${error.message}`;
             return;

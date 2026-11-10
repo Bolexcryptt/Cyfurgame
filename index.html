@@ -480,14 +480,16 @@
                     <div class="completion-heading">
                         <span class="hud-kicker">MISSION RESULT</span>
                         <strong>Battery connected</strong>
-                        <small>Route the beam through every crystal, then reach the battery. Paid entry and rewards are verified by the server; rewards are off-chain wallet credits, not a CYFUR token transfer.</small>
                         <button id="next-level" class="game-button primary next-level-button" type="button" hidden>NEXT LEVEL →</button>
                     </div>
                     <div class="completion-metrics">
                         <div class="completion-metric">
                             <span>LEVEL COMPLETED</span>
                             <strong id="completion-level">—</strong>
-                            <small>Campaign sector</small>
+                        </div>
+                        <div class="completion-metric">
+                            <span>ENTRY FEE</span>
+                            <strong id="completion-entry-cost">—</strong>
                         </div>
                         <div class="completion-metric completion-rating">
                             <span>STAR RATING</span>
@@ -495,34 +497,18 @@
                             <small id="completion-star-icons" aria-hidden="true"></small>
                         </div>
                         <div class="completion-metric">
-                            <span>CAMPAIGN SCORE</span>
-                            <strong id="completion-points">Pending</strong>
-                            <small id="completion-points-note">Awaiting server confirmation</small>
+                            <span id="completion-reward-label">ESTIMATED CREDIT REWARD</span>
+                            <strong id="completion-reward">—</strong>
+                            <small id="completion-reward-note"></small>
                         </div>
                         <div class="completion-metric">
                             <span>SOLVE TIME</span>
                             <strong id="completion-time">—</strong>
-                            <small id="completion-time-thresholds">Time targets unavailable</small>
-                        </div>
-                        <div class="completion-metric">
-                            <span>ENTRY FEE</span>
-                            <strong id="completion-entry-cost">—</strong>
-                            <small>Charged once when the server session begins</small>
-                        </div>
-                        <div class="completion-metric">
-                            <span id="completion-reward-label">POINT REWARD</span>
-                            <strong id="completion-reward">—</strong>
-                            <small id="completion-reward-note">Preview · not credited</small>
-                        </div>
-                        <div class="completion-metric completion-token">
-                            <span>TOKEN TRANSFER</span>
-                            <strong id="completion-token-reward">NONE</strong>
-                            <small>Gameplay rewards are off-chain wallet credits; no CYFUR token transfer occurs.</small>
                         </div>
                         <div class="completion-metric completion-balance">
-                            <span>WALLET CREDIT BALANCE</span>
-                            <strong id="completion-balance">Not confirmed</strong>
-                            <small id="completion-balance-note">Refreshes only after backend confirmation</small>
+                            <span>AVAILABLE BALANCE</span>
+                            <strong id="completion-balance">—</strong>
+                            <small id="completion-balance-note"></small>
                         </div>
                     </div>
                 </section>

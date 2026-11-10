@@ -188,7 +188,7 @@ html, body {
 .next-level-button[hidden] { display: none; }
 .completion-metrics {
     display: grid;
-    grid-template-columns: repeat(4, minmax(0, 1fr));
+    grid-template-columns: repeat(3, minmax(0, 1fr));
     gap: 7px;
 }
 .completion-metric {
@@ -208,7 +208,6 @@ html, body {
 }
 .completion-metric > strong { overflow-wrap: anywhere; color: #e5f8fb; font: 700 13px "Consolas", monospace; }
 .completion-metric > small { color: #829aa7; font-size: 8px; line-height: 1.35; }
-.completion-metric #completion-time-thresholds { color: #9ab4c0; }
 .completion-rating > strong { color: #f6d98c; }
 .completion-rating > small { color: #f6d98c; font-size: 12px; letter-spacing: .12em; }
 .completion-metric:last-child > strong { color: #a9eddf; }
@@ -2753,7 +2752,6 @@ body {
     letter-spacing: .18em;
     text-shadow: 0 0 14px #ffcf6540;
 }
-.completion-metric #completion-time-thresholds { color: #bdb9cb; }
 .completion-summary { animation-duration: .24s; }
 
 .name-card, .info-card, .stat-card, .podium-card, .game-guide,
@@ -5427,12 +5425,6 @@ body {
 
 .game-button.secondary { background: #211f1a; }
 
-.completion-token {
-    border-color: #efc36b66;
-    background: linear-gradient(145deg, #2b2415, #171b20);
-}
-.completion-token > span,
-.completion-token > strong { color: #f3d48f; }
 .completion-balance {
     border-color: #7de8c866;
     background: linear-gradient(145deg, #102720, #101c20);

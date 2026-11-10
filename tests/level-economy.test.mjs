@@ -791,9 +791,9 @@ test("startup plays company and player introductions, then game video, then open
     assert.match(html, /id="background-music"[^>]*loop/);
     assert.match(app, /backgroundMusic\.src = "music\.mp3"/);
     assert.doesNotMatch(html, /music\.wav/);
-    assert.match(html, /id="completion-points"/);
-    assert.match(html, /id="completion-token-reward"/);
     assert.match(html, /id="completion-balance"/);
+    assert.doesNotMatch(html, /CAMPAIGN SCORE|TOKEN TRANSFER|WALLET CREDIT BALANCE|completion-points|completion-token-reward/);
+    assert.match(html, /LEVEL COMPLETED[\s\S]*ENTRY FEE[\s\S]*STAR RATING[\s\S]*ESTIMATED CREDIT REWARD[\s\S]*SOLVE TIME[\s\S]*AVAILABLE BALANCE/);
 
     const scene = readFileSync(new URL("../script.js", import.meta.url), "utf8");
     const activationFinish = scene.indexOf("if (activationProgress >= 1 && pendingLevelCompletion)");
@@ -1036,7 +1036,7 @@ test("campaign levels use authenticated wallet credits for entry", () => {
     assert.match(scene, /ESTIMATED CREDIT REWARD/);
     assert.match(scene, /PRACTICE REWARD/);
     assert.match(scene, /Practice clears do not earn rewards/);
-    assert.match(scene, /Pending server confirmation; not yet credited/);
+    assert.doesNotMatch(scene, /Pending server confirmation; not yet credited/);
     assert.match(scene, /ESTIMATED POINT REWARD/);
     assert.match(scene, /No reward is credited for a failed attempt/);
     assert.match(scene, /traceLaserRoute\(activeLevel, mirrorOrientations, launchDirection\)/);
@@ -1474,7 +1474,7 @@ test("campaign levels use authenticated wallet credits and remain globally locka
     assert.match(html, /id="game-guide"/);
     assert.match(html, /Charge crystals in order/);
     assert.match(html, /Choose a sector to enter using verified wallet credits/);
-    assert.match(html, /WALLET CREDIT BALANCE/);
+    assert.match(html, /AVAILABLE BALANCE/);
     assert.doesNotMatch(html, /GAME POINT BALANCE/);
     assert.match(html, /LIVE TUTORIAL/);
     assert.match(app, /game-guide-close/);
