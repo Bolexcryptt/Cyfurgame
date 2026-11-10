@@ -252,7 +252,7 @@
                         <div class="wallet-withdrawal-summary">
                             <div class="wallet-data-panel">
                                 <span class="wallet-field-label">WITHDRAWAL ACCESS</span>
-                                <small id="withdrawal-balance-note">Withdrawal requests use the verified balance shown above and unlock after the required level clears.</small>
+                                <small id="withdrawal-balance-note">Withdrawal requests use the available balance shown above and unlock after the required level clears.</small>
                             </div>
                             <div class="wallet-data-panel">
                                 <span class="wallet-field-label">CONVERSION RATE</span>
@@ -262,32 +262,22 @@
                             <div class="wallet-data-panel">
                                 <span class="wallet-field-label">MINIMUM WITHDRAWAL</span>
                                 <b id="withdrawal-minimum">Not configured</b>
-                                <small id="withdrawal-minimum-note">Any positive whole amount; maximum is your available balance.</small>
+                                <small id="withdrawal-minimum-note">Minimum: 0.001 CYFUR (1 credit); maximum is your available balance.</small>
                             </div>
                         </div>
 
                         <form id="withdrawal-form" class="deposit-signature-form withdrawal-form">
                             <label class="wallet-field-label" for="withdrawal-wallet-address">SOLANA RECEIVING ADDRESS</label>
-                            <input id="withdrawal-wallet-address" name="walletAddress" type="text" inputmode="text" autocomplete="off" spellcheck="false" maxlength="44" placeholder="Enter your public Solana receiving address" required>
+                            <input id="withdrawal-wallet-address" name="walletAddress" type="text" autocomplete="off" spellcheck="false" maxlength="44" placeholder="Paste your Solana receiving address" required>
                             <div class="withdrawal-inline-actions">
-                                <span id="withdrawal-wallet-verified" class="wallet-history-state" data-state="unknown">NOT VERIFIED</span>
-                                <button id="wallet-link-button" class="wallet-refresh" type="button">REQUEST SIGNING CHALLENGE</button>
                                 <button id="withdrawal-refresh" class="wallet-refresh" type="button">REFRESH WITHDRAWAL</button>
                             </div>
-                            <p id="withdrawal-link-status" class="wallet-api-status" role="status" aria-live="polite">Verify the address by signing a one-time message in your wallet app outside RelicGrid. No wallet connection, transaction, or fee is required.</p>
-                            <section id="withdrawal-challenge-panel" class="wallet-data-panel" hidden>
-                                <label class="wallet-field-label" for="wallet-link-challenge">ONE-TIME OWNERSHIP CHALLENGE</label>
-                                <textarea id="wallet-link-challenge" rows="5" readonly></textarea>
-                                <button id="wallet-link-copy-challenge" class="button button-quiet" type="button">COPY CHALLENGE</button>
-                                <label class="wallet-field-label" for="wallet-link-signature">PASTE WALLET SIGNATURE (BASE64 OR BASE58)</label>
-                                <textarea id="wallet-link-signature" rows="3" maxlength="200" spellcheck="false" autocomplete="off" placeholder="Paste the message signature from your wallet app"></textarea>
-                                <button id="wallet-link-verify-button" class="button button-primary" type="button">VERIFY AND SAVE ADDRESS</button>
-                            </section>
+                            <p class="wallet-api-status">Paste the address you want paid. Check it carefully—confirmed transfers cannot be reversed.</p>
 
-                            <label class="wallet-field-label" for="withdrawal-amount">WITHDRAWAL AMOUNT (CREDITS)</label>
-                            <input id="withdrawal-amount" name="amountCredits" type="text" inputmode="numeric" autocomplete="off" spellcheck="false" maxlength="19" placeholder="Enter any whole amount up to your available balance" required>
+                            <label class="wallet-field-label" for="withdrawal-amount">WITHDRAWAL AMOUNT (CYFUR)</label>
+                            <input id="withdrawal-amount" name="amountCyfur" type="text" inputmode="decimal" autocomplete="off" spellcheck="false" maxlength="21" placeholder="Enter a CYFUR amount up to your available balance" required>
                             <div class="withdrawal-inline-actions">
-                                <small>Any positive amount up to your available credits. Limit: 5 requests per hour.</small>
+                                <small>Amounts convert at 1 CYFUR = 1,000 credits. Limit: 5 requests per hour.</small>
                                 <button id="withdrawal-max" class="button button-quiet" type="button" disabled>MAX AVAILABLE</button>
                             </div>
 
@@ -297,7 +287,7 @@
                             </div>
 
                             <button id="withdrawal-submit" class="button button-primary" type="submit" disabled>REQUEST WITHDRAWAL</button>
-                            <p id="withdrawal-status" class="wallet-api-status" role="status" aria-live="polite">Sign in and link a verified Solana wallet to view your withdrawal balance.</p>
+                            <p id="withdrawal-status" class="wallet-api-status" role="status" aria-live="polite">Sign in to view your withdrawal balance.</p>
                             <p id="withdrawal-transaction-status" class="wallet-api-status" hidden></p>
                         </form>
 

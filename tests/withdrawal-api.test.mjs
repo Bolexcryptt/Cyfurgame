@@ -282,7 +282,7 @@ test("successful withdrawal reserves credits once and confirms without a second 
     assert.equal(scenario.sendCount, 1);
 });
 
-test("withdrawal status reports only the authenticated player's verified wallet and balance", async () => {
+test("withdrawal status reports the authenticated player's balance and eligibility", async () => {
     const response = {
         headers: {},
         statusCode: 200,
@@ -296,8 +296,6 @@ test("withdrawal status reports only the authenticated player's verified wallet 
         headers: { authorization: "Bearer test-session-token" }
     }, response);
     assert.equal(response.statusCode, 200);
-    assert.equal(response.payload.walletAddress, playerWallet);
-    assert.equal(response.payload.walletVerified, true);
     assert.equal(response.payload.balanceCredits, "10000");
     assert.equal(response.payload.availableCredits, "10000");
     assert.equal(response.payload.withdrawalEnabled, true);
@@ -381,25 +379,25 @@ test("withdrawal request is rejected before reservation until levels 1 through 3
     assert.equal(scenario.sendCount, 0);
 });
 
-test("one CYFUR withdrawal uses exactly 100000000 raw units for the verified recipient", async () => {
-    const response = await submitWithdrawal({ amount: "1000" });
+test("one CYFUR withdrawal uses exactly 100000000 raw units for the pasted recipient", async () => {
+    const recipientWallet = Keypair.generate().publicKey.toBase58();
+    const response = await submitWithdrawal({ amount: "1000", walletAddress: recipientWallet });
 
     assert.equal(response.statusCode, 200);
     assert.equal(response.payload.amountRaw, "100000000");
-    assert.equal(response.payload.walletAddress, playerWallet);
+    assert.equal(response.payload.walletAddress, recipientWallet);
     assert.deepEqual(scenario.transferRequest, {
         amountRaw: "100000000",
-        playerWalletAddress: playerWallet
+        playerWalletAddress: recipientWallet
     });
     assert.equal(scenario.sendCount, 1);
 });
 
-test("a requested recipient different from the verified linked wallet is rejected before reservation", async () => {
-    const otherWallet = Keypair.generate().publicKey.toBase58();
-    const response = await submitWithdrawal({ amount: "1000", walletAddress: otherWallet });
+test("an invalid pasted Solana recipient is rejected before reservation", async () => {
+    const response = await submitWithdrawal({ amount: "1000", walletAddress: "not-a-solana-address" });
 
     assert.equal(response.statusCode, 400);
-    assert.equal(response.payload.error, "withdrawal_wallet_mismatch");
+    assert.equal(response.payload.error, "invalid_wallet_address");
     assert.equal(scenario.records.size, 0);
     assert.equal(scenario.ledger.length, 0);
     assert.equal(scenario.sendCount, 0);

@@ -46,7 +46,6 @@ module.exports = async function withdrawals(request, response) {
         if (!user) return sendJson(response, 401, { error: "authentication_required" });
 
         const [
-            [linkedWallet],
             [account],
             [latestLedgerEntry],
             configs,
@@ -54,7 +53,6 @@ module.exports = async function withdrawals(request, response) {
             completedLevels,
             gamePointCompletions
         ] = await Promise.all([
-            serviceRequest(`player_solana_wallets?select=wallet_address,verified_at&player_id=eq.${encodeURIComponent(user.id)}&limit=1`),
             serviceRequest(`wallet_credit_accounts?select=balance_credits,updated_at&player_id=eq.${encodeURIComponent(user.id)}&limit=1`),
             serviceRequest(`wallet_credit_ledger?select=balance_after_credits&player_id=eq.${encodeURIComponent(user.id)}&order=created_at.desc,id.desc&limit=1`),
             readWalletSystemConfig(),
@@ -113,9 +111,6 @@ module.exports = async function withdrawals(request, response) {
                     level30RequirementMet: level30Requirement.met
                 },
                 level30Requirement,
-                walletAddress: linkedWallet?.wallet_address ?? null,
-                walletVerified: Boolean(linkedWallet?.verified_at &&
-                    isBase58(linkedWallet.wallet_address, 32)),
                 balanceCredits,
                 availableCredits,
                 pendingWithdrawalCredits: pendingCredits.toString(),
@@ -144,10 +139,6 @@ module.exports = async function withdrawals(request, response) {
                 message: `Complete levels 1-30 to unlock withdrawals. ${level30Requirement.completedLevels} of 30 server-saved level clears are recorded.`
             });
         }
-        if (!linkedWallet?.wallet_address || !isBase58(linkedWallet.wallet_address, 32) ||
-            !linkedWallet.verified_at) {
-            return sendJson(response, 400, { error: "wallet_not_verified" });
-        }
         if (!configs || configs.official_mint_address !== RELICGRID_CYFUR_MINT_ADDRESS ||
             configs.treasury_address !== RELICGRID_TREASURY_ADDRESS ||
             configs.token_program_id !== "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA" ||
@@ -170,12 +161,13 @@ module.exports = async function withdrawals(request, response) {
 
         const amountCredits = request.body?.amountCredits;
         const requestedWalletAddress = request.body?.walletAddress;
-        if (action === "submit" && (typeof requestedWalletAddress !== "string" ||
-            !isBase58(requestedWalletAddress.trim(), 32) ||
-            requestedWalletAddress.trim() !== linkedWallet.wallet_address)) {
+        const recipientWalletAddress = typeof requestedWalletAddress === "string"
+            ? requestedWalletAddress.trim()
+            : "";
+        if (!isBase58(recipientWalletAddress, 32)) {
             return sendJson(response, 400, {
-                error: "withdrawal_wallet_mismatch",
-                message: "The receiving wallet must exactly match the verified wallet linked to this game account."
+                error: "invalid_wallet_address",
+                message: "Enter a valid Solana receiving address."
             });
         }
         const amountCreditsString = typeof amountCredits === "string" ? amountCredits : String(amountCredits ?? "");
@@ -205,7 +197,7 @@ module.exports = async function withdrawals(request, response) {
             return sendJson(response, 200, {
                 amountCredits: amountCreditsString,
                 amountRaw,
-                walletAddress: linkedWallet.wallet_address,
+                walletAddress: recipientWalletAddress,
                 availableCredits,
                 network: configs.network,
                 treasuryAddress: configs.treasury_address,
@@ -237,7 +229,7 @@ module.exports = async function withdrawals(request, response) {
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
                     p_player_id: user.id,
-                    p_wallet_address: linkedWallet.wallet_address,
+                    p_wallet_address: recipientWalletAddress,
                     p_network: configs.network,
                     p_mint_address: configs.official_mint_address,
                     p_token_program_id: configs.token_program_id,
@@ -273,7 +265,7 @@ module.exports = async function withdrawals(request, response) {
                 amountCredits: amountCreditsString,
                 amountRaw,
                 signature: reservation.transaction_signature,
-                walletAddress: linkedWallet.wallet_address,
+                walletAddress: recipientWalletAddress,
                 message: "This withdrawal request was already recorded. Its transfer will not be submitted a second time."
             };
             if (reservation.withdrawal_status === "confirmed") {
@@ -289,7 +281,7 @@ module.exports = async function withdrawals(request, response) {
         try {
             const execution = await executeCyfurWithdrawal({
                 rpcUrl: process.env.SOLANA_RPC_URL,
-                playerWalletAddress: linkedWallet.wallet_address,
+                playerWalletAddress: recipientWalletAddress,
                 treasuryAddress: configs.treasury_address,
                 mintAddress: configs.official_mint_address,
                 tokenProgramId: configs.token_program_id,
@@ -324,7 +316,7 @@ module.exports = async function withdrawals(request, response) {
                     amountCredits: amountCreditsString,
                     amountRaw,
                     signature: execution.signature,
-                    walletAddress: linkedWallet.wallet_address,
+                    walletAddress: recipientWalletAddress,
                     message: "The transfer finalized on Solana; database confirmation is pending reconciliation."
                 });
             }
@@ -334,7 +326,7 @@ module.exports = async function withdrawals(request, response) {
                 amountCredits: amountCreditsString,
                 amountRaw,
                 signature: execution.signature,
-                walletAddress: linkedWallet.wallet_address,
+                walletAddress: recipientWalletAddress,
                 balanceCredits: String(finalResult.balance_credits)
             });
         } catch (error) {
@@ -365,7 +357,7 @@ module.exports = async function withdrawals(request, response) {
                 return sendJson(response, 502, {
                     error: "withdrawal_failed",
                     message: safeFailureReason,
-                    walletAddress: linkedWallet.wallet_address,
+                    walletAddress: recipientWalletAddress,
                     status: "failed"
                 });
             }
@@ -375,7 +367,7 @@ module.exports = async function withdrawals(request, response) {
                 amountCredits: amountCreditsString,
                 amountRaw,
                 signature,
-                walletAddress: linkedWallet.wallet_address,
+                walletAddress: recipientWalletAddress,
                 message: "The transaction may have been submitted. The balance remains reserved while its finalized status is reconciled; do not retry with a new request."
             });
         }

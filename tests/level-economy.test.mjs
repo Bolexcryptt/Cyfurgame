@@ -984,7 +984,7 @@ test("backend level entry costs match the campaign economy for all 99 levels", (
     assert.equal(getLevelEntryCostCredits(100), null);
 });
 
-test("campaign levels use authenticated server game points without a duplicate wallet balance display", () => {
+test("campaign levels use authenticated wallet credits for entry", () => {
     const app = readFileSync(new URL("../app.js", import.meta.url), "utf8");
     const startIndex = app.indexOf("async function startLevel");
     const endIndex = app.indexOf("\nfunction leaveGameplay", startIndex);
@@ -1000,10 +1000,11 @@ test("campaign levels use authenticated server game points without a duplicate w
     assert.match(startLevel, /activeWalletLevelSessionId = entry\.sessionId/);
     assert.match(startLevel, /entryCostCredits: activeLevelEntryCostCredits/);
     assert.match(app, /getLevelEconomy\(level\.number\)\.entryCostCredits/);
-    assert.match(entryFlow, /gamePoints: true/);
     assert.match(entryFlow, /apiUrl\("level-entry"\)/);
-    assert.match(entryFlow, /insufficient_game_points/);
-    assert.doesNotMatch(entryFlow, /saveGameAccessState|wallet_credit_accounts|start_wallet_level/);
+    assert.match(entryFlow, /insufficient_balance/);
+    assert.match(entryFlow, /paid_gameplay_disabled/);
+    assert.match(entryFlow, /wallet_credit_accounts|balanceCredits/);
+    assert.doesNotMatch(entryFlow, /gamePoints: true|insufficient_game_points/);
     assert.match(entryFlow, /apiUrl\("level-entry"\)/);
     assert.match(app, /apiUrl\("game-points"\)/);
     assert.match(app, /function refreshServerGamePoints\(\)/);
@@ -1122,13 +1123,14 @@ test("RelicGrid branding is used in the game and hidden scenes stop rendering", 
     assert.match(html, /id="rotate-device-prompt"/);
     assert.doesNotMatch(app, /verifyCyfurGamePointsDeposit|getSolscanSignature|game-access-form/);
     assert.doesNotMatch(html, /CLAIM 1,000 SERVER GAME POINTS|No CYFUR payment is required/i);
-    assert.match(app, /serverGamePointsVerified &&\s*BigInt\(serverGamePoints\) >= BigInt\(entryCostCredits\)/);
     const pointEntryLevelStart = app.slice(app.indexOf("async function startLevel"), app.indexOf("\nfunction leaveGameplay"));
     assert.doesNotMatch(pointEntryLevelStart, /serverGamePoints\s*-/);
-    assert.match(pointEntryLevelStart, /const balance = String\(entry\.balancePoints\)/);
+    assert.match(pointEntryLevelStart, /activeLevelEntryCostCredits = entry\.practice \? null : Number\(entry\.entryCostCredits\)/);
+    assert.match(pointEntryLevelStart, /wallet credits deducted/);
+    assert.doesNotMatch(pointEntryLevelStart, /entry\.gamePoints|entryCostPoints|balancePoints/);
     const requestPointEntry = app.slice(app.indexOf("async function requestLevelEntry"), app.indexOf("\nasync function startLevel"));
-    assert.match(requestPointEntry, /gamePoints: true/);
-    assert.doesNotMatch(requestPointEntry, /localStorage|wallet_credit_accounts/);
+    assert.doesNotMatch(requestPointEntry, /gamePoints: true/);
+    assert.match(requestPointEntry, /apiUrl\("level-entry"\)/);
     assert.doesNotMatch(app, /awardGameAccessCompletionPoints/);
     assert.doesNotMatch(scene, /gameAccessCompletionId|gameAccessPointsUsed/);
     assert.match(app, /function fitVideoFrame\(video\)/);
@@ -1429,16 +1431,17 @@ test("wallet balance reloads from the authenticated account and does not cross p
     }
 });
 
-test("campaign levels use server points for saved entries and otherwise remain available for practice", () => {
+test("campaign levels use authenticated wallet credits and remain globally lockable", () => {
     const app = readFileSync(new URL("../app.js", import.meta.url), "utf8");
     const levelPicker = app.slice(app.indexOf("function renderLevels"), app.indexOf("\nfunction renderHome"));
     const startLevel = app.slice(app.indexOf("async function startLevel"), app.indexOf("\nfunction leaveGameplay"));
-    assert.match(levelPicker, /const hasGameAccessPoints = serverGamePointsVerified &&\s*BigInt\(serverGamePoints\) >= BigInt\(entryCostCredits\)/);
+    assert.match(levelPicker, /const hasWalletEntryCredits = paidGameplayEnabled &&\s*hasVerifiedWalletBalance &&\s*BigInt\(walletBalance\) >= BigInt\(entryCostCredits\)/);
     assert.match(levelPicker, /const levelLocked = levelsGloballyLocked/);
     assert.match(levelPicker, /button\.disabled = levelLocked/);
-    assert.match(levelPicker, /hasGameAccessPoints \? "ACCESS READY" : "FREE PRACTICE"/);
+    assert.match(levelPicker, /hasWalletEntryCredits \? "ACCESS READY" : "FREE PRACTICE"/);
     assert.match(startLevel, /if \(levelsGloballyLocked\)/);
-    assert.match(app, /Your server game-points balance is below the entry cost/);
+    assert.match(app, /entry\.entryCostCredits/);
+    assert.match(app, /paid_gameplay_disabled/);
     assert.match(app, /fetch\(apiUrl\("game-config"\)/);
 
     const html = readFileSync(new URL("../index.html", import.meta.url), "utf8");

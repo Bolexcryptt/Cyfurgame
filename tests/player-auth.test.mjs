@@ -369,19 +369,16 @@ test("player records remain keyed to auth user IDs and web sessions persist", ()
     assert.doesNotMatch(html, /id="legacy-game-access-points"|id="game-points-balance"/);
 });
 
-test("the withdrawal UI supports off-app signed receiving-address verification", () => {
+test("the withdrawal UI accepts a manually pasted receiving address without wallet signing", () => {
     const app = readFileSync(new URL("../app.js", import.meta.url), "utf8");
     const html = readFileSync(new URL("../index.html", import.meta.url), "utf8");
-    assert.match(html, /id="wallet-link-button"[^>]*>REQUEST SIGNING CHALLENGE/);
-    assert.match(html, /id="withdrawal-link-status"/);
-    assert.match(html, /id="wallet-link-challenge"[^>]*readonly/);
-    assert.match(html, /id="wallet-link-signature"/);
-    assert.match(app, /getElementById\("wallet-link-button"\)\?\.addEventListener\("click",\s*\(\) => \{\s*void requestWithdrawalWalletChallenge\(\)/);
-    assert.match(app, /getElementById\("wallet-link-verify-button"\)\?\.addEventListener/);
-    assert.match(app, /action:\s*"challenge",\s*walletAddress/);
-    assert.match(app, /action:\s*"verify",\s*walletAddress,\s*signature/);
-    assert.match(app, /navigator\.clipboard\.writeText\(challenge\)/);
-    assert.match(app, /walletAddress !== verifiedWithdrawalAddress/);
-    assert.doesNotMatch(app, /void connectSolanaWallet\(\)/);
+    assert.match(html, /id="withdrawal-wallet-address"[^>]*placeholder="Paste your Solana receiving address"/);
+    assert.doesNotMatch(html, /id="withdrawal-wallet-address"[^>]*readonly/);
+    assert.match(html, /WITHDRAWAL AMOUNT \(CYFUR\)/);
+    assert.doesNotMatch(html, /wallet-link-button|withdrawal-challenge-panel|wallet-link-challenge|wallet-link-signature/);
+    assert.doesNotMatch(app, /walletAddress !== verifiedWithdrawalAddress/);
+    assert.doesNotMatch(app, /connectSolanaWallet|withdrawal ownership challenge|signed receiving address/i);
+    assert.match(app, /function parseWithdrawalCredits\(value\)/);
+    assert.match(app, /body:\s*JSON\.stringify\(\{\s*action:\s*"submit",\s*walletAddress,\s*amountCredits/);
     assert.match(app, /await refreshWithdrawalStatus\(\)/);
 });
