@@ -210,6 +210,9 @@ module.exports = async function levelEntry(request, response) {
         if (error.code === "42703") {
             return sendJson(response, 503, { error: "wallet_migration_required" });
         }
+        if (error.code === "42702") {
+            return sendJson(response, 503, { error: "wallet_migration_required" });
+        }
         return sendJson(response, 502, { error: "level_access_check_unavailable" });
     }
 };

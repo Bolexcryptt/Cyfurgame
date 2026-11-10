@@ -55,7 +55,8 @@ function configureEnvironment({ gameplayEnabled = false } = {}) {
 function installEntryDatabase({
     initialBalance,
     hasAccount = true,
-    gameplayEnabled = false
+    gameplayEnabled = false,
+    startRpcError = null
 }) {
     let balance = BigInt(initialBalance);
     let rpcTail = Promise.resolve();
@@ -76,6 +77,12 @@ function installEntryDatabase({
         }
         if (path === "rpc/start_wallet_level") {
             rpcCalls++;
+            if (startRpcError) {
+                return response(400, {
+                    code: startRpcError,
+                    message: "Database function failed."
+                });
+            }
             const body = JSON.parse(options.body);
             const operation = rpcTail.then(() => {
                 const existing = sessions.get(body.p_request_id);
@@ -259,6 +266,21 @@ test("a distinct active session for another level is rejected without another ch
     assert.equal(database.balance, 892n);
 });
 
+test("ambiguous SQL output columns report that the wallet migration is required", async (context) => {
+    context.after(restoreEnvironment);
+    configureEnvironment({ gameplayEnabled: true });
+    installEntryDatabase({
+        initialBalance: "1000",
+        gameplayEnabled: true,
+        startRpcError: "42702"
+    });
+
+    const result = await enterLevel();
+
+    assert.equal(result.statusCode, 503);
+    assert.equal(result.payload.error, "wallet_migration_required");
+});
+
 test("approved star rewards and failed attempts follow the existing completion-time rules", () => {
     for (const levelNumber of [1, 50, 99]) {
         const level = levels[levelNumber - 1];
@@ -306,6 +328,7 @@ test("the SQL accounting functions serialize entry and award rewards once per se
     assert.match(complete, /'game_reward', v_expected_reward/);
     assert.match(complete, /level-reward:' \|\| p_session_id::text/);
     assert.match(complete, /on conflict \(player_id, level_number\) do nothing/);
+    assert.doesNotMatch(complete, /select balance_credits into v_balance\s+from public\.wallet_credit_accounts\b/);
     assert.match(sql, /paid_gameplay_enabled = false/);
     const safetyMigration = readFileSync(new URL("../supabase-wallet-level-entry-safety.sql", import.meta.url), "utf8");
     assert.match(safetyMigration, /create or replace function public\.start_wallet_level\(/);
@@ -317,7 +340,16 @@ test("the SQL accounting functions serialize entry and award rewards once per se
     assert.match(allLevelsMigration, /if v_balance < v_cost then/i);
     assert.match(allLevelsMigration, /'game_entry', -v_cost/);
     assert.doesNotMatch(allLevelsMigration, /v_unlocked|Level is locked/i);
+    assert.doesNotMatch(allLevelsMigration, /select balance_credits into v_balance\s+from public\.wallet_credit_accounts\b/);
     assert.doesNotMatch(allLevelsMigration, /update public\.wallet_system_config|deposits_enabled\s*=/i);
+    const ambiguityMigration = readFileSync(
+        new URL("../supabase-wallet-output-ambiguity-fix.sql", import.meta.url),
+        "utf8"
+    );
+    assert.match(ambiguityMigration, /create or replace function public\.start_wallet_level\(/);
+    assert.match(ambiguityMigration, /create or replace function public\.complete_wallet_level\(/);
+    assert.equal((ambiguityMigration.match(/select account\.balance_credits into v_balance/g) || []).length, 5);
+    assert.doesNotMatch(ambiguityMigration, /select balance_credits into v_balance\s+from public\.wallet_credit_accounts\b/);
     const depositAttributionMigration = readFileSync(
         new URL("../supabase-shared-treasury-deposit-attribution.sql", import.meta.url),
         "utf8"

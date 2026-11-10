@@ -221,9 +221,9 @@ begin
            or v_existing_session.completed_at is not null then
             raise exception 'Entry request was already used.' using errcode = '22023';
         end if;
-        select balance_credits into v_balance
-        from public.wallet_credit_accounts
-        where player_id = p_player_id;
+        select account.balance_credits into v_balance
+        from public.wallet_credit_accounts as account
+        where account.player_id = p_player_id;
         return query select v_existing_session.id, v_balance, v_existing_session.entry_cost_credits;
         return;
     end if;
@@ -240,9 +240,9 @@ begin
         if v_active_session.level_number <> p_level_number then
             raise exception 'Another level session is already active.' using errcode = '55006';
         end if;
-        select balance_credits into v_balance
-        from public.wallet_credit_accounts
-        where player_id = p_player_id;
+        select account.balance_credits into v_balance
+        from public.wallet_credit_accounts as account
+        where account.player_id = p_player_id;
         return query select v_active_session.id, v_balance, v_active_session.entry_cost_credits;
         return;
     end if;
@@ -250,9 +250,9 @@ begin
     v_cost := floor(100 * power(1.08::numeric, p_level_number - 1))::bigint;
     insert into public.wallet_credit_accounts (player_id)
     values (p_player_id) on conflict (player_id) do nothing;
-    select balance_credits into v_balance
-    from public.wallet_credit_accounts
-    where player_id = p_player_id for update;
+    select account.balance_credits into v_balance
+    from public.wallet_credit_accounts as account
+    where account.player_id = p_player_id for update;
     if v_balance < v_cost then
         raise exception 'Insufficient credits.' using errcode = 'P0001';
     end if;
@@ -345,8 +345,9 @@ begin
     end if;
 
     if v_session.completed_at is not null then
-        select balance_credits into v_balance
-        from public.wallet_credit_accounts where player_id = p_player_id;
+        select account.balance_credits into v_balance
+        from public.wallet_credit_accounts as account
+        where account.player_id = p_player_id;
         return query select v_balance, v_session.stars, v_session.reward_credits,
                             v_session.solve_duration_ms, true;
         return;
@@ -383,8 +384,9 @@ begin
             'Level ' || v_session.level_number::text || ' completion reward'
         ) as result;
     else
-        select balance_credits into v_balance
-        from public.wallet_credit_accounts where player_id = p_player_id;
+        select account.balance_credits into v_balance
+        from public.wallet_credit_accounts as account
+        where account.player_id = p_player_id;
     end if;
     return query select v_balance, p_stars, v_expected_reward,
                         p_elapsed_milliseconds, v_already_completed;

@@ -139,6 +139,9 @@ module.exports = async function levelCompletion(request, response) {
                     : "wallet_schema_not_installed"
             });
         }
+        if (error.code === "42702") {
+            return sendJson(response, 503, { error: "wallet_migration_required" });
+        }
         return sendJson(response, 502, { error: "level_completion_unavailable" });
     }
 };

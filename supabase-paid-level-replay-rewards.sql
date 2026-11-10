@@ -60,8 +60,9 @@ begin
     end if;
 
     if v_session.completed_at is not null then
-        select balance_credits into v_balance
-        from public.wallet_credit_accounts where player_id = p_player_id;
+        select account.balance_credits into v_balance
+        from public.wallet_credit_accounts as account
+        where account.player_id = p_player_id;
         return query select v_balance, v_session.stars, v_session.reward_credits,
                             v_session.solve_duration_ms, true;
         return;
@@ -98,8 +99,9 @@ begin
             'Level ' || v_session.level_number::text || ' completion reward'
         ) as result;
     else
-        select balance_credits into v_balance
-        from public.wallet_credit_accounts where player_id = p_player_id;
+        select account.balance_credits into v_balance
+        from public.wallet_credit_accounts as account
+        where account.player_id = p_player_id;
     end if;
     return query select v_balance, p_stars, v_expected_reward,
                         p_elapsed_milliseconds, v_already_completed;
