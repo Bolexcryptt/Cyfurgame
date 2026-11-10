@@ -2505,9 +2505,7 @@ function playGameVideo() {
 }
 
 function playOpeningVideo(source, caption, onEnded, allowSkip = false) {
-    const orientation = source === "companyintro.mp4" || source === "gamevideo.mp4"
-        ? "landscape"
-        : "portrait";
+    const orientation = source === "gamevideo.mp4" ? "landscape" : "portrait";
     introVideo.pause();
     introVideo.onerror = null;
     introVideo.onended = null;

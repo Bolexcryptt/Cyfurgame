@@ -2102,6 +2102,7 @@ body {
     border-radius: 0;
     box-shadow: none;
 }
+.video-screen[data-company-intro="true"] #intro-video { object-fit: cover; }
 .video-screen[data-fullscreen-video="true"] {
     position: fixed;
     z-index: 20;
