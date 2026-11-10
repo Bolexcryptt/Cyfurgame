@@ -53,7 +53,7 @@ module.exports = async function withdrawalDiagnostics(request, response) {
         networkVerified: false,
         mintVerified: false,
         treasuryTokenAccountVerified: false,
-        reason: "Supabase wallet configuration was not loaded."
+        reason: "The RelicGrid wallet configuration was not loaded."
     };
     const overallReady = treasurySummary.valid && signerMatchesConfig &&
         signerMatchesExpected && configResult.connected && rpcResult.available &&
@@ -146,7 +146,7 @@ module.exports = async function withdrawalDiagnostics(request, response) {
         notes: [
             "The private key itself is never returned in the response.",
             "The deployment must match the owner-approved treasury and CYFUR mint before any real payout is enabled.",
-            "The Supabase withdrawals_enabled flag and Vercel WITHDRAWAL_ENABLED flag must both be explicitly enabled before a payout can be reserved."
+            "The RelicGrid withdrawal setting and deployment withdrawal switch must both be enabled before a payout can be reserved."
         ],
         expected: {
             treasuryAddress: RELICGRID_TREASURY_ADDRESS,

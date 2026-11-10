@@ -25,7 +25,7 @@ export async function restoreOrCreatePlayerSession(auth) {
         if (userError) throw userError;
         if (!userData.user?.id ||
             (sessionData.session.user?.id && sessionData.session.user.id !== userData.user.id)) {
-            throw new Error("The saved Supabase session could not be verified.");
+            throw new Error("The saved RelicGrid player session could not be verified.");
         }
         return { user: userData.user, createdAnonymously: false };
     }
@@ -33,7 +33,7 @@ export async function restoreOrCreatePlayerSession(auth) {
     const { data, error } = await auth.signInAnonymously();
     if (error) throw error;
     if (!data.user?.id) {
-        throw new Error("Supabase did not return an authenticated player.");
+        throw new Error("RelicGrid did not return an authenticated player.");
     }
     return { user: data.user, createdAnonymously: true };
 }
@@ -67,8 +67,23 @@ export function hydratePlayerFromAuthenticatedAccount(player, authUser, profile,
     };
 }
 
-export async function requestAccountEmailLink(auth, email) {
-    const result = await auth.updateUser({ email: normalizeEmail(email) });
+export async function requestAccountEmailLink(auth, email, emailRedirectTo) {
+    if (typeof emailRedirectTo !== "string") {
+        throw new TypeError("The RelicGrid email confirmation address is unavailable.");
+    }
+    let redirectUrl;
+    try {
+        redirectUrl = new URL(emailRedirectTo);
+    } catch {
+        throw new TypeError("The RelicGrid email confirmation address is invalid.");
+    }
+    if (redirectUrl.protocol !== "https:" || redirectUrl.username || redirectUrl.password) {
+        throw new TypeError("The RelicGrid email confirmation address must use HTTPS.");
+    }
+    const result = await auth.updateUser(
+        { email: normalizeEmail(email) },
+        { emailRedirectTo: redirectUrl.toString() }
+    );
     if (result.error) throw result.error;
     return result.data.user;
 }
@@ -80,8 +95,16 @@ export async function verifyAccountEmailLink(auth, email, token) {
         type: "email_change"
     });
     if (result.error) throw result.error;
-    if (!result.data.user?.id) throw new Error("Supabase did not verify the linked email.");
+    if (!result.data.user?.id) throw new Error("RelicGrid did not verify the linked email.");
     return result.data.user;
+}
+
+export function isAccountEmailConfirmationCallback(location) {
+    if (!location || typeof location.search !== "string" ||
+        typeof location.hash !== "string") return false;
+    const query = new URLSearchParams(location.search);
+    const hash = new URLSearchParams(location.hash.replace(/^#/, ""));
+    return query.get("auth") === "email-confirmed" || hash.get("type") === "email_change";
 }
 
 export async function requestExistingAccountRecovery(auth, email) {

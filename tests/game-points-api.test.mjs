@@ -8,10 +8,24 @@ const require = createRequire(import.meta.url);
 const gamePoints = require("../server/lib/game-points.js");
 const levelEntry = require("../api/level-entry.js");
 const levelCompletion = require("../api/level-completion.js");
+const {
+    RELICGRID_CYFUR_MINT_ADDRESS,
+    RELICGRID_TREASURY_ADDRESS,
+    deriveAssociatedTokenAccount
+} = require("../server/lib/solana-deposit.js");
 const originalFetch = globalThis.fetch;
 const originalEnvironment = { ...process.env };
 const signature = encodeBase58(Buffer.alloc(64, 7));
 const sessionId = "123e4567-e89b-42d3-a456-426614174000";
+const playerId = "00000000-0000-4000-8000-000000000001";
+const sourceWallet = "11111111111111111111111111111111";
+const tokenProgramId = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
+const sourceTokenAccount = "Stake11111111111111111111111111111111111111";
+const treasuryTokenAccount = deriveAssociatedTokenAccount(
+    RELICGRID_TREASURY_ADDRESS,
+    RELICGRID_CYFUR_MINT_ADDRESS,
+    tokenProgramId
+);
 
 let scenario;
 
@@ -47,19 +61,68 @@ function makeResponse() {
     };
 }
 
+function makeDepositTransaction(amountRaw = "250000000", authority = sourceWallet) {
+    return {
+        slot: 77,
+        blockTime: 1700000000,
+        transaction: {
+            signatures: [signature],
+            message: {
+                accountKeys: [
+                    { pubkey: authority, signer: true },
+                    sourceTokenAccount,
+                    treasuryTokenAccount
+                ],
+                instructions: [{
+                    programId: tokenProgramId,
+                    parsed: {
+                        type: "transferChecked",
+                        info: {
+                            mint: RELICGRID_CYFUR_MINT_ADDRESS,
+                            source: sourceTokenAccount,
+                            destination: treasuryTokenAccount,
+                            authority,
+                            tokenAmount: { amount: amountRaw }
+                        }
+                    }
+                }]
+            }
+        },
+        meta: {
+            err: null,
+            preTokenBalances: [{
+                accountIndex: 1,
+                mint: RELICGRID_CYFUR_MINT_ADDRESS,
+                owner: authority,
+                uiTokenAmount: { amount: "500000000" }
+            }],
+            postTokenBalances: [
+                {
+                    accountIndex: 1,
+                    mint: RELICGRID_CYFUR_MINT_ADDRESS,
+                    owner: authority,
+                    uiTokenAmount: { amount: String(500000000n - BigInt(amountRaw)) }
+                },
+                {
+                    accountIndex: 2,
+                    mint: RELICGRID_CYFUR_MINT_ADDRESS,
+                    owner: RELICGRID_TREASURY_ADDRESS,
+                    uiTokenAmount: { amount: amountRaw }
+                }
+            ]
+        }
+    };
+}
+
 function resetScenario() {
     scenario = {
         genesisHash: "EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG",
         transactionStatus: { confirmationStatus: "finalized", err: null, slot: 77 },
-        transaction: {
-            slot: 77,
-            transaction: { signatures: [signature] },
-            meta: { err: null }
-        },
+        transaction: makeDepositTransaction(),
         balancePoints: "4321",
         completedLevels: [2, 4],
         elapsedMilliseconds: 1000,
-        claimResult: { balance_points: "5321", already_claimed: false },
+        claimResult: { balance_points: "6821", already_claimed: false, amount_points: "2500" },
         rpcClaimCalls: [],
         entryCalls: [],
         completionCalls: [],
@@ -93,6 +156,38 @@ function resetScenario() {
                 return dbResponse(200, { result: { value: [scenario.transactionStatus] } });
             }
             if (method === "getTransaction") return dbResponse(200, { result: scenario.transaction });
+            if (method === "getAccountInfo") {
+                const [address] = JSON.parse(options.body).params;
+                const account = address === RELICGRID_TREASURY_ADDRESS
+                    ? { owner: "11111111111111111111111111111111", data: ["", "base64"] }
+                    : address === treasuryTokenAccount
+                        ? { owner: tokenProgramId, data: { parsed: { type: "account", info: {
+                            mint: RELICGRID_CYFUR_MINT_ADDRESS,
+                            owner: RELICGRID_TREASURY_ADDRESS
+                        } } } }
+                        : { owner: tokenProgramId, data: { parsed: { type: "mint", info: {
+                            decimals: 8,
+                            mintAuthority: null,
+                            freezeAuthority: null
+                        } } } };
+                return dbResponse(200, { result: { value: account } });
+            }
+        }
+        if (path.startsWith("wallet_system_config")) {
+            return dbResponse(200, [{
+                network: "devnet",
+                official_mint_address: RELICGRID_CYFUR_MINT_ADDRESS,
+                token_program_id: tokenProgramId,
+                token_decimals: 8,
+                credits_per_token: 1000,
+                rounding_policy: "floor",
+                treasury_address: RELICGRID_TREASURY_ADDRESS
+            }]);
+        }
+        if (path.startsWith("player_solana_wallets")) {
+            return dbResponse(200, scenario.linkedWallet === null
+                ? []
+                : [{ wallet_address: scenario.linkedWallet ?? sourceWallet }]);
         }
         if (path.startsWith("game_point_accounts")) {
             return dbResponse(200, [{ balance_points: scenario.balancePoints }]);
@@ -110,7 +205,7 @@ function resetScenario() {
                 completed_at: scenario.sessionCompletedAt
             }]);
         }
-        if (path === "rpc/claim_verified_game_points") {
+        if (path === "rpc/credit_verified_cyfur_game_points") {
             const body = JSON.parse(options.body);
             scenario.rpcClaimCalls.push(body);
             return dbResponse(200, [scenario.claimResult]);
@@ -238,7 +333,7 @@ test("three-star, two-star, one-star, and failed level outcomes receive only the
         slash: orientation === "/"
     }));
     const outcomes = [
-        { elapsed: Math.max(0, level.starTimeTargets.threeSeconds * 1000 - 5000), stars: 3, reward: "160" },
+        { elapsed: Math.max(0, level.starTimeTargets.threeSeconds * 1000 - 60000), stars: 3, reward: "160" },
         { elapsed: Math.ceil((level.starTimeTargets.threeSeconds + level.starTimeTargets.twoSeconds) * 500), stars: 2, reward: "40" },
         { elapsed: (level.starTimeTargets.twoSeconds + 1) * 1000, stars: 1, reward: "0" }
     ];
@@ -298,26 +393,55 @@ test("replaying a completed level session returns its prior record without anoth
     assert.equal(scenario.completionCalls[1].p_reward_points, 0);
 });
 
-test("a finalized successful transaction credits exactly 1000 server points", async () => {
-    const response = await call(gamePoints, "POST", { action: "claim", signature });
+test("a fresh paid session earns its reward even when that level was cleared before", async () => {
+    const level = levels[0];
+    scenario.completedLevels = [1, 2, 4];
+    scenario.elapsedMilliseconds = Math.max(0, level.starTimeTargets.threeSeconds * 1000 - 1000);
+    const response = await call(levelCompletion, "POST", {
+        sessionId,
+        mirrors: level.solutionMirrors.map(({ row, col, orientation }) => ({
+            row,
+            col,
+            slash: orientation === "/"
+        })),
+        launchDirection: level.start.direction,
+        gamePoints: true
+    });
+
+    assert.equal(response.statusCode, 200);
+    assert.equal(response.payload.duplicate, false);
+    assert.equal(response.payload.rewardPoints, "160");
+    assert.equal(scenario.completionCalls.length, 1);
+    assert.equal(scenario.completionCalls[0].p_reward_points, 160);
+});
+
+test("a finalized treasury transfer credits the exact CYFUR-to-points amount", async () => {
+    const response = await call(gamePoints, "POST", { action: "verify-deposit", signature });
 
     assert.equal(response.statusCode, 200);
     assert.deepEqual(response.payload, {
         status: "confirmed",
         claimed: true,
-        claimedPoints: "1000",
-        balancePoints: "5321",
+        amountRaw: "250000000",
+        tokenDecimals: 8,
+        claimedPoints: "2500",
+        balancePoints: "6821",
         transactionSignature: signature
     });
     assert.deepEqual(scenario.rpcClaimCalls, [{
-        p_player_id: "00000000-0000-4000-8000-000000000001",
+        p_player_id: playerId,
         p_transaction_signature: signature,
         p_network: "devnet",
-        p_finalized_slot: 77
+        p_finalized_slot: 77,
+        p_amount_raw: "250000000",
+        p_token_decimals: 8,
+        p_mint_address: RELICGRID_CYFUR_MINT_ADDRESS,
+        p_token_program_id: tokenProgramId,
+        p_treasury_address: RELICGRID_TREASURY_ADDRESS
     }]);
 });
 
-test("pending, missing, failed, and wrong-network transactions never reach the claim RPC", async () => {
+test("pending, missing, failed, wrong-network, and unverifiable transactions never reach the credit RPC", async () => {
     const cases = [
         {
             update: () => { scenario.transactionStatus = { confirmationStatus: "confirmed", err: null, slot: 77 }; },
@@ -349,21 +473,45 @@ test("pending, missing, failed, and wrong-network transactions never reach the c
     for (const item of cases) {
         resetScenario();
         item.update();
-        const response = await call(gamePoints, "POST", { action: "claim", signature });
+        const response = await call(gamePoints, "POST", { action: "verify-deposit", signature });
         assert.equal(response.statusCode, item.expectedStatus);
         assert.equal(response.payload.error || response.payload.status, item.expectedError);
         assert.equal(scenario.rpcClaimCalls.length, 0);
     }
 });
 
-test("a globally repeated transaction claim returns the current balance without crediting again", async () => {
-    scenario.claimResult = { balance_points: "5321", already_claimed: true };
+test("a transaction ID is sufficient without linking the sending wallet or adding a memo", async () => {
+    scenario.linkedWallet = null;
+    const unlinked = await call(gamePoints, "POST", { action: "verify-deposit", signature });
+    assert.equal(unlinked.statusCode, 200);
+    assert.equal(unlinked.payload.claimedPoints, "2500");
+    assert.equal(scenario.rpcClaimCalls.length, 1);
 
-    const response = await call(gamePoints, "POST", { action: "claim", signature });
+    resetScenario();
+    scenario.transaction = makeDepositTransaction("250000000", "Stake11111111111111111111111111111111111111");
+    const anotherWallet = await call(gamePoints, "POST", { action: "verify-deposit", signature });
+    assert.equal(anotherWallet.statusCode, 200);
+    assert.equal(anotherWallet.payload.claimedPoints, "2500");
+    assert.equal(scenario.rpcClaimCalls.length, 1);
+});
+
+test("a finalized transfer smaller than one point is not credited", async () => {
+    scenario.transaction = makeDepositTransaction("1");
+    const response = await call(gamePoints, "POST", { action: "verify-deposit", signature });
+
+    assert.equal(response.statusCode, 422);
+    assert.equal(response.payload.error, "cyfur_amount_too_small");
+    assert.equal(scenario.rpcClaimCalls.length, 0);
+});
+
+test("a globally repeated transaction returns the current balance without crediting again", async () => {
+    scenario.claimResult = { balance_points: "6821", already_claimed: true, amount_points: "2500" };
+
+    const response = await call(gamePoints, "POST", { action: "verify-deposit", signature });
 
     assert.equal(response.statusCode, 409);
     assert.equal(response.payload.error, "transaction_already_claimed");
-    assert.equal(response.payload.balancePoints, "5321");
+    assert.equal(response.payload.balancePoints, "6821");
     assert.equal(scenario.rpcClaimCalls.length, 1);
 });
 
@@ -384,4 +532,19 @@ test("verified-claims migration preserves balances and blocks legacy fabricated 
     assert.match(migration, /auth\.role\(\)[\s\S]*?'service_role'/i);
     assert.match(migration, /on conflict \(transaction_signature\) do nothing/i);
     assert.doesNotMatch(migration, /update public\.game_point_accounts[\s\S]*?set balance_points\s*=\s*0/i);
+});
+
+test("CYFUR deposit migration applies exact amounts without resetting balances or reusing deposits", () => {
+    const migration = readFileSync(new URL("../supabase-game-points-cyfur-deposits.sql", import.meta.url), "utf8");
+
+    assert.match(migration, /add column if not exists amount_raw numeric/i);
+    assert.match(migration, /add column if not exists token_decimals integer/i);
+    assert.match(migration, /floor\(p_amount_raw \* 1000 \/ power\(10::numeric, p_token_decimals\)\)/i);
+    assert.match(migration, /'cyfur_deposit'/i);
+    assert.match(migration, /pg_advisory_xact_lock/i);
+    assert.match(migration, /prevent_reusing_game_point_deposit_signature/i);
+    assert.match(migration, /credit_verified_cyfur_game_points/i);
+    assert.match(migration, /auth\.role\(\)[\s\S]*?'service_role'/i);
+    assert.doesNotMatch(migration, /update public\.game_point_accounts[\s\S]*?set balance_points\s*=\s*0/i);
+    assert.doesNotMatch(migration, /delete from public\.game_point_accounts|truncate table public\.game_point_accounts/i);
 });

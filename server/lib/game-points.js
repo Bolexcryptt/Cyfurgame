@@ -6,13 +6,18 @@ const {
     sendJson
 } = require("./wallet");
 const {
+    RELICGRID_CYFUR_MINT_ADDRESS,
+    RELICGRID_TREASURY_ADDRESS,
+    deriveAssociatedTokenAccount,
     getSolanaNetwork,
     getSolanaRpcUrl,
     normalizeTransactionSignature,
-    verifyFinalizedSuccessfulTransaction
+    TOKEN_PROGRAM_IDS,
+    verifyFinalizedDeposit
 } = require("./solana-deposit");
+const { getDepositCreditAmount } = require("./wallet");
 
-const CLAIM_POINTS = "1000";
+const CYFUR_TOKEN_PROGRAM_ID = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
 
 function readPointBalance(playerId) {
     return serviceRequest(
@@ -56,7 +61,7 @@ module.exports = async function gamePoints(request, response) {
             return sendJson(response, 200, { balancePoints, completedLevels });
         }
 
-        if (request.body?.action !== "claim") {
+        if (request.body?.action !== "verify-deposit") {
             return sendJson(response, 400, { error: "invalid_game_points_action" });
         }
         const signature = normalizeTransactionSignature(request.body?.signature);
@@ -65,11 +70,45 @@ module.exports = async function gamePoints(request, response) {
         }
 
         const network = getSolanaNetwork();
-        const verified = await verifyFinalizedSuccessfulTransaction({
-            signature,
-            network,
-            rpcUrl: getSolanaRpcUrl()
-        });
+        const [configs] = await Promise.all([
+            serviceRequest("wallet_system_config?select=network,official_mint_address,token_program_id,token_decimals,credits_per_token,rounding_policy,treasury_address&id=eq.1")
+        ]);
+        const config = configs[0];
+        if (!config ||
+            config.network !== network ||
+            config.official_mint_address !== RELICGRID_CYFUR_MINT_ADDRESS ||
+            config.token_program_id !== CYFUR_TOKEN_PROGRAM_ID ||
+            !TOKEN_PROGRAM_IDS.has(config.token_program_id) ||
+            config.token_decimals !== 8 ||
+            String(config.credits_per_token) !== "1000" ||
+            config.rounding_policy !== "floor" ||
+            config.treasury_address !== RELICGRID_TREASURY_ADDRESS) {
+            return sendJson(response, 503, { error: "game_points_deposit_not_configured" });
+        }
+
+        const depositTokenAccount = deriveAssociatedTokenAccount(
+            config.treasury_address,
+            config.official_mint_address,
+            config.token_program_id
+        );
+        let verified;
+        try {
+            verified = await verifyFinalizedDeposit({
+                signature,
+                depositAddress: config.treasury_address,
+                depositTokenAccount,
+                officialMint: config.official_mint_address,
+                tokenProgramId: config.token_program_id,
+                tokenDecimals: config.token_decimals,
+                network,
+                rpcUrl: getSolanaRpcUrl()
+            });
+        } catch (error) {
+            if (error.message === "Configured Solana RPC endpoint is connected to a different network.") {
+                return sendJson(response, 503, { error: "solana_rpc_network_mismatch", claimed: false });
+            }
+            throw error;
+        }
         if (verified.state === "not_found") {
             return sendJson(response, 404, { error: "transaction_not_found", claimed: false });
         }
@@ -79,26 +118,42 @@ module.exports = async function gamePoints(request, response) {
         if (verified.state === "failed") {
             return sendJson(response, 422, { error: "transaction_failed", claimed: false });
         }
-        if (verified.state === "unsupported_network" || verified.state === "network_mismatch") {
-            return sendJson(response, 503, { error: "solana_rpc_network_mismatch", claimed: false });
+        if (verified.state === "wrong_destination_or_token") {
+            return sendJson(response, 422, { error: "cyfur_transfer_not_found", claimed: false });
         }
         if (verified.state !== "finalized") {
             return sendJson(response, 503, { error: "transaction_verification_unavailable", claimed: false });
         }
+        let claimedPoints;
+        try {
+            claimedPoints = getDepositCreditAmount(verified.amountRaw, config.token_decimals, "floor");
+        } catch (error) {
+            if (error instanceof RangeError) {
+                return sendJson(response, 422, { error: "cyfur_amount_too_small", claimed: false });
+            }
+            throw error;
+        }
 
-        const result = await serviceRequest("rpc/claim_verified_game_points", {
+        const result = await serviceRequest("rpc/credit_verified_cyfur_game_points", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
                 p_player_id: user.id,
                 p_transaction_signature: signature,
                 p_network: network,
-                p_finalized_slot: verified.slot
+                p_finalized_slot: verified.finalizedSlot,
+                p_amount_raw: verified.amountRaw,
+                p_token_decimals: config.token_decimals,
+                p_mint_address: config.official_mint_address,
+                p_token_program_id: config.token_program_id,
+                p_treasury_address: config.treasury_address
             })
         });
         const claim = Array.isArray(result) ? result[0] : result;
-        if (!claim || !/^\d+$/.test(String(claim.balance_points))) {
-            throw new Error("Verified game-points claim RPC returned an invalid balance.");
+        if (!claim || !/^\d+$/.test(String(claim.balance_points)) ||
+            !/^\d+$/.test(String(claim.amount_points)) ||
+            String(claim.amount_points) !== claimedPoints) {
+            throw new Error("Verified CYFUR game-points RPC returned an inconsistent amount or balance.");
         }
         if (claim.already_claimed === true) {
             return sendJson(response, 409, {
@@ -110,7 +165,9 @@ module.exports = async function gamePoints(request, response) {
         return sendJson(response, 200, {
             status: "confirmed",
             claimed: true,
-            claimedPoints: CLAIM_POINTS,
+            amountRaw: verified.amountRaw,
+            tokenDecimals: config.token_decimals,
+            claimedPoints: String(claim.amount_points),
             balancePoints: String(claim.balance_points),
             transactionSignature: signature
         });
@@ -124,6 +181,12 @@ module.exports = async function gamePoints(request, response) {
         }
         if (error.status === 404 && error.code === "PGRST205") {
             return sendJson(response, 503, { error: "game_points_schema_not_installed" });
+        }
+        if (error.code === "23505") {
+            return sendJson(response, 409, { error: "transaction_already_credited" });
+        }
+        if (error.code === "22023") {
+            return sendJson(response, 503, { error: "game_points_deposit_not_configured" });
         }
         return sendJson(response, 502, { error: "game_points_unavailable" });
     }

@@ -15,7 +15,7 @@
 </head>
 <body>
     <main class="app-shell">
-        <section id="video-screen" class="screen video-screen" aria-label="Company introduction and campaign transmissions">
+        <section id="video-screen" class="screen video-screen" aria-label="Campaign transmissions">
             <video id="intro-video" class="intro-video" playsinline preload="auto"></video>
             <video id="transition-video" class="intro-video" playsinline preload="metadata" hidden></video>
             <div class="video-shade"></div>
@@ -56,7 +56,7 @@
                 <img src="logo.png" alt="" class="name-logo">
                 <span class="eyebrow">PLAYER IDENTIFICATION</span>
                 <h1>Welcome to RelicGrid</h1>
-                <p>Your player identity and progress are stored with your persistent Supabase account. Choose a callsign to begin.</p>
+                <p>Your player identity and progress are securely saved to your RelicGrid account. Choose a callsign to begin.</p>
                 <form id="name-form">
                     <label for="player-name">CALLSIGN</label>
                     <input id="player-name" name="name" maxlength="20" autocomplete="nickname" required placeholder="Enter your name">
@@ -64,7 +64,7 @@
                 </form>
                 <details id="account-recovery-panel" class="player-auth-panel">
                     <summary>RECOVER AN EXISTING PLAYER ACCOUNT</summary>
-                    <p>Use this on a new device to restore an account that already has a verified recovery email. Recovery is allowed only while this new guest profile has no saved player data.</p>
+                    <p>Use this after reinstalling or on a new device to restore an account with a verified recovery email. Recovery is allowed only while this new guest profile has no saved player data.</p>
                     <form id="account-recovery-form" class="player-auth-form">
                         <label for="account-recovery-email">ACCOUNT RECOVERY EMAIL</label>
                         <input id="account-recovery-email" type="email" autocomplete="email" required>
@@ -198,29 +198,26 @@
                         <span class="eyebrow"><span class="wallet-signal"></span> PILOT RESOURCES // VERIFIED DEPOSITS</span>
                         <h2 id="wallet-heading">Pilot resources</h2>
                         <p class="wallet-description">Your verified credits and deposit activity, secured by RelicGrid's server-side payment checks.</p>
-                        <p class="wallet-exchange-rate">EXCHANGE RATE <b id="wallet-exchange-rate">1 CYFUR = 10,000 CREDITS</b> · DISPLAY ONLY</p>
+                        <p class="wallet-exchange-rate">EXCHANGE RATE <b id="wallet-exchange-rate">1 CYFUR = 1,000 CREDITS</b> · DISPLAY ONLY</p>
                         <section class="wallet-data-panel game-access-panel" aria-labelledby="game-access-heading">
-                            <span class="wallet-field-label">LEGACY DEVICE-LOCAL BALANCE</span>
-                            <h3 id="game-access-heading">Legacy game access points</h3>
-                            <b><span id="legacy-game-access-points">0</span> POINTS</b>
-                            <small>Historical points and progress remain on this device exactly as saved. They are not imported, spent, synchronized, or eligible for withdrawal.</small>
-                            <div class="wallet-data-panel">
-                                <span class="wallet-field-label">AUTHENTICATED SERVER BALANCE</span>
-                                <b><span id="game-points-balance">—</span> POINTS</b>
-                                <small id="game-points-balance-state">SIGN IN TO LOAD SERVER GAME POINTS</small>
-                                <small>These non-withdrawable points are shared across your devices. The server deducts level entry costs and credits only validated star rewards.</small>
-                            </div>
+                            <span class="wallet-field-label">CAMPAIGN ACCESS</span>
+                            <h3 id="game-access-heading">Game access points</h3>
+                            <small>Send CYFUR to the RelicGrid treasury from any Solana wallet. Finalized transfers are checked on Solana and convert at 1 CYFUR = 1,000 non-withdrawable game points.</small>
                             <form id="game-access-form" class="game-access-form">
                                 <label class="wallet-field-label" for="game-access-transaction-link">SOLANA TRANSACTION LINK</label>
                                 <input id="game-access-transaction-link" type="url" inputmode="url" autocomplete="url" spellcheck="false" maxlength="300" placeholder="https://solscan.io/tx/…" required>
-                                <button id="game-access-claim" class="button button-quiet" type="submit">CLAIM 1,000 SERVER GAME POINTS</button>
+                                <button id="game-access-verify" class="button button-quiet" type="submit">VERIFY CYFUR DEPOSIT</button>
                             </form>
-                            <p id="game-access-status" class="wallet-api-status" role="status" aria-live="polite">A real, finalized, successful Solana transaction can be claimed once. No CYFUR payment is required.</p>
+                            <p id="game-access-status" class="wallet-api-status" role="status" aria-live="polite">Only finalized CYFUR transfers to the configured treasury are credited. Enter the transaction ID to credit the exact amount. Each transaction can be used once.</p>
                         </section>
                         <div class="wallet-data-panel wallet-balance-panel">
                             <span class="wallet-field-label">VERIFIED IN-GAME BALANCE</span>
                             <b id="wallet-balance">—</b>
                             <small id="wallet-balance-state">SIGN IN TO VIEW BALANCE</small>
+                            <div id="wallet-account-protection" class="wallet-account-protection" hidden>
+                                <small>Protect this balance before reinstalling: link and verify a recovery email to restore this same account.</small>
+                                <button id="wallet-protect-account" class="button button-quiet" type="button">PROTECT ACCOUNT</button>
+                            </div>
                             <button id="wallet-balance-refresh" class="wallet-refresh" type="button">REFRESH BALANCE</button>
                         </div>
                     </div>
@@ -228,7 +225,7 @@
                         <header class="deposit-panel-heading">
                             <span class="eyebrow"><span class="wallet-signal"></span> SECURE SOLANA CHECKOUT</span>
                             <h2>FUND YOUR RELICGRID ACCOUNT</h2>
-                            <p>Minimum deposit: 1 CYFUR. Confirmed deposits convert at 1 CYFUR = 10,000 credits.</p>
+                            <p>Send any amount of CYFUR to the treasury wallet. Verified deposits convert at 1 CYFUR = 1,000 credits.</p>
                         </header>
                         <div class="wallet-data-panel wallet-address-panel">
                             <span id="wallet-network-label" class="wallet-field-label">01 · PUBLIC SHARED CYFUR TREASURY ADDRESS</span>
@@ -238,32 +235,20 @@
                             <span id="wallet-address-copy-status" class="copy-confirmation" role="status" aria-live="polite">Address is available to copy. Do not send until funding status is READY.</span>
                         </div>
                         <ol class="deposit-steps">
-                            <li><span>01</span><div><strong>CREATE PAYMENT INSTRUCTIONS</strong><small>Generate a one-time amount and memo tied to your signed-in game account.</small></div></li>
-                            <li><span>02</span><div><strong>SEND CYFUR WITH THE UNIQUE MEMO</strong><small>Use Phantom or any Solana wallet. Send at least the displayed amount to the verified treasury and include the memo exactly.</small></div></li>
-                            <li><span>03</span><div><strong>PASTE AND VERIFY THE TRANSACTION</strong><small>Paste the full Solscan transaction link in the field below. The server verifies the finalized transfer and account-bound payment instructions before crediting.</small></div></li>
+                            <li><span>01</span><div><strong>SEND CYFUR TO THE TREASURY</strong><small>Use any Solana wallet to send to the treasury address above.</small></div></li>
+                            <li><span>02</span><div><strong>VERIFY YOUR TRANSACTION</strong><small>Paste the transaction ID from your wallet or Solana explorer. The server checks the finalized CYFUR transfer and exact amount.</small></div></li>
                         </ol>
-                        <button id="deposit-create-intent" class="button button-primary" type="button" disabled>CREATE DEPOSIT INSTRUCTIONS</button>
-                        <section id="deposit-intent-panel" class="deposit-memo-panel" hidden>
-                            <span class="wallet-field-label">SEND THIS AMOUNT</span>
-                            <strong id="deposit-intent-amount"></strong>
-                            <span class="wallet-field-label">INCLUDE THIS MEMO EXACTLY</span>
-                            <code id="deposit-intent-memo"></code>
-                            <button id="deposit-copy-memo" class="button button-quiet" type="button">COPY MEMO</button>
-                            <span id="deposit-memo-copy-status" class="copy-confirmation" role="status" aria-live="polite"></span>
-                            <small id="deposit-intent-expiry"></small>
-                        </section>
-                        <p id="deposit-wallet-requirement" class="wallet-api-status" role="status" aria-live="polite">Funding status is being checked. Do not send CYFUR until the status is READY and account-bound instructions are created.</p>
+                        <p id="deposit-wallet-requirement" class="wallet-api-status" role="status" aria-live="polite">Funding status is being checked. Do not send CYFUR until the status is READY.</p>
                         <form id="deposit-signature-form" class="deposit-signature-form">
-                            <label class="wallet-field-label" for="deposit-signature">Solscan Transaction Link</label>
-                            <input id="deposit-signature" name="signature" type="text" inputmode="url" autocomplete="url" spellcheck="false" maxlength="300" placeholder="Paste your Solscan transaction link here" required>
-                            <small class="wallet-field-help">After sending your CYFUR tokens, open your transaction on Solscan, copy the full transaction link from your browser, and paste it here.</small>
-                            <small class="wallet-field-example">https://solscan.io/tx/YourTransactionSignature</small>
+                            <label class="wallet-field-label" for="deposit-signature">SOLANA TRANSACTION ID</label>
+                            <input id="deposit-signature" name="signature" type="text" inputmode="text" autocomplete="off" spellcheck="false" maxlength="300" placeholder="Paste your transaction ID here" required disabled>
+                            <small class="wallet-field-help">After sending CYFUR, copy the transaction signature from your wallet or Solana explorer and paste it here.</small>
                             <button id="deposit-verify-button" class="button button-primary" type="submit" disabled>VERIFY PAYMENT <span>→</span></button>
                         </form>
                         <div class="deposit-status-panel">
                             <span id="wallet-status-value" class="deposit-status-badge" data-state="disabled">DISABLED</span>
                             <p id="wallet-api-status" tabindex="-1" role="status" aria-live="polite">Funding status is being checked. Do not send CYFUR until the treasury and verification service are confirmed READY.</p>
-                            <small>Credits are awarded only after the backend verifies a successful finalized transfer against this account's active payment instructions, including its unique memo. A signature or screenshot alone is never proof of payment.</small>
+                            <small>Credits are awarded only after the server verifies a successful, finalized CYFUR transfer to the treasury. Each transaction ID can be credited once.</small>
                         </div>
                         <p id="deposit-transaction-result" class="wallet-api-status" hidden><a id="deposit-transaction-link" href="#" target="_blank" rel="noopener noreferrer">View transaction on Solana Explorer</a></p>
                         <div class="wallet-history-heading">
@@ -287,13 +272,12 @@
                     <div class="wallet-home-details">
                         <div class="wallet-withdrawal-summary">
                             <div class="wallet-data-panel">
-                                <span class="wallet-field-label">ELIGIBLE WITHDRAWAL BALANCE</span>
-                                <b id="withdrawal-eligible-balance">0 CREDITS</b>
-                                <small id="withdrawal-balance-note">No active withdrawal balance loaded yet.</small>
+                                <span class="wallet-field-label">WITHDRAWAL ACCESS</span>
+                                <small id="withdrawal-balance-note">Withdrawal requests use the verified balance shown above and unlock after the required level clears.</small>
                             </div>
                             <div class="wallet-data-panel">
                                 <span class="wallet-field-label">CONVERSION RATE</span>
-                                <b id="withdrawal-conversion-rate">1 CYFUR = 10,000 CREDITS</b>
+                                <b id="withdrawal-conversion-rate">1 CYFUR = 1,000 CREDITS</b>
                                 <small id="withdrawal-rate-note">Conversion follows the project credit rate.</small>
                             </div>
                             <div class="wallet-data-panel">
@@ -359,7 +343,7 @@
                     </article>
                 </section>
 
-                <footer class="site-footer"><span>RELICGRID <i>LIGHT PROTOCOL</i></span><span>PLAYER PROGRESS · SYNCED TO SUPABASE WHEN CONNECTED</span></footer>
+                <footer class="site-footer"><span>RELICGRID <i>LIGHT PROTOCOL</i></span><span>PLAYER PROGRESS · SYNCED TO RELICGRID WHEN CONNECTED</span></footer>
             </div>
         </section>
 
@@ -390,7 +374,7 @@
                         <tbody id="leaderboard-rows"></tbody>
                     </table>
                 </div>
-                <p class="leaderboard-footnote">Rank is based on the number of distinct completed levels; ties are ordered by callsign, then account creation time. Progress is shared through this Supabase project.</p>
+                <p class="leaderboard-footnote">Rank is based on the number of distinct completed levels; ties are ordered by callsign, then account creation time. Progress is shared through RelicGrid.</p>
             </main>
         </section>
 
@@ -407,17 +391,17 @@
                 <h1>Your profile</h1>
                 <div id="profile-details" class="profile-details"></div>
                 <article class="info-card player-account-security" aria-labelledby="account-security-heading">
-                    <span class="eyebrow">SUPABASE PLAYER IDENTITY</span>
+                    <span class="eyebrow">RELICGRID PLAYER IDENTITY</span>
                     <h2 id="account-security-heading">Protect account recovery</h2>
-                    <p>New players keep a persistent anonymous Supabase identity. Linking a verified email upgrades that same user ID; credits, game progress, leaderboard records, and linked Solana wallet stay attached.</p>
-                    <p id="account-identity-status" class="wallet-api-status" role="status" aria-live="polite">Checking Supabase player identity…</p>
+                    <p>This anonymous identity remains available during normal app updates, but uninstalling can remove its saved sign-in session. Link and verify a recovery email to restore this same user ID; credits, game progress, leaderboard records, and linked Solana wallet stay attached.</p>
+                    <p id="account-identity-status" class="wallet-api-status" role="status" aria-live="polite">Checking RelicGrid player identity…</p>
                     <form id="account-upgrade-form" class="player-auth-form" hidden>
                         <label for="account-upgrade-email">RECOVERY EMAIL</label>
                         <input id="account-upgrade-email" type="email" autocomplete="email" required>
-                        <button class="button button-primary" type="submit">LINK RECOVERY EMAIL</button>
+                        <button class="button button-primary" type="submit">SEND CONFIRMATION EMAIL</button>
                     </form>
                     <form id="account-upgrade-code-form" class="player-auth-form" hidden>
-                        <label for="account-upgrade-code">SIX-DIGIT EMAIL CODE</label>
+                        <label for="account-upgrade-code">SIX-DIGIT EMAIL CODE (ALTERNATIVE)</label>
                         <input id="account-upgrade-code" type="text" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" required>
                         <button class="button button-quiet" type="submit">VERIFY EMAIL</button>
                     </form>

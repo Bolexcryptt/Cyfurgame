@@ -6,6 +6,7 @@ import {
     requestAccountEmailLink,
     requestExistingAccountRecovery,
     hydratePlayerFromAuthenticatedAccount,
+    isAccountEmailConfirmationCallback,
     restoreOrCreatePlayerSession,
     verifyAccountEmailLink,
     verifyExistingAccountRecovery
@@ -179,11 +180,11 @@ test("an invalid saved session fails closed instead of silently creating another
     assert.equal(anonymousSignIns, 0);
 });
 
-test("email upgrade keeps the current anonymous identity and verifies an email-change OTP", async () => {
+test("email upgrade requests a RelicGrid confirmation redirect and verifies an email-change OTP", async () => {
     const calls = [];
     const auth = {
-        async updateUser(attributes) {
-            calls.push(["updateUser", attributes]);
+        async updateUser(attributes, options) {
+            calls.push(["updateUser", attributes, options]);
             return { data: { user: { id: playerId } }, error: null };
         },
         async verifyOtp(attributes) {
@@ -192,11 +193,12 @@ test("email upgrade keeps the current anonymous identity and verifies an email-c
         }
     };
 
-    await requestAccountEmailLink(auth, " Player@Example.com ");
+    const emailRedirectTo = "https://cyfurpuzzlegame.vercel.app/?auth=email-confirmed";
+    await requestAccountEmailLink(auth, " Player@Example.com ", emailRedirectTo);
     const verified = await verifyAccountEmailLink(auth, "PLAYER@example.com", "123456");
 
     assert.deepEqual(calls, [
-        ["updateUser", { email: "player@example.com" }],
+        ["updateUser", { email: "player@example.com" }, { emailRedirectTo }],
         ["verifyOtp", {
             email: "player@example.com",
             token: "123456",
@@ -204,6 +206,27 @@ test("email upgrade keeps the current anonymous identity and verifies an email-c
         }]
     ]);
     assert.equal(verified.id, playerId);
+});
+
+test("email confirmation callbacks accept link tokens and avoid leaving token fragments in the app", () => {
+    assert.equal(isAccountEmailConfirmationCallback({
+        search: "?auth=email-confirmed",
+        hash: "#access_token=redacted&type=email_change"
+    }), true);
+    assert.equal(isAccountEmailConfirmationCallback({
+        search: "",
+        hash: "#access_token=redacted&type=email_change"
+    }), true);
+    assert.equal(isAccountEmailConfirmationCallback({
+        search: "?auth=other",
+        hash: ""
+    }), false);
+
+    const app = readFileSync(new URL("../app.js", import.meta.url), "utf8");
+    const supabaseClient = readFileSync(new URL("../supabase.js", import.meta.url), "utf8");
+    assert.match(supabaseClient, /detectSessionInUrl:\s*true/);
+    assert.match(app, /new URL\("\/\?auth=email-confirmed", GAME_API_BASE_URL\)/);
+    assert.match(app, /function clearAccountEmailCallbackUrl\(\)[\s\S]*?window\.history\.replaceState\(null, "", callbackUrl\.pathname \+ callbackUrl\.search\)/);
 });
 
 test("account recovery never creates a new permanent user and verifies the email OTP", async () => {
@@ -327,12 +350,23 @@ test("player records remain keyed to auth user IDs and web sessions persist", ()
     const walletSchema = readFileSync(new URL("../supabase-wallet.sql", import.meta.url), "utf8");
     const withdrawalSchema = readFileSync(new URL("../supabase-wallet-withdrawals.sql", import.meta.url), "utf8");
     const client = readFileSync(new URL("../supabase.js", import.meta.url), "utf8");
+    const app = readFileSync(new URL("../app.js", import.meta.url), "utf8");
+    const html = readFileSync(new URL("../index.html", import.meta.url), "utf8");
+    const walletApi = readFileSync(new URL("../api/wallet.js", import.meta.url), "utf8");
+    const readPlayerStart = app.indexOf("function readPlayer()");
+    const readPlayerEnd = app.indexOf("\nlet player = readPlayer()", readPlayerStart);
+    const localPlayerReader = app.slice(readPlayerStart, readPlayerEnd);
 
     assert.match(authSchema, /id uuid primary key references auth\.users \(id\) on delete cascade/i);
     assert.match(authSchema, /after insert on auth\.users/i);
     assert.match(walletSchema, /player_id uuid primary key references public\.player_profiles \(id\) on delete cascade/i);
     assert.match(withdrawalSchema, /player_id uuid not null references public\.player_profiles \(id\) on delete cascade/i);
     assert.match(client, /persistSession:\s*true/);
+    assert.doesNotMatch(localPlayerReader, /balanceCredits|walletBalance|balancePoints/);
+    assert.match(app, /localStorage\.setItem\(storageKey, JSON\.stringify\(player\)\)/);
+    assert.match(walletApi, /const storedBalance = accountBalance \?\? lastLedgerBalance \?\? null/);
+    assert.equal((html.match(/id="wallet-balance"/g) || []).length, 1);
+    assert.doesNotMatch(html, /id="legacy-game-access-points"|id="game-points-balance"/);
 });
 
 test("the withdrawal UI supports off-app signed receiving-address verification", () => {

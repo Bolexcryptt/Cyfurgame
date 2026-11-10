@@ -43,12 +43,16 @@ function resetScenario({
     balance = 10000n,
     transferOutcome = "success",
     readBalanceOverride = null,
+    accountMissing = false,
+    ledgerBalanceOverride = null,
     completedLevels = Array.from({ length: 30 }, (_, index) => index + 1),
     gamePointCompletions = []
 } = {}) {
     scenario = {
         actualBalance: balance,
         readBalanceOverride,
+        accountMissing,
+        ledgerBalanceOverride,
         completedLevels,
         gamePointCompletions,
         transferOutcome,
@@ -87,8 +91,14 @@ function installFakeFetch() {
             }]);
         }
         if (path.startsWith("wallet_credit_accounts")) {
+            if (scenario.accountMissing) return dbResponse(200, []);
             const balance = scenario.readBalanceOverride ?? scenario.actualBalance;
             return dbResponse(200, [{ balance_credits: balance.toString() }]);
+        }
+        if (path.startsWith("wallet_credit_ledger")) {
+            return dbResponse(200, scenario.ledgerBalanceOverride === null
+                ? []
+                : [{ balance_after_credits: scenario.ledgerBalanceOverride.toString() }]);
         }
         if (path.startsWith("wallet_system_config")) {
             return dbResponse(200, [{
@@ -97,7 +107,7 @@ function installFakeFetch() {
                 token_program_id: "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
                 token_decimals: 8,
                 treasury_address: testTreasury.publicKey.toBase58(),
-                credits_per_token: 10000,
+                credits_per_token: 1000,
                 deposits_enabled: false,
                 withdrawals_enabled: true,
                 withdrawal_rate_limit_per_hour: 5
@@ -298,6 +308,35 @@ test("withdrawal status reports only the authenticated player's verified wallet 
         remainingLevels: 0,
         met: true
     });
+
+    test("withdrawal status falls back to the authenticated player's latest ledger balance", async () => {
+        resetScenario({
+            balance: 0n,
+            accountMissing: true,
+            ledgerBalanceOverride: 2800n
+        });
+        installFakeFetch();
+
+        const response = await getWithdrawalStatus();
+
+        assert.equal(response.statusCode, 200);
+        assert.equal(response.payload.balanceCredits, "2800");
+        assert.equal(response.payload.availableCredits, "2800");
+    });
+
+    test("an existing zero account balance remains authoritative over an older ledger entry", async () => {
+        resetScenario({
+            balance: 0n,
+            ledgerBalanceOverride: 2800n
+        });
+        installFakeFetch();
+
+        const response = await getWithdrawalStatus();
+
+        assert.equal(response.statusCode, 200);
+        assert.equal(response.payload.balanceCredits, "0");
+        assert.equal(response.payload.availableCredits, "0");
+    });
 });
 
 test("withdrawal status stays disabled until all first 30 server-saved levels are complete", async () => {
@@ -343,7 +382,7 @@ test("withdrawal request is rejected before reservation until levels 1 through 3
 });
 
 test("one CYFUR withdrawal uses exactly 100000000 raw units for the verified recipient", async () => {
-    const response = await submitWithdrawal({ amount: "10000" });
+    const response = await submitWithdrawal({ amount: "1000" });
 
     assert.equal(response.statusCode, 200);
     assert.equal(response.payload.amountRaw, "100000000");
@@ -357,7 +396,7 @@ test("one CYFUR withdrawal uses exactly 100000000 raw units for the verified rec
 
 test("a requested recipient different from the verified linked wallet is rejected before reservation", async () => {
     const otherWallet = Keypair.generate().publicKey.toBase58();
-    const response = await submitWithdrawal({ amount: "10000", walletAddress: otherWallet });
+    const response = await submitWithdrawal({ amount: "1000", walletAddress: otherWallet });
 
     assert.equal(response.statusCode, 400);
     assert.equal(response.payload.error, "withdrawal_wallet_mismatch");

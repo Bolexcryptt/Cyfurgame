@@ -2,7 +2,7 @@ const ROWS = 6;
 const COLS = 8;
 const CLEAR_TARGET_ROWS = Object.freeze([2, 3, 4]);
 const CLEAR_TARGET_COLS = Object.freeze([2, 3, 4, 5]);
-export const CYFUR_CREDITS_PER_TOKEN = 10000;
+export const CYFUR_CREDITS_PER_TOKEN = 1000;
 export const LEVEL_TRANSITION_INTERVAL = 7;
 export const STAR_TIME_CONFIG = Object.freeze({
     threeStarBaseSeconds: 25,
@@ -378,7 +378,7 @@ export function formatCyfurCredits(value) {
     const whole = credits / BigInt(CYFUR_CREDITS_PER_TOKEN);
     const fraction = (credits % BigInt(CYFUR_CREDITS_PER_TOKEN))
         .toString()
-        .padStart(4, "0")
+        .padStart(String(CYFUR_CREDITS_PER_TOKEN).length - 1, "0")
         .replace(/0+$/, "");
     return fraction ? `${whole}.${fraction}` : whole.toString();
 }

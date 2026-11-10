@@ -64,7 +64,7 @@ begin
        or v_config.token_program_id <> p_token_program_id
        or v_config.token_decimals <> p_token_decimals
        or v_config.treasury_address is distinct from p_deposit_address
-       or v_config.credits_per_token <> 10000
+       or v_config.credits_per_token <> 1000
        or v_config.rounding_policy <> 'floor' then
         raise exception 'Deposit configuration is disabled or does not match.' using errcode = '22023';
     end if;

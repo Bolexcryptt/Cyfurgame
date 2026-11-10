@@ -33,7 +33,7 @@ begin
     if not found or not v_config.paid_gameplay_enabled then
         raise exception 'Paid gameplay is disabled.' using errcode = '55000';
     end if;
-    if v_config.credits_per_token <> 10000 then
+    if v_config.credits_per_token <> 1000 then
         raise exception 'Wallet conversion configuration is invalid.' using errcode = '22023';
     end if;
 

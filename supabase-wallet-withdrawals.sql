@@ -148,7 +148,7 @@ begin
        or v_config.token_program_id is distinct from p_token_program_id
        or v_config.token_decimals is distinct from p_token_decimals
        or v_config.treasury_address is distinct from p_treasury_address
-       or v_config.credits_per_token is distinct from 10000
+       or v_config.credits_per_token is distinct from 1000
        or v_config.rounding_policy is distinct from 'floor'
        or v_config.withdrawal_rate_limit_per_hour is distinct from 5
        or floor(p_amount_raw::numeric * v_config.credits_per_token

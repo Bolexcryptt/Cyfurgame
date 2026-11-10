@@ -20,8 +20,6 @@ const {
     verifyFinalizedDeposit
 } = require("../server/lib/solana-deposit");
 
-const CREDIT_DELAY_MS = 5_000;
-
 function respondNotReady(response, error, message) {
     return sendJson(response, 503, {
         error,
@@ -106,7 +104,7 @@ module.exports = async function deposits(request, response) {
             !isBase58(config.treasury_address, 32) ||
             !TOKEN_PROGRAM_IDS.has(config.token_program_id) ||
             !Number.isInteger(config.token_decimals) ||
-            String(config.credits_per_token) !== "10000" || config.rounding_policy !== "floor" ||
+            String(config.credits_per_token) !== "1000" || config.rounding_policy !== "floor" ||
             config.treasury_address !== RELICGRID_TREASURY_ADDRESS ||
             !config.treasury_address) {
             return respondNotReady(
@@ -128,8 +126,7 @@ module.exports = async function deposits(request, response) {
             tokenProgramId: config.token_program_id,
             tokenDecimals: config.token_decimals,
             network: config.network,
-            rpcUrl: getSolanaRpcUrl(),
-            requirePaymentIntentMemo: true
+            rpcUrl: getSolanaRpcUrl()
         });
         if (verified.state === "pending") {
             return sendJson(response, 202, { status: "pending", credited: false, transactionUrl });
@@ -145,20 +142,6 @@ module.exports = async function deposits(request, response) {
         }
         if (verified.state === "wrong_amount") {
             return sendJson(response, 422, { error: "wrong_amount", credited: false, transactionUrl });
-        }
-        if (verified.state === "payment_intent_mismatch") {
-            return sendJson(response, 422, {
-                error: "payment_intent_mismatch",
-                credited: false,
-                transactionUrl
-            });
-        }
-        if (verified.state === "missing_payment_intent_memo") {
-            return sendJson(response, 422, {
-                error: "payment_intent_memo_missing",
-                credited: false,
-                transactionUrl
-            });
         }
         if (verified.state === "invalid_treasury") {
             return respondNotReady(
@@ -177,38 +160,6 @@ module.exports = async function deposits(request, response) {
         if (verified.state !== "finalized") {
             return sendJson(response, 503, { error: "finalized_transaction_unavailable", credited: false });
         }
-        const [intent] = await serviceRequest(
-            `wallet_payment_intents?select=id,player_id,network,mint_address,token_program_id,treasury_address,amount_raw,token_decimals,created_at,expires_at,status&id=eq.${encodeURIComponent(verified.paymentIntentId)}&player_id=eq.${encodeURIComponent(user.id)}&limit=1`
-        );
-        const intentAmountRaw = String(intent?.amount_raw ?? "");
-        const intentCreatedAt = Date.parse(intent?.created_at);
-        const intentExpiresAt = Date.parse(intent?.expires_at);
-        const finalizedAt = Number.isSafeInteger(verified.finalizedAt)
-            ? new Date(verified.finalizedAt * 1000)
-            : null;
-        if (!intent ||
-            intent.player_id !== user.id ||
-            intent.network !== config.network ||
-            intent.mint_address !== config.official_mint_address ||
-            intent.token_program_id !== config.token_program_id ||
-            intent.treasury_address !== config.treasury_address ||
-            intent.token_decimals !== config.token_decimals ||
-            !/^[1-9]\d*$/.test(intentAmountRaw) ||
-            intentAmountRaw.length > 20 ||
-            BigInt(intentAmountRaw) > 18446744073709551615n ||
-            !Number.isFinite(intentCreatedAt) ||
-            !Number.isFinite(intentExpiresAt) ||
-            !finalizedAt ||
-            finalizedAt.getTime() < intentCreatedAt - 30_000 ||
-            finalizedAt.getTime() > intentExpiresAt ||
-            BigInt(verified.amountRaw) < BigInt(intentAmountRaw) ||
-            !["pending", "confirmed"].includes(intent.status)) {
-            return sendJson(response, 422, {
-                error: "payment_intent_mismatch",
-                credited: false,
-                transactionUrl
-            });
-        }
         let creditAmount;
         try {
             creditAmount = getDepositCreditAmount(
@@ -222,12 +173,10 @@ module.exports = async function deposits(request, response) {
             }
             throw error;
         }
-        await new Promise((resolve) => setTimeout(resolve, CREDIT_DELAY_MS));
-        const [ledgerResult] = await serviceRequest("rpc/process_verified_payment_intent", {
+        const [ledgerResult] = await serviceRequest("rpc/process_verified_transaction_deposit", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
-                p_payment_intent_id: intent.id,
                 p_player_id: user.id,
                 p_source_wallet_address: verified.sourceWalletAddress,
                 p_network: config.network,
@@ -238,17 +187,23 @@ module.exports = async function deposits(request, response) {
                 p_amount_raw: verified.amountRaw,
                 p_token_decimals: config.token_decimals,
                 p_finalized_slot: verified.finalizedSlot,
-                p_finalized_at: finalizedAt.toISOString(),
                 p_credit_amount_credits: creditAmount
             })
         });
         if (!ledgerResult || !/^\d+$/.test(String(ledgerResult.balance_credits))) {
             throw new Error("Wallet ledger RPC returned an invalid result.");
         }
+        if (ledgerResult.already_applied === true) {
+            return sendJson(response, 409, {
+                error: "transaction_already_claimed",
+                credited: false,
+                balanceCredits: String(ledgerResult.balance_credits),
+                transactionUrl
+            });
+        }
         return sendJson(response, 200, {
             status: "confirmed",
-            credited: !ledgerResult.already_applied,
-            alreadyProcessed: ledgerResult.already_applied === true,
+            credited: true,
             amountRaw: verified.amountRaw,
             tokenDecimals: config.token_decimals,
             creditAmountCredits: creditAmount,
@@ -268,7 +223,7 @@ module.exports = async function deposits(request, response) {
             return sendJson(response, 503, { error: "wallet_schema_not_installed" });
         }
         if (error.code === "23505") {
-            return sendJson(response, 422, {
+            return sendJson(response, 409, {
                 error: "transaction_already_claimed",
                 credited: false
             });

@@ -1,5 +1,5 @@
 const requiredEnvironment = ["SUPABASE_URL", "SUPABASE_PUBLISHABLE_KEY"];
-const CYFUR_CREDITS_PER_TOKEN = 10000;
+const CYFUR_CREDITS_PER_TOKEN = 1000;
 const MAX_DATABASE_BIGINT = 9223372036854775807n;
 
 function getLevelEntryCostCredits(levelNumber) {

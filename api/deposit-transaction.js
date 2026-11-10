@@ -574,7 +574,7 @@ module.exports = async function depositTransaction(request, response) {
             config.official_mint_address !== RELICGRID_CYFUR_MINT_ADDRESS ||
             !TOKEN_PROGRAM_IDS.has(config.token_program_id) ||
             !Number.isInteger(config.token_decimals) ||
-            String(config.credits_per_token) !== "10000" ||
+            String(config.credits_per_token) !== "1000" ||
             config.rounding_policy !== "floor" ||
             !isBase58(config.treasury_address, 32) ||
             config.treasury_address !== RELICGRID_TREASURY_ADDRESS) {

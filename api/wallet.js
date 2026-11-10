@@ -351,11 +351,12 @@ module.exports = async function wallet(request, response) {
         }
         const accountBalance = accounts[0]?.balance_credits;
         const lastLedgerBalance = ledgerEntries[0]?.balance_after_credits;
-        const storedBalance = accountBalance ??
-            lastLedgerBalance ??
-            (accounts.length === 0 && ledgerEntries.length === 0 ? "0" : null);
+        const storedBalance = accountBalance ?? lastLedgerBalance ?? null;
         const balanceVerified = (typeof storedBalance === "string" && /^\d+$/.test(storedBalance)) ||
             (typeof storedBalance === "number" && Number.isSafeInteger(storedBalance) && storedBalance >= 0);
+        if (!balanceVerified) {
+            console.error("Wallet balance is unavailable: no verified account or ledger balance exists.");
+        }
         const paidGameplayEnabled =
             config?.paid_gameplay_enabled === true &&
             process.env.WALLET_PAID_GAMEPLAY_ENABLED === "true" &&
@@ -368,7 +369,7 @@ module.exports = async function wallet(request, response) {
             network: network ?? null,
             disabledReason: depositsEnabled ? null : "direct_treasury_setup_incomplete",
             disabledMessage: depositsEnabled
-                ? "Deposit verification is ready. Create deposit instructions, send the displayed amount with its unique memo, then submit the transaction link. RelicGrid verifies finality before crediting."
+                ? "Deposit verification is ready. Send CYFUR to the treasury address, then submit the transaction ID. RelicGrid verifies finality before crediting."
                 : `${readinessChecks.map(({ message }) => message).join(" ")} Do not send CYFUR until the status is READY.`,
             exchangeRateCreditsPerToken: CYFUR_CREDITS_PER_TOKEN,
             treasuryAddress,
@@ -379,6 +380,7 @@ module.exports = async function wallet(request, response) {
             linkedWalletAddress,
             balanceCredits: balanceVerified ? String(storedBalance) : null,
             balanceVerified,
+            balanceError: balanceVerified ? null : "wallet_balance_unavailable",
             deposits
         });
     } catch (error) {

@@ -5,7 +5,7 @@ create table if not exists public.wallet_system_config (
     official_mint_address text,
     token_program_id text,
     token_decimals integer check (token_decimals between 0 and 18),
-    credits_per_token bigint not null default 10000 check (credits_per_token = 10000),
+    credits_per_token bigint not null default 1000 check (credits_per_token = 1000),
     rounding_policy text check (rounding_policy in ('floor', 'nearest', 'reject_fraction')),
     updated_at timestamptz not null default now(),
     check (

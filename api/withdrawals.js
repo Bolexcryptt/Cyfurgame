@@ -45,9 +45,18 @@ module.exports = async function withdrawals(request, response) {
         const user = await authenticate(request);
         if (!user) return sendJson(response, 401, { error: "authentication_required" });
 
-        const [[linkedWallet], [account], configs, history, completedLevels, gamePointCompletions] = await Promise.all([
+        const [
+            [linkedWallet],
+            [account],
+            [latestLedgerEntry],
+            configs,
+            history,
+            completedLevels,
+            gamePointCompletions
+        ] = await Promise.all([
             serviceRequest(`player_solana_wallets?select=wallet_address,verified_at&player_id=eq.${encodeURIComponent(user.id)}&limit=1`),
             serviceRequest(`wallet_credit_accounts?select=balance_credits,updated_at&player_id=eq.${encodeURIComponent(user.id)}&limit=1`),
+            serviceRequest(`wallet_credit_ledger?select=balance_after_credits&player_id=eq.${encodeURIComponent(user.id)}&order=created_at.desc,id.desc&limit=1`),
             readWalletSystemConfig(),
             serviceRequest(`wallet_withdrawals?select=id,status,amount_credits,amount_raw,transaction_signature,created_at&player_id=eq.${encodeURIComponent(user.id)}&order=created_at.desc&limit=20`),
             serviceRequest(`level_completions?select=level_number&player_id=eq.${encodeURIComponent(user.id)}&level_number=lte.30`),
@@ -63,7 +72,8 @@ module.exports = async function withdrawals(request, response) {
             remainingLevels: 30 - completedLevelNumbers.size,
             met: completedLevelNumbers.size === 30
         };
-        const balanceCredits = account?.balance_credits ? String(account.balance_credits) : "0";
+        const storedBalance = account?.balance_credits ?? latestLedgerEntry?.balance_after_credits ?? "0";
+        const balanceCredits = String(storedBalance);
         const pendingCredits = history
             .filter((entry) => ["pending", "submitted"].includes(entry.status))
             .reduce((total, entry) => total + (safeBigInt(String(entry.amount_credits || "0")) ?? 0n), 0n);
@@ -75,7 +85,7 @@ module.exports = async function withdrawals(request, response) {
                 configs.treasury_address === RELICGRID_TREASURY_ADDRESS &&
                 configs.token_program_id === "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA" &&
                 configs.token_decimals === 8 &&
-                String(configs.credits_per_token) === "10000" &&
+                String(configs.credits_per_token) === "1000" &&
                 configs.withdrawal_rate_limit_per_hour === 5 &&
                 process.env.SOLANA_NETWORK === "mainnet-beta";
             let signerReady = false;
@@ -142,7 +152,7 @@ module.exports = async function withdrawals(request, response) {
             configs.treasury_address !== RELICGRID_TREASURY_ADDRESS ||
             configs.token_program_id !== "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA" ||
             configs.token_decimals !== 8 ||
-            String(configs.credits_per_token) !== "10000" ||
+            String(configs.credits_per_token) !== "1000" ||
             configs.withdrawal_rate_limit_per_hour !== 5 ||
             configs.network !== "mainnet-beta" ||
             process.env.SOLANA_NETWORK !== "mainnet-beta") {
@@ -154,7 +164,7 @@ module.exports = async function withdrawals(request, response) {
         if (process.env.WITHDRAWAL_ENABLED !== "true" || configs.withdrawals_enabled !== true) {
             return sendJson(response, 503, {
                 error: "withdrawals_disabled",
-                message: "Real CYFUR withdrawals require both the Vercel withdrawal switch and the Supabase withdrawals_enabled setting."
+                message: "Real CYFUR withdrawals require both the deployment withdrawal switch and the RelicGrid withdrawal setting."
             });
         }
 

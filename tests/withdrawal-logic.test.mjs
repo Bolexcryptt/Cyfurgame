@@ -65,11 +65,11 @@ function makePreflightConnection({ mintValue, treasuryValue, genesisHash = "5eyk
     };
 }
 
-test("withdrawal conversion keeps the documented CYFUR credit rate and integer math", () => {
-    assert.equal(calculateWithdrawalTokenAmountRaw("10000", 8), "100000000");
-    assert.equal(calculateWithdrawalTokenAmountRaw("1", 8), "10000");
-    assert.equal(calculateCreditsFromTokenAmountRaw("100000000", 8), "10000");
-    assert.equal(calculateCreditsFromTokenAmountRaw("10000", 8), "1");
+test("withdrawal conversion uses 1,000 credits per CYFUR with integer math", () => {
+    assert.equal(calculateWithdrawalTokenAmountRaw("1000", 8), "100000000");
+    assert.equal(calculateWithdrawalTokenAmountRaw("1", 8), "100000");
+    assert.equal(calculateCreditsFromTokenAmountRaw("100000000", 8), "1000");
+    assert.equal(calculateCreditsFromTokenAmountRaw("100000", 8), "1");
 });
 
 test("withdrawal validation rejects invalid or non-convertible amounts", () => {

@@ -53,10 +53,20 @@ server secrets in the app.
 
 Phantom mobile handoffs return through the `relicgrid://` app URL scheme.
 That scheme is registered in the generated Android and iOS projects.
-The installed app name is RelicGrid. Native screens start and return to
-portrait. The company introduction and game video request landscape; the
-company intro is sized to fill the display. The app restores portrait for the
-title screen and when a video ends, is skipped, or cannot play.
+The installed app name is RelicGrid. On launch, the company video plays first,
+followed by the RelicGrid introduction in portrait mode. A **Next** button
+appears when that introduction finishes and starts the landscape game video.
+When the game video finishes, the title/menu screen appears; **Play Now**
+opens player identification or the home screen. Native screens return to
+portrait after each video or when a video is skipped.
+
+Campaign game-point deposits are verified server-side through the Vercel
+Solana RPC. Before enabling the flow, apply
+`supabase-game-points-cyfur-deposits.sql` after the existing game-point and
+wallet-deposit migrations, then apply
+`supabase-wallet-transaction-id-deposits.sql`. Players can send from any
+Solana wallet with no memo; they submit only the transaction ID. Confirmed
+amounts convert at 1 CYFUR = 1,000 game points.
 
 Android launcher icons are generated from the owner-provided
 `relicgrid-icon.png` source and included as density-specific legacy icons and

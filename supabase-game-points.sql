@@ -51,18 +51,33 @@ create table if not exists public.game_point_level_completions (
         references public.game_point_level_sessions (id, player_id) on delete cascade
 );
 
+create table if not exists public.game_point_level_reward_claims (
+    session_id uuid primary key,
+    player_id uuid not null,
+    level_number integer not null check (level_number between 1 and 99),
+    stars integer not null check (stars between 1 and 3),
+    reward_points bigint not null check (reward_points >= 0),
+    solve_duration_ms bigint not null check (solve_duration_ms >= 0),
+    claimed_at timestamptz not null default now(),
+    foreign key (session_id, player_id)
+        references public.game_point_level_sessions (id, player_id) on delete cascade
+);
+
 alter table public.game_point_accounts enable row level security;
 alter table public.game_point_ledger enable row level security;
 alter table public.game_point_level_sessions enable row level security;
 alter table public.game_point_level_completions enable row level security;
+alter table public.game_point_level_reward_claims enable row level security;
 
 revoke all on public.game_point_accounts, public.game_point_ledger,
-    public.game_point_level_sessions, public.game_point_level_completions
+    public.game_point_level_sessions, public.game_point_level_completions,
+    public.game_point_level_reward_claims
     from public, anon, authenticated;
 grant select, insert, update on public.game_point_accounts to service_role;
 grant select, insert on public.game_point_ledger to service_role;
 grant select, insert, update on public.game_point_level_sessions to service_role;
 grant select, insert on public.game_point_level_completions to service_role;
+grant select, insert on public.game_point_level_reward_claims to service_role;
 grant usage, select on sequence public.game_point_ledger_id_seq to service_role;
 
 create or replace function public.start_game_point_level(
@@ -251,10 +266,18 @@ begin
         v_expected_reward, p_elapsed_milliseconds
     )
     on conflict (player_id, level_number) do nothing;
+
+    insert into public.game_point_level_reward_claims (
+        session_id, player_id, level_number, stars, reward_points, solve_duration_ms
+    )
+    values (
+        p_session_id, p_player_id, v_session.level_number, p_stars,
+        v_expected_reward, p_elapsed_milliseconds
+    )
+    on conflict (session_id) do nothing;
     get diagnostics v_inserted_rows = row_count;
-    if v_inserted_rows = 0 then
-        v_expected_reward := 0;
-        v_already_completed := true;
+    if v_inserted_rows <> 1 then
+        raise exception 'This paid level session has already been claimed.' using errcode = '23505';
     end if;
 
     update public.game_point_level_sessions

@@ -92,13 +92,11 @@ export function normalizeDepositSignatureInput(value) {
 
 export function getDepositVerificationErrorMessage(errorCode, message, status) {
     const messages = {
-        invalid_transaction_signature: "Invalid Solscan link. Paste the full transaction URL from Solscan, including its transaction signature.",
+        invalid_transaction_signature: "Invalid Solana transaction ID. Paste the transaction signature from your wallet or a Solana explorer.",
         transaction_failed: "Solana reports this transaction failed. No credits were added.",
         wrong_token_or_destination: "This transaction does not contain a verified CYFUR transfer to the exact treasury token account. No credits were added.",
-        wrong_amount: "The finalized CYFUR transfer does not meet the required deposit amount. No credits were added.",
-        payment_intent_memo_missing: "This finalized transaction has no RelicGrid deposit memo, so it cannot be matched to your account. Create a new deposit instruction and include its memo before sending. No credits were added.",
-        payment_intent_mismatch: "This transaction does not match an active deposit instruction for this account. Create a fresh deposit instruction and include its memo exactly. No credits were added.",
-        transaction_already_claimed: "This transaction has already been claimed or credited to another player. No credits were added.",
+        wrong_amount: "The finalized CYFUR transfer amount could not be verified. No credits were added.",
+        transaction_already_claimed: "This transaction has already been claimed. No credits were added.",
         deposit_rejected: "The deposit was rejected because it did not match the current verified account or deposit configuration.",
         transaction_not_found: "Transaction not found on Solana yet. Check the Solscan link and retry after the transaction is submitted.",
         finalized_transaction_unavailable: "Solana could not provide finalized transaction details. No credits were added; retry verification later.",

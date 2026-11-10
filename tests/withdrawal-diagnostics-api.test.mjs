@@ -44,7 +44,7 @@ function makeValidConfig(overrides = {}) {
         treasury_address: solanaConfig.RELICGRID_TREASURY_ADDRESS,
         token_program_id: "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
         token_decimals: 8,
-        credits_per_token: 10000,
+        credits_per_token: 1000,
         rounding_policy: "floor",
         deposits_enabled: false,
         withdrawals_enabled: true,

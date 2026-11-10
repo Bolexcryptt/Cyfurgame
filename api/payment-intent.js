@@ -87,7 +87,7 @@ module.exports = async function paymentIntent(request, response) {
                 config.official_mint_address !== RELICGRID_CYFUR_MINT_ADDRESS) ||
             !TOKEN_PROGRAM_IDS.has(config.token_program_id) ||
             !Number.isInteger(config.token_decimals) ||
-            String(config.credits_per_token) !== "10000" ||
+            String(config.credits_per_token) !== "1000" ||
             config.rounding_policy !== "floor" ||
             !isBase58(config.treasury_address, 32) ||
             config.treasury_address !== RELICGRID_TREASURY_ADDRESS ||
@@ -249,11 +249,14 @@ module.exports = async function paymentIntent(request, response) {
         if (error.code === "23502") {
             return sendJson(response, 503, {
                 error: "payment_intent_migration_required",
-                message: "Apply supabase-walletless-deposits.sql in Supabase before creating deposits."
+                message: "Secure deposit setup is incomplete. Contact RelicGrid support; no deposit was created or credited."
             });
         }
         if (error.status === 404 && error.code === "PGRST205") {
-            return sendJson(response, 503, { error: "payment_intent_migration_required" });
+            return sendJson(response, 503, {
+                error: "payment_intent_migration_required",
+                message: "Secure deposit setup is incomplete. Contact RelicGrid support; no deposit was created or credited."
+            });
         }
         return sendJson(response, 502, { error: "payment_intent_unavailable" });
     }

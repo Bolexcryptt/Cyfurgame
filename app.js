@@ -20,6 +20,7 @@ import {
     requestAccountEmailLink,
     requestExistingAccountRecovery,
     hydratePlayerFromAuthenticatedAccount,
+    isAccountEmailConfirmationCallback,
     restoreOrCreatePlayerSession,
     verifyAccountEmailLink,
     verifyExistingAccountRecovery
@@ -50,6 +51,7 @@ import {
 } from "./wallet-provider.mjs";
 
 const storageKey = "fluxgrid.player.v1";
+const accountEmailConfirmationCallback = isAccountEmailConfirmationCallback(window.location);
 const ImmersiveMode = registerPlugin("ImmersiveMode");
 const screens = [
     "video-screen",
@@ -61,7 +63,7 @@ const screens = [
     "play-screen"
 ].map((id) => document.getElementById(id));
 const introVideo = document.getElementById("intro-video");
-introVideo.src = "companyintro.mp4";
+introVideo.src = "gamevideo.mp4";
 const transitionVideo = document.getElementById("transition-video");
 const videoScreen = document.getElementById("video-screen");
 const videoAction = document.getElementById("video-action-button");
@@ -90,6 +92,13 @@ function apiUrl(path) {
         throw new Error("GAME_API_BASE_URL must be an HTTPS origin without credentials, path, or query.");
     }
     return `${base.origin}/api/${path}`;
+}
+
+function clearAccountEmailCallbackUrl() {
+    const callbackUrl = new URL(window.location.href);
+    callbackUrl.searchParams.delete("auth");
+    callbackUrl.hash = "";
+    window.history.replaceState(null, "", callbackUrl.pathname + callbackUrl.search);
 }
 
 function readPlayer() {
@@ -143,7 +152,6 @@ function readPlayer() {
 }
 
 let player = readPlayer();
-let legacyGameAccessPoints = 0;
 let serverGamePoints = "0";
 let serverGamePointsVerified = false;
 let serverGamePointCompletions = [];
@@ -158,11 +166,10 @@ let levelEntryRequestInProgress = false;
 let depositVerificationInProgress = false;
 let musicStarted = false;
 let authUser = null;
-let backendStatus = supabaseConfigured ? "Connecting to Supabase…" : "Supabase is not configured.";
+let backendStatus = supabaseConfigured ? "Connecting to RelicGrid…" : "RelicGrid account service is not configured.";
 let backendReady;
 let walletStatusSnapshot = null;
 let levelsGloballyLocked = true;
-let currentDepositIntent = null;
 let activeLevelEntryCostCredits = null;
 let levelStartInProgress = false;
 let verifiedWithdrawalAddress = null;
@@ -177,48 +184,8 @@ function savePlayer() {
     localStorage.setItem(storageKey, JSON.stringify(player));
 }
 
-function getGameAccessOwner() {
-    return authUser?.id || player.playerId || "local";
-}
-
-function getGameAccessStorageKey() {
-    return `relicgrid.game-access.${getGameAccessOwner()}`;
-}
-
-function loadGameAccessState() {
-    const saved = localStorage.getItem(getGameAccessStorageKey());
-    if (!saved) {
-        legacyGameAccessPoints = 0;
-        return;
-    }
-
-    try {
-        const parsed = JSON.parse(saved);
-        legacyGameAccessPoints = Number.isSafeInteger(parsed.points) && parsed.points >= 0
-            ? parsed.points
-            : 0;
-    } catch (error) {
-        console.error("Legacy device-local game points could not be read.", error);
-        legacyGameAccessPoints = 0;
-    }
-}
-
-function renderGameAccessPoints() {
-    const legacyBalance = document.getElementById("legacy-game-access-points");
-    const serverBalance = document.getElementById("game-points-balance");
-    const serverState = document.getElementById("game-points-balance-state");
-    if (legacyBalance) legacyBalance.textContent = formatCredits(String(legacyGameAccessPoints));
-    if (serverBalance) serverBalance.textContent = serverGamePointsVerified
-        ? formatCredits(serverGamePoints)
-        : "—";
-    if (serverState) serverState.textContent = serverGamePointsVerified
-        ? "SERVER VERIFIED · NON-WITHDRAWABLE"
-        : "SIGN IN TO LOAD SERVER GAME POINTS";
-}
-
 async function refreshServerGamePoints() {
     serverGamePointsVerified = false;
-    renderGameAccessPoints();
     if (!authUser || !supabaseConfigured || !supabase) {
         serverGamePointCompletions = [];
         renderLevels();
@@ -242,7 +209,6 @@ async function refreshServerGamePoints() {
         .map(Number)
         .filter((levelNumber) => Number.isInteger(levelNumber) && levelNumber >= 1 && levelNumber <= 99))];
     serverGamePointsVerified = true;
-    renderGameAccessPoints();
     renderLevels();
     return true;
 }
@@ -260,8 +226,6 @@ function getSolscanSignature(value) {
         return null;
     }
 }
-
-loadGameAccessState();
 
 async function restorePortraitOrientation() {
     if (!Capacitor.isNativePlatform()) return true;
@@ -419,6 +383,9 @@ if (Capacitor.isNativePlatform()) {
 }
 document.addEventListener("keydown", (event) => {
     if (openingFlowFinished) return;
+    if (!document.getElementById("title-screen").hidden &&
+        event.target.closest?.("#title-continue-button") &&
+        ["Enter", " "].includes(event.key)) return;
     if (["Backspace", "Escape", "Enter", " "].includes(event.key)) {
         event.preventDefault();
         event.stopImmediatePropagation();
@@ -442,7 +409,6 @@ async function refreshOwnProgress() {
     } catch (gamePointsError) {
         serverGamePointsVerified = false;
         serverGamePointCompletions = [];
-        renderGameAccessPoints();
         console.error("Server game-points balance or progress could not be loaded.", gamePointsError);
     }
     const hydrated = hydratePlayerFromAuthenticatedAccount(
@@ -468,7 +434,6 @@ async function initializeBackend() {
     try {
         const session = await restoreOrCreatePlayerSession(supabase.auth);
         authUser = session.user;
-        loadGameAccessState();
 
         const { data: profile, error: profileError } = await supabase
             .from("player_profiles")
@@ -476,7 +441,7 @@ async function initializeBackend() {
             .eq("id", authUser.id)
             .maybeSingle();
         if (profileError) throw profileError;
-        if (!profile) throw new Error("Player profile is missing. Run supabase-leaderboard.sql in the SQL Editor.");
+        if (!profile) throw new Error("Your RelicGrid player profile is unavailable. Please try again or contact support.");
 
         if (!profile.display_name && player.playerId === authUser.id && player.name) {
             const { error } = await supabase.rpc("set_player_display_name", {
@@ -495,10 +460,29 @@ async function initializeBackend() {
         backendStatus = "Connected to the RelicGrid leaderboard.";
         savePlayer();
         renderProfile();
+        if (accountEmailConfirmationCallback) {
+            const confirmed = Boolean(authUser.email_confirmed_at);
+            setAccountAuthStatus(
+                "account-upgrade-status",
+                confirmed
+                    ? "Recovery email confirmed. This player keeps the same ID, credits, progress, and linked wallet."
+                    : "This email link did not confirm the recovery email. Request a fresh email and use its confirmation link or six-digit code.",
+                confirmed ? "ready" : "error"
+            );
+            clearAccountEmailCallbackUrl();
+        }
         return true;
     } catch (error) {
-        console.error("Supabase player initialization failed.", error);
-        backendStatus = `Supabase connection failed: ${error.message}`;
+        if (accountEmailConfirmationCallback) {
+            setAccountAuthStatus(
+                "account-upgrade-status",
+                "The recovery email could not be confirmed. Request a fresh RelicGrid confirmation email.",
+                "error"
+            );
+            clearAccountEmailCallbackUrl();
+        }
+        console.error("RelicGrid player initialization failed.", error);
+        backendStatus = `RelicGrid connection failed: ${error.message}`;
         renderProfile();
         return false;
     }
@@ -616,12 +600,18 @@ function renderProfile() {
     const profileDetails = document.getElementById("profile-details");
     profileDetails.replaceChildren(
         statCard("CALLSIGN", name),
-        statCard("PLAYER ID", player.playerId || "Available after Supabase setup"),
+        statCard("PLAYER ID", player.playerId || "Available after account setup"),
         statCard("LEVELS COMPLETED", `${completed} / 99`),
         statCard("NEXT STORY LEVEL", `LEVEL ${String(player.unlockedLevel).padStart(2, "0")}`),
-        statCard("LEADERBOARD", supabaseConfigured ? backendStatus : "Configure Supabase to enable shared rankings")
+        statCard("LEADERBOARD", supabaseConfigured ? backendStatus : "RelicGrid account service is unavailable")
     );
     renderPlayerAccountStatus();
+    renderWalletAccountProtection();
+}
+
+function renderWalletAccountProtection() {
+    const panel = document.getElementById("wallet-account-protection");
+    if (panel) panel.hidden = !supabaseConfigured || authUser?.is_anonymous !== true;
 }
 
 function renderPlayerAccountStatus() {
@@ -632,7 +622,7 @@ function renderPlayerAccountStatus() {
     if (!status) return;
 
     if (!supabaseConfigured || !authUser) {
-        status.textContent = "Supabase player authentication is unavailable.";
+        status.textContent = "RelicGrid player sign-in is unavailable.";
         if (linkForm) linkForm.hidden = true;
         if (verifyForm) verifyForm.hidden = true;
         if (recoveryPanel) recoveryPanel.hidden = true;
@@ -641,12 +631,12 @@ function renderPlayerAccountStatus() {
 
     const isAnonymous = authUser.is_anonymous === true;
     if (isAnonymous) {
-        status.textContent = "This player uses a persistent anonymous Supabase identity. Link and verify an email to recover this same player ID on another device.";
+        status.textContent = "This identity survives normal app updates, but uninstalling can remove its saved session. Link and verify a recovery email before reinstalling to restore this same player ID.";
         if (linkForm) linkForm.hidden = false;
         if (verifyForm) verifyForm.hidden = !pendingAccountEmail;
     } else {
         status.textContent = authUser.email_confirmed_at
-            ? "A verified sign-in identity is linked to this player. Credits, progress, and wallet links remain attached to the same Supabase user ID."
+            ? "A verified sign-in identity is linked to this player. Credits, progress, and wallet links remain attached to the same RelicGrid player ID."
             : "A permanent sign-in identity is linked to this player. Verify its email to enable account recovery.";
         if (linkForm) linkForm.hidden = true;
         if (verifyForm) verifyForm.hidden = true;
@@ -662,7 +652,7 @@ async function requestAccountRecoveryPreflight() {
     const { data, error } = await supabase.auth.getSession();
     if (error) throw error;
     if (!data.session?.access_token || data.session.user?.id !== authUser.id) {
-        throw new Error("The current Supabase player session could not be verified.");
+        throw new Error("The current RelicGrid player session could not be verified.");
     }
 
     const response = await fetch(apiUrl("wallet?action=identity-recovery-preflight"), {
@@ -699,13 +689,14 @@ async function requestAccountUpgrade(event) {
         if (!authUser || authUser.is_anonymous !== true) {
             throw new Error("Only the current anonymous player can be upgraded.");
         }
-        await requestAccountEmailLink(supabase.auth, email);
+        const emailRedirectTo = new URL("/?auth=email-confirmed", GAME_API_BASE_URL).toString();
+        await requestAccountEmailLink(supabase.auth, email, emailRedirectTo);
         pendingAccountEmail = email;
         document.getElementById("account-upgrade-code-form").hidden = false;
         renderPlayerAccountStatus();
         setAccountAuthStatus(
             "account-upgrade-status",
-            "Check your email for the Supabase verification code. The player ID and its existing data are unchanged.",
+            "Check your email for the RelicGrid confirmation link or six-digit code. The player ID and existing data are unchanged.",
             "pending"
         );
     } catch (error) {
@@ -756,7 +747,7 @@ async function requestAccountRecovery(event) {
         pendingAccountRecoveryPlayerId = authUser.id;
         setAccountAuthStatus(
             "account-recovery-status",
-            "If this email has a linked player account, Supabase sent a sign-in code. Enter it below. No new permanent account is created.",
+            "If this email has a linked player account, RelicGrid sent a sign-in code. Enter it below. No new permanent account is created.",
             "pending"
         );
         document.getElementById("account-recovery-code-form").hidden = false;
@@ -779,7 +770,6 @@ async function verifyAccountRecovery(event) {
         const recoveredUser = await verifyExistingAccountRecovery(supabase.auth, email, token);
         pendingAccountRecoveryPlayerId = null;
         authUser = recoveredUser;
-        loadGameAccessState();
         pendingAccountEmail = "";
         player.name = "";
         player.playerId = recoveredUser.id;
@@ -860,7 +850,7 @@ async function refreshLeaderboard() {
     const rows = document.getElementById("leaderboard-rows");
     rows.replaceChildren();
     if (!supabaseConfigured) {
-        setLeaderboardStatus("Add your Supabase project URL and publishable key in supabase-config.js to enable shared rankings.", "error");
+        setLeaderboardStatus("The RelicGrid account service is not configured. Shared rankings are unavailable.", "error");
         return;
     }
 
@@ -922,7 +912,7 @@ async function refreshLeaderboard() {
         appendLeaderboardCell(row, record.highest_level ? `LEVEL ${String(record.highest_level).padStart(2, "0")}` : "—");
         rows.append(row);
     }
-    setLeaderboardStatus(`${data.length} player${data.length === 1 ? "" : "s"} loaded from Supabase.`);
+    setLeaderboardStatus(`${data.length} player${data.length === 1 ? "" : "s"} loaded from RelicGrid.`);
 }
 
 function statCard(label, value) {
@@ -970,7 +960,7 @@ function renderLevels() {
         entryCost.className = "level-cost";
         entryCost.textContent = hasGameAccessPoints
             ? `${formatCredits(entryCostCredits)} GAME POINTS`
-            : `${formatCredits(serverGamePointsVerified ? serverGamePoints : "0")} SERVER POINTS · NEED ${formatCredits(entryCostCredits)}`;
+            : `NEED ${formatCredits(entryCostCredits)} GAME POINTS · FREE PRACTICE`;
         detail.append(title, meta);
         const badge = document.createElement("span");
         badge.className = "level-state";
@@ -991,7 +981,6 @@ function renderLevels() {
         fragment.append(item);
     }
     list.replaceChildren(fragment);
-    renderGameAccessPoints();
 }
 
 function renderHome() {
@@ -1220,11 +1209,10 @@ async function requestLevelEntry(levelNumber) {
             if (/^\d+$/.test(String(result.balancePoints))) {
                 serverGamePoints = String(result.balancePoints);
                 serverGamePointsVerified = true;
-                renderGameAccessPoints();
                 renderLevels();
             }
             setLevelEntryMessage(
-                `Level ${levelNumber} requires ${formatCredits(result.entryCostPoints || entryCostPoints)} server game points. Current balance: ${formatCredits(result.balancePoints || "0")}.`,
+                `Level ${levelNumber} requires ${formatCredits(result.entryCostPoints || entryCostPoints)} server game points.`,
                 "disabled"
             );
             return practiceEntry("Your server game-points balance is below the entry cost.");
@@ -1448,7 +1436,7 @@ function updateWithdrawalPreview() {
         return;
     }
     const credits = BigInt(value);
-    const rawAmount = (credits * 10n ** BigInt(decimals)) / 10000n;
+    const rawAmount = (credits * 10n ** BigInt(decimals)) / BigInt(CYFUR_CREDITS_PER_TOKEN);
     preview.textContent = `${formatTokenAmount(rawAmount.toString(), decimals)} CYFUR`;
 }
 
@@ -1480,14 +1468,13 @@ async function refreshWithdrawalStatus() {
     const verifiedBadge = document.getElementById("withdrawal-wallet-verified");
     const amountInput = document.getElementById("withdrawal-amount");
     const maxButton = document.getElementById("withdrawal-max");
-    const balanceValue = document.getElementById("withdrawal-eligible-balance");
     const balanceNote = document.getElementById("withdrawal-balance-note");
     const minimumValue = document.getElementById("withdrawal-minimum");
     const minimumNote = document.getElementById("withdrawal-minimum-note");
     const history = document.getElementById("withdrawal-history");
     const tokenDecimals = document.getElementById("withdrawal-token-decimals");
     if (!addressInput || !submit || !verifiedBadge || !amountInput || !maxButton ||
-        !balanceValue || !balanceNote || !minimumValue || !minimumNote || !history) return;
+        !balanceNote || !minimumValue || !minimumNote || !history) return;
     withdrawalSystemReady = false;
     withdrawalAvailableCredits = "0";
     withdrawalHasActiveRequest = false;
@@ -1499,7 +1486,6 @@ async function refreshWithdrawalStatus() {
     verifiedBadge.textContent = "CHECKING";
     minimumValue.textContent = "Any positive amount";
     minimumNote.textContent = "Maximum is your available balance; limited to 5 requests per hour.";
-    balanceValue.textContent = "0 CREDITS";
     balanceNote.textContent = "No active withdrawal balance loaded yet.";
     history.replaceChildren();
     const empty = document.createElement("li");
@@ -1535,8 +1521,9 @@ async function refreshWithdrawalStatus() {
         const availableCredits = BigInt(result.availableCredits || "0");
         const decimals = Number(result.config?.tokenDecimals ?? 8);
         if (tokenDecimals) tokenDecimals.dataset.decimals = String(decimals);
-        balanceValue.textContent = `${formatCredits(result.availableCredits || "0")} CREDITS`;
-        balanceNote.textContent = `${formatCredits(result.balanceCredits || "0")} total credits on file · ${formatCredits(result.availableCredits || "0")} eligible after level requirement`;
+        balanceNote.textContent = result.level30Requirement?.met === true
+            ? "Withdrawals use the verified balance shown above."
+            : `Withdrawals use the verified balance shown above; complete levels 1-30 to unlock access (${Number(result.level30Requirement?.completedLevels) || 0}/30).`;
         minimumValue.textContent = "Any positive amount";
         minimumNote.textContent = "Maximum is your available balance; limited to 5 requests per hour.";
         renderWithdrawalHistory(result.withdrawals || []);
@@ -1647,7 +1634,7 @@ async function submitWithdrawalRequest(event) {
     }
 
     try {
-        if (!supabaseConfigured || !supabase) throw new Error("Supabase authentication is unavailable.");
+        if (!supabaseConfigured || !supabase) throw new Error("RelicGrid sign-in is unavailable.");
         const { data, error } = await supabase.auth.getSession();
         if (error) throw error;
         const accessToken = data.session?.access_token;
@@ -1746,7 +1733,6 @@ async function submitWithdrawalRequest(event) {
 async function refreshWallet() {
     const address = document.getElementById("wallet-address");
     const copyButton = document.getElementById("wallet-copy-address");
-    const createIntentButton = document.getElementById("deposit-create-intent");
     const signatureSubmit = document.getElementById("deposit-verify-button");
     const balance = document.getElementById("wallet-balance");
     const balanceState = document.getElementById("wallet-balance-state");
@@ -1765,7 +1751,6 @@ async function refreshWallet() {
     balance.textContent = "—";
     balanceState.textContent = "CHECKING ACCOUNT BALANCE…";
     walletRequirement.textContent = "Checking deposit readiness…";
-    createIntentButton.disabled = true;
     signatureSubmit.disabled = true;
     renderWalletHistory(null);
 
@@ -1781,7 +1766,7 @@ async function refreshWallet() {
         const accessToken = data.session?.access_token;
         if (!accessToken) {
             balanceState.textContent = "SIGN IN TO VIEW BALANCE";
-            walletRequirement.textContent = "Sign in to your RelicGrid account to load your balance and create account-bound deposit instructions.";
+            walletRequirement.textContent = "Sign in to your RelicGrid account to load your balance and verify a transaction.";
             setWalletMessage("Sign in to view your balance and deposit options. No wallet connection is required.", "error");
             return;
         }
@@ -1835,23 +1820,25 @@ async function refreshWallet() {
         document.getElementById("wallet-network-label").textContent = depositReady
             ? `01 · VERIFIED CYFUR TREASURY · ${result.network.toUpperCase()}`
             : "01 · PUBLIC SHARED CYFUR TREASURY · FUNDING SETUP REQUIRED";
-        createIntentButton.disabled = !depositReady;
         signatureSubmit.disabled = !depositReady;
         balance.textContent = result.balanceCredits === null
             ? "—"
             : formatCredits(result.balanceCredits);
         balanceState.textContent =
-            result.balanceVerified === true ? "CREDITS · BACKEND VERIFIED" : "CREDITS · NOT VERIFIED";
+            result.balanceVerified === true
+                ? "CREDITS · BACKEND VERIFIED"
+                : result.balanceError === "wallet_balance_unavailable"
+                    ? "SERVER BALANCE UNAVAILABLE"
+                    : "CREDITS · NOT VERIFIED";
         if (result.balanceVerified !== true) balance.textContent = "—";
         status.textContent = depositReady
             ? `READY${result.network ? ` · ${result.network.toUpperCase()}` : ""}`
             : "DISABLED";
         renderWalletHistory(result.deposits);
         if (depositReady) {
-            walletRequirement.textContent = currentDepositIntent
-                ? "Instructions are ready. Send at least the displayed amount and include the unique memo, then paste the full Solscan transaction link."
-                : "Create deposit instructions first. Send at least the displayed amount with its unique memo, then paste the full Solscan transaction link.";
-            setWalletMessage(walletRequirement.textContent, "ready");
+            walletRequirement.textContent = "Send CYFUR to the treasury wallet above, then enter the transaction ID here.";
+            document.getElementById("deposit-signature").disabled = false;
+            signatureSubmit.disabled = false;
         } else {
             const readinessMessage = typeof result.disabledMessage === "string" &&
                 result.disabledMessage.trim()
@@ -2288,7 +2275,7 @@ function setWithdrawalLinkStatus(message, state = "") {
 
 async function connectSolanaWallet() {
     if (!supabaseConfigured || !supabase) {
-        const message = "Supabase authentication is unavailable. No wallet was linked.";
+        const message = "RelicGrid sign-in is unavailable. No wallet was linked.";
         setWalletMessage(message, "error");
         setWithdrawalLinkStatus(message, "error");
         return;
@@ -2389,7 +2376,7 @@ async function connectSolanaWallet() {
 }
 
 async function verifyDepositSignature(signatureOrLink) {
-    if (!supabaseConfigured || !supabase) throw new Error("Supabase authentication is unavailable.");
+    if (!supabaseConfigured || !supabase) throw new Error("RelicGrid sign-in is unavailable.");
     const { data, error } = await supabase.auth.getSession();
     if (error) throw error;
     const accessToken = data.session?.access_token;
@@ -2436,8 +2423,6 @@ async function verifyDepositSignature(signatureOrLink) {
     }
     document.getElementById("wallet-balance").textContent = formatCredits(result.balanceCredits);
     document.getElementById("wallet-balance-state").textContent = "CREDITS · BACKEND VERIFIED";
-    currentDepositIntent = null;
-    document.getElementById("deposit-intent-panel").hidden = true;
     document.getElementById("deposit-signature").value = "";
     await refreshWallet();
     const confirmedTokenAmount = `${formatTokenAmount(result.amountRaw, result.tokenDecimals)} CYFUR`;
@@ -2450,40 +2435,39 @@ async function verifyDepositSignature(signatureOrLink) {
     return true;
 }
 
-let gameAccessClaimInProgress = false;
+let gamePointsDepositVerificationInProgress = false;
 
-async function claimServerGamePoints(event) {
+async function verifyCyfurGamePointsDeposit(event) {
     event.preventDefault();
-    if (gameAccessClaimInProgress) return;
+    if (gamePointsDepositVerificationInProgress) return;
     const input = document.getElementById("game-access-transaction-link");
-    const button = document.getElementById("game-access-claim");
+    const button = document.getElementById("game-access-verify");
     const status = document.getElementById("game-access-status");
     const signature = getSolscanSignature(input.value);
     if (!signature) {
-        status.textContent = "Paste a valid Solscan transaction link to claim server game points.";
+        status.textContent = "Paste a valid Solana transaction link to verify your CYFUR transfer.";
         status.dataset.state = "error";
         return;
     }
 
-    gameAccessClaimInProgress = true;
+    gamePointsDepositVerificationInProgress = true;
     button.disabled = true;
     button.textContent = "VERIFYING TRANSACTION…";
     input.disabled = true;
     try {
-        status.textContent = "Checking the transaction's network, finality, and success with Solana…";
+        status.textContent = "Verifying the finalized CYFUR transfer, destination, amount, and linked sender…";
         status.dataset.state = "pending";
         const headers = await getWalletAuthorizationHeaders();
         const response = await fetch(apiUrl("game-points"), {
             method: "POST",
             headers,
-            body: JSON.stringify({ action: "claim", signature }),
+            body: JSON.stringify({ action: "verify-deposit", signature }),
             cache: "no-store"
         });
         const result = await response.json().catch(() => ({}));
         if (typeof result.balancePoints === "string" && /^\d+$/.test(result.balancePoints)) {
             serverGamePoints = result.balancePoints;
             serverGamePointsVerified = true;
-            renderGameAccessPoints();
             renderLevels();
             renderProfile();
         }
@@ -2493,31 +2477,43 @@ async function claimServerGamePoints(event) {
             return;
         }
         if (response.status === 409 && result.error === "transaction_already_claimed") {
-            status.textContent = `This transaction was already claimed. Current server balance: ${formatCredits(result.balancePoints || serverGamePoints)} points.`;
+            status.textContent = "This transaction was already claimed. No additional game points were awarded.";
+            status.dataset.state = "pending";
+            return;
+        }
+        if (response.status === 409 && result.error === "transaction_already_credited") {
+            status.textContent = "This transaction has already been used for a wallet deposit. No additional points were awarded.";
             status.dataset.state = "pending";
             return;
         }
         if (!response.ok || result.claimed !== true || !/^\d+$/.test(String(result.claimedPoints)) ||
             !/^\d+$/.test(String(result.balancePoints))) {
-            throw new Error(result.message || result.error || `Transaction could not be claimed (${response.status}).`);
+            const messages = {
+                cyfur_transfer_not_found: "No finalized CYFUR transfer to the RelicGrid treasury was found for this transaction ID.",
+                cyfur_amount_too_small: "This transfer converts to less than one whole game point.",
+                game_points_deposit_not_configured: "CYFUR game-point deposits are not configured on the server yet.",
+                solana_rpc_network_mismatch: "The configured Solana RPC is connected to the wrong network."
+            };
+            throw new Error(messages[result.error] || result.message || result.error ||
+                `CYFUR transfer could not be verified (${response.status}).`);
         }
-        status.textContent = `${formatCredits(result.claimedPoints)} server game points added. Verified balance: ${formatCredits(result.balancePoints)}.`;
+        status.textContent = `${formatTokenAmount(result.amountRaw, result.tokenDecimals)} CYFUR verified → ${formatCredits(result.claimedPoints)} game points added. Verified balance: ${formatCredits(result.balancePoints)}.`;
         status.dataset.state = "ready";
         input.value = "";
     } catch (error) {
-        console.error("Server game-points transaction claim failed.", error);
+        console.error("Server game-points CYFUR deposit verification failed.", error);
         status.textContent = `No points were credited. ${error.message}`;
         status.dataset.state = "error";
     } finally {
-        gameAccessClaimInProgress = false;
+        gamePointsDepositVerificationInProgress = false;
         button.disabled = false;
-        button.textContent = "CLAIM 1,000 SERVER GAME POINTS";
+        button.textContent = "VERIFY CYFUR DEPOSIT";
         input.disabled = false;
     }
 }
 
 async function getWalletAuthorizationHeaders() {
-    if (!supabaseConfigured || !supabase) throw new Error("Supabase authentication is unavailable.");
+    if (!supabaseConfigured || !supabase) throw new Error("RelicGrid sign-in is unavailable.");
     const { data, error } = await supabase.auth.getSession();
     if (error) throw error;
     const accessToken = data.session?.access_token;
@@ -2718,8 +2714,22 @@ async function finishOpeningFlow() {
     videoSkip.onclick = null;
     delete videoScreen.dataset.openingSequence;
     delete videoScreen.dataset.companyIntro;
-    renderHome();
-    document.getElementById("wallet-card").scrollIntoView({ behavior: "auto", block: "start" });
+    showScreen("title-screen");
+    document.getElementById("title-continue-button").focus();
+}
+
+async function enterGameMenu() {
+    if (accountEmailConfirmationCallback) {
+        await backendReady;
+        if (authUser?.email_confirmed_at) {
+            showScreen("profile-screen");
+            return;
+        }
+    }
+    showNameOrHome();
+    if (player.name) {
+        document.getElementById("wallet-card").scrollIntoView({ behavior: "auto", block: "start" });
+    }
     if (player.name && new URL(window.location.href).searchParams.has("phantom_handoff")) {
         void backendReady.then(() => refreshWallet());
     }
@@ -2739,6 +2749,7 @@ function playCampaignEnding() {
             return;
         }
         finished = true;
+        delete videoScreen.dataset.fullscreenVideo;
         transitionVideo.hidden = true;
         videoSkip.hidden = true;
         videoSkip.onclick = null;
@@ -2747,6 +2758,8 @@ function playCampaignEnding() {
     };
     const offerContinue = (message) => {
         void stopVideoPlayback(transitionVideo);
+        delete videoScreen.dataset.fullscreenVideo;
+        transitionVideo.hidden = true;
         videoCaption.textContent = message;
         videoAction.textContent = "CONTINUE →";
         videoAction.hidden = false;
@@ -2754,6 +2767,7 @@ function playCampaignEnding() {
     };
 
     showScreen("video-screen");
+    videoScreen.dataset.fullscreenVideo = "true";
     introVideo.pause();
     introVideo.hidden = true;
     transitionVideo.pause();
@@ -2774,14 +2788,23 @@ function playCampaignEnding() {
     transitionVideo.onended = () => void finish();
     void playVideoInOrientation(transitionVideo, (error) => {
         console.warn("Campaign ending video could not autoplay.", error);
+        delete videoScreen.dataset.fullscreenVideo;
+        transitionVideo.hidden = true;
         videoCaption.textContent = "Tap to play the final transmission.";
         videoAction.textContent = "PLAY ENDING →";
         videoAction.hidden = false;
-        videoAction.onclick = () => void playVideoInOrientation(transitionVideo, (retryError) => {
-            console.error("Campaign ending video could not start after interaction.", retryError);
-            offerContinue("The campaign ending video could not be played.");
-        });
-    });
+        videoAction.onclick = () => {
+            videoScreen.dataset.fullscreenVideo = "true";
+            transitionVideo.hidden = false;
+            videoAction.hidden = true;
+            void playVideoInOrientation(transitionVideo, (retryError) => {
+                console.error("Campaign ending video could not start after interaction.", retryError);
+                delete videoScreen.dataset.fullscreenVideo;
+                transitionVideo.hidden = true;
+                offerContinue("The campaign ending video could not be played.");
+            }, undefined, "landscape");
+        };
+    }, undefined, "landscape");
 }
 
 async function playLevelTransition(nextLevel, milestone) {
@@ -2799,6 +2822,7 @@ async function playLevelTransition(nextLevel, milestone) {
         }
         finished = true;
         transitionInProgress = false;
+        delete videoScreen.dataset.fullscreenVideo;
         player.transitionMilestonesPlayed = [...new Set([
             ...player.transitionMilestonesPlayed,
             milestone
@@ -2811,6 +2835,8 @@ async function playLevelTransition(nextLevel, milestone) {
     };
     const offerContinue = (error) => {
         void stopVideoPlayback(transitionVideo);
+        delete videoScreen.dataset.fullscreenVideo;
+        transitionVideo.hidden = true;
         console.error(`Inter-level transmission ${clip} could not be played.`, error);
         videoCaption.textContent = "Transmission unavailable. Continue to the next sector when ready.";
         videoAction.textContent = "CONTINUE →";
@@ -2819,6 +2845,7 @@ async function playLevelTransition(nextLevel, milestone) {
     };
 
     showScreen("video-screen");
+    videoScreen.dataset.fullscreenVideo = "true";
     introVideo.pause();
     introVideo.hidden = true;
     transitionVideo.pause();
@@ -2837,7 +2864,7 @@ async function playLevelTransition(nextLevel, milestone) {
     videoSkip.hidden = false;
     videoSkip.onclick = () => void finish();
     transitionVideo.onended = () => void finish();
-    await playVideoInOrientation(transitionVideo, offerContinue);
+    await playVideoInOrientation(transitionVideo, offerContinue, undefined, "landscape");
 }
 
 function clearCompletedOpeningVideo() {
@@ -2856,7 +2883,7 @@ function playGameVideo() {
     videoScreen.dataset.companyIntro = "false";
     videoAction.hidden = true;
     videoAction.onclick = null;
-    videoSkip.textContent = "SKIP VIDEO  →";
+    videoSkip.textContent = "SKIP GAME VIDEO  →";
     videoSkip.hidden = false;
     videoSkip.onclick = () => void finishOpeningFlow();
     playOpeningVideo("gamevideo.mp4", "Your next signal is coming online…", () => {
@@ -2865,9 +2892,7 @@ function playGameVideo() {
 }
 
 function playOpeningVideo(source, caption, onEnded, allowSkip = false) {
-    const orientation = source === "companyintro.mp4" || source === "gamevideo.mp4"
-        ? "landscape"
-        : "portrait";
+    const orientation = source === "intro.mp4" ? "portrait" : "landscape";
     introVideo.pause();
     introVideo.onerror = null;
     introVideo.onended = null;
@@ -2891,13 +2916,11 @@ function playOpeningVideo(source, caption, onEnded, allowSkip = false) {
     introVideo.onended = () => {
         clearCompletedOpeningVideo();
         if (source === "companyintro.mp4") {
-            playOpeningVideo("intro.mp4", "RelicGrid introduction", () => {
-                void finishCompanyIntro();
-            }, false);
+            playOpeningVideo("intro.mp4", "RelicGrid introduction", () => {});
             return;
         }
         if (source === "intro.mp4") {
-            void finishCompanyIntro();
+            void showNextAfterIntroVideo();
             return;
         }
         onEnded();
@@ -2906,7 +2929,7 @@ function playOpeningVideo(source, caption, onEnded, allowSkip = false) {
         console.error(`${caption} could not be played.`, error);
         videoScreen.dataset.companyIntro = "false";
         videoCaption.textContent = `${caption} could not be played.`;
-        videoAction.textContent = source === "gamevideo.mp4" ? "RETRY VIDEO  →" : "RETRY INTRO  →";
+        videoAction.textContent = "RETRY VIDEO  →";
         videoAction.hidden = false;
         videoAction.onclick = () => {
             playOpeningVideo(source, caption, onEnded, allowSkip);
@@ -2917,11 +2940,6 @@ function playOpeningVideo(source, caption, onEnded, allowSkip = false) {
         offerNext,
         () => {
             introVideo.muted = false;
-            if (source === "intro.mp4") {
-                videoAction.textContent = "NEXT  →";
-                videoAction.hidden = false;
-                videoAction.onclick = () => void finishCompanyIntro();
-            }
             if (allowSkip && source === "gamevideo.mp4") {
                 videoSkip.textContent = "SKIP GAME VIDEO  →";
                 videoSkip.hidden = false;
@@ -2932,21 +2950,20 @@ function playOpeningVideo(source, caption, onEnded, allowSkip = false) {
     );
 }
 
-async function finishCompanyIntro() {
+async function showNextAfterIntroVideo() {
     if (!await stopVideoPlayback(introVideo)) {
         videoAction.textContent = "RETRY PORTRAIT ORIENTATION";
         videoAction.hidden = false;
-        videoAction.onclick = () => void finishCompanyIntro();
+        videoAction.onclick = () => void showNextAfterIntroVideo();
         return;
     }
     introVideo.hidden = true;
     videoSkip.hidden = true;
     videoSkip.onclick = null;
-    videoAction.hidden = true;
-    videoAction.onclick = null;
-    delete videoScreen.dataset.openingSequence;
-    delete videoScreen.dataset.companyIntro;
-    showScreen("title-screen");
+    videoCaption.textContent = "Introduction complete. Continue to the game video.";
+    videoAction.textContent = "NEXT →";
+    videoAction.hidden = false;
+    videoAction.onclick = playGameVideo;
 }
 
 async function showOpeningIntro() {
@@ -2960,11 +2977,12 @@ async function showOpeningIntro() {
     videoSkip.hidden = true;
     videoSkip.onclick = null;
     videoCaption.textContent = "";
-    playOpeningVideo("companyintro.mp4", "", () => {}, false);
+    playOpeningVideo("companyintro.mp4", "", () => {});
 }
 
 function fitVideoFrame(video) {
-    if (video === introVideo && videoScreen.dataset.openingSequence === "true") {
+    if (videoScreen.dataset.fullscreenVideo === "true" ||
+        (video === introVideo && videoScreen.dataset.openingSequence === "true")) {
         videoScreen.style.setProperty("--phone-width", "100vw");
         videoScreen.style.setProperty("--phone-height", "100dvh");
         return;
@@ -3013,7 +3031,6 @@ async function startLevel(number, resumeMusic = false) {
             }
             serverGamePoints = balance;
             serverGamePointsVerified = true;
-            renderGameAccessPoints();
             renderLevels();
         }
         if (!entry.practice && !entry.gamePoints) {
@@ -3026,7 +3043,7 @@ async function startLevel(number, resumeMusic = false) {
             };
         }
         const entryMessage = entry.gamePoints
-            ? `Level ${String(number).padStart(2, "0")} started. ${formatCredits(entry.entryCostPoints)} game points deducted; balance ${formatCredits(entry.balancePoints)} points.`
+            ? `Level ${String(number).padStart(2, "0")} started. ${formatCredits(entry.entryCostPoints)} game points deducted.`
             : entry.practice
                 ? `Level ${String(number).padStart(2, "0")} started in free practice. No credits were charged; progress and rewards will not be saved.`
                 : `Level ${String(number).padStart(2, "0")} started. ${formatCredits(entry.entryCostCredits)} credits deducted; verified balance ${formatCredits(entry.balanceCredits)}.`;
@@ -3081,7 +3098,7 @@ document.getElementById("name-form").addEventListener("submit", async (event) =>
                 p_display_name: name.slice(0, 20)
             });
             if (error) {
-                console.error("Player callsign could not be saved to Supabase.", error);
+                console.error("Player callsign could not be saved to RelicGrid.", error);
                 backendStatus = `Callsign could not be synced: ${error.message}`;
             }
         }
@@ -3122,6 +3139,9 @@ document.getElementById("leaderboard-open").addEventListener("click", () => {
     showScreen("leaderboard-screen");
     void refreshLeaderboard();
 });
+document.getElementById("title-continue-button").addEventListener("click", () => {
+    void enterGameMenu();
+});
 document.getElementById("leaderboard-refresh").addEventListener("click", () => {
     void refreshLeaderboard();
 });
@@ -3143,7 +3163,7 @@ document.getElementById("wallet-copy-address").addEventListener("click", async (
         document.getElementById("wallet-address-copy-status").textContent = "Treasury address copied.";
         setWalletMessage(
             depositsReady
-                    ? "Treasury copied. Create deposit instructions and include their unique memo with your transfer."
+                    ? "Treasury copied. Send CYFUR to this address, then verify using the transaction ID."
                 : "Treasury address copied for setup only. Deposit verification is not READY; do not send CYFUR.",
             depositsReady ? "ready" : "disabled"
         );
@@ -3157,60 +3177,7 @@ document.getElementById("home-open-deposit").addEventListener("click", () => {
     document.getElementById("wallet-card").scrollIntoView({ behavior: "smooth", block: "start" });
     document.getElementById("deposit-signature").focus({ preventScroll: true });
 });
-document.getElementById("game-access-form").addEventListener("submit", claimServerGamePoints);
-document.getElementById("deposit-create-intent").addEventListener("click", async () => {
-    const button = document.getElementById("deposit-create-intent");
-    button.disabled = true;
-    button.textContent = "PREPARING…";
-    try {
-        const response = await fetch(apiUrl("payment-intent"), {
-            method: "POST",
-            headers: await getWalletAuthorizationHeaders(),
-            body: JSON.stringify({}),
-            cache: "no-store"
-        });
-        const result = await response.json().catch(() => ({}));
-        if (!response.ok) {
-            throw new Error(result.message || result.error || `Deposit instructions failed (${response.status}).`);
-        }
-        if (typeof result.intentId !== "string" ||
-            typeof result.amountRaw !== "string" || !/^[1-9]\d*$/.test(result.amountRaw) ||
-            !Number.isInteger(result.tokenDecimals) || result.tokenDecimals < 0 ||
-            typeof result.treasuryAddress !== "string" ||
-            typeof result.memo !== "string" ||
-            !Number.isFinite(Date.parse(result.expiresAt))) {
-            throw new Error("The server returned incomplete deposit instructions.");
-        }
-        currentDepositIntent = result;
-        document.getElementById("deposit-intent-amount").textContent =
-            `${formatTokenAmount(result.amountRaw, result.tokenDecimals)} CYFUR`;
-        document.getElementById("deposit-intent-memo").textContent = result.memo;
-        document.getElementById("deposit-intent-expiry").textContent =
-            `Expires ${new Date(result.expiresAt).toLocaleTimeString()}`;
-        document.getElementById("deposit-intent-panel").hidden = false;
-        document.getElementById("deposit-signature").disabled = false;
-        document.getElementById("deposit-verify-button").disabled = false;
-        document.getElementById("deposit-wallet-requirement").textContent =
-            "Send at least the displayed amount to the treasury and include the memo exactly. Then paste the full Solscan transaction link.";
-        setWalletMessage("Deposit instructions are ready. Include the unique memo so the payment can be credited to your account.", "ready");
-    } catch (error) {
-        console.error("Deposit instructions could not be created.", error);
-        setWalletMessage(error.message, "error");
-    } finally {
-        button.textContent = "CREATE DEPOSIT INSTRUCTIONS";
-        button.disabled = walletStatusSnapshot?.depositsEnabled !== true;
-    }
-});
-document.getElementById("deposit-copy-memo").addEventListener("click", async () => {
-    if (!currentDepositIntent) return;
-    try {
-        await navigator.clipboard.writeText(currentDepositIntent.memo);
-        document.getElementById("deposit-memo-copy-status").textContent = "Memo copied.";
-    } catch (error) {
-        console.error("Deposit memo could not be copied.", error);
-        document.getElementById("deposit-memo-copy-status").textContent = "Copy failed. Select and copy the memo manually.";
-    }
-});
+document.getElementById("game-access-form").addEventListener("submit", verifyCyfurGamePointsDeposit);
 document.getElementById("deposit-signature-form").addEventListener("submit", async (event) => {
     event.preventDefault();
     if (depositVerificationInProgress) return;
@@ -3236,6 +3203,14 @@ document.getElementById("deposit-signature-form").addEventListener("submit", asy
 document.getElementById("profile-open").addEventListener("click", () => {
     renderProfile();
     showScreen("profile-screen");
+});
+document.getElementById("wallet-protect-account").addEventListener("click", () => {
+    renderProfile();
+    showScreen("profile-screen");
+    document.getElementById("account-security-heading").scrollIntoView({
+        behavior: "smooth",
+        block: "start"
+    });
 });
 document.getElementById("levels-open").addEventListener("click", () => leaveGameplay());
 document.getElementById("play-home").addEventListener("click", () => leaveGameplay());
@@ -3302,7 +3277,6 @@ async function saveWalletLevelCompletion(detail) {
             throw new Error("The completion response contained an invalid game-points balance.");
         }
         serverGamePointsVerified = true;
-        renderGameAccessPoints();
         renderLevels();
         player.completedLevels = [...new Set([...player.completedLevels, detail.number])].sort((a, b) => a - b);
         player.unlockedLevel = Math.min(99, Math.max(player.unlockedLevel, detail.number + 1));
@@ -3520,7 +3494,4 @@ if (Capacitor.isNativePlatform()) {
 }
 const phantomMobileCallback = readPhantomMobileCallback(window);
 pendingPhantomMobileCallback = phantomMobileCallback;
-document.getElementById("title-continue-button").addEventListener("click", () => {
-    playGameVideo();
-});
 void showOpeningIntro();

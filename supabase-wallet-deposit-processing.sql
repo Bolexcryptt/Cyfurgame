@@ -201,7 +201,7 @@ begin
     if not found or not v_config.paid_gameplay_enabled then
         raise exception 'Paid gameplay is disabled.' using errcode = '55000';
     end if;
-    if v_config.credits_per_token <> 10000 then
+    if v_config.credits_per_token <> 1000 then
         raise exception 'Wallet conversion configuration is invalid.' using errcode = '22023';
     end if;
 
@@ -324,8 +324,6 @@ declare
     v_session public.wallet_level_sessions%rowtype;
     v_expected_reward bigint;
     v_balance bigint;
-    v_first_completion boolean;
-    v_inserted_rows integer;
     v_already_completed boolean := false;
 begin
     if coalesce(auth.role(), '') <> 'service_role' then
@@ -369,12 +367,6 @@ begin
     insert into public.level_completions (player_id, level_number)
     values (p_player_id, v_session.level_number)
     on conflict (player_id, level_number) do nothing;
-    get diagnostics v_inserted_rows = row_count;
-    v_first_completion := v_inserted_rows = 1;
-    if not v_first_completion then
-        v_expected_reward := 0;
-        v_already_completed := true;
-    end if;
 
     update public.wallet_level_sessions
     set completed_at = now(),
@@ -520,7 +512,7 @@ begin
        or v_config.official_mint_address <> p_mint_address
        or v_config.token_program_id <> p_token_program_id
        or v_config.token_decimals <> p_token_decimals
-       or v_config.credits_per_token <> 10000
+       or v_config.credits_per_token <> 1000
        or v_config.rounding_policy <> 'floor' then
         raise exception 'Deposit configuration is disabled or does not match.' using errcode = '22023';
     end if;
