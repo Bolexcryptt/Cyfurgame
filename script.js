@@ -18,6 +18,7 @@ const traceButton = document.getElementById("trace-beam");
 const resetButton = document.getElementById("reset-game");
 const completionSummary = document.getElementById("completion-summary");
 const gameHud = document.querySelector(".game-hud");
+const sectorMapPanel = document.querySelector(".hud-map-panel");
 const colors = {
     pink: 0xff77e6,
     amber: 0xffaa43,
@@ -1555,6 +1556,7 @@ function startScene() {
             return;
         }
         activeLevel = level;
+        sectorMapPanel.hidden = false;
         if (decorativeTerminalGroup) decorativeTerminalGroup.visible = false;
         firstLevelTutorial = level.number === 1 && levelDetails?.tutorial === true;
         firstLevelTutorialStage = "observe";
@@ -1767,6 +1769,7 @@ function startScene() {
     }
 
     function showCompletionSummary(level, elapsedMilliseconds, result) {
+        sectorMapPanel.hidden = true;
         const timeTargets = level.starTimeTargets;
         const stars = result.stars;
         document.getElementById("completion-stars").textContent = `${stars} / 3`;
@@ -1849,10 +1852,14 @@ function startScene() {
             setFeedback("A crystal occupies this tile. Route the laser through it; mirrors cannot cover crystals.");
             return;
         }
-        startSolveTimer();
-        resetCrystalStates();
         const cellKey = gridKey(row, col);
         const existing = placedMirrors.get(cellKey);
+        if (!existing && placedMirrors.size >= activeLevel.par) {
+            setFeedback(`Mirror limit reached (${activeLevel.par}). Tap an existing mirror to rotate it.`, "miss");
+            return;
+        }
+        startSolveTimer();
+        resetCrystalStates();
         if (existing) {
             existing.slash = !existing.slash;
             orientMirror(existing);

@@ -1,6 +1,6 @@
 import {
     CYFUR_CREDITS_PER_TOKEN,
-    LEVEL_TRANSITION_INTERVAL,
+    LEVEL_TRANSITION_MILESTONES,
     formatCyfurCredits,
     getCampaignStartLevel,
     getLevelEconomy,
@@ -129,9 +129,8 @@ function readPlayer() {
             transitionMilestonesPlayed: Array.isArray(parsed.transitionMilestonesPlayed)
                 ? [...new Set(parsed.transitionMilestonesPlayed.filter((milestone) =>
                     Number.isInteger(milestone) &&
-                    milestone >= LEVEL_TRANSITION_INTERVAL &&
-                    milestone <= 99 &&
-                    milestone % LEVEL_TRANSITION_INTERVAL === 0))]
+                    milestone >= LEVEL_TRANSITION_MILESTONES[0] &&
+                    milestone <= 98))]
                 : [],
             lastLevel: Math.min(99, Math.max(1, Number(parsed.lastLevel) || 1))
         };
@@ -2422,7 +2421,11 @@ async function playLevelTransition(nextLevel, milestone) {
     transitionInProgress = true;
     await stopVideoPlayback(introVideo);
     const transitionClips = ["levels1.mp4", "levels2.mp4"];
-    const clip = transitionClips[(milestone / LEVEL_TRANSITION_INTERVAL - 1) % transitionClips.length];
+    const clip = milestone === LEVEL_TRANSITION_MILESTONES[0]
+        ? transitionClips[0]
+        : milestone === LEVEL_TRANSITION_MILESTONES[1]
+            ? transitionClips[1]
+            : transitionClips[Math.floor(Math.random() * transitionClips.length)];
     let finished = false;
     const finish = async () => {
         if (finished) return;
@@ -2723,7 +2726,7 @@ document.getElementById("next-level").addEventListener("click", (event) => {
     const number = Number(event.currentTarget.dataset.nextLevel);
     if (!Number.isInteger(number) || number < 1 || number > 99) return;
     const milestone = getPendingLevelTransition(
-        player.completedLevels.length,
+        number - 1,
         player.transitionMilestonesPlayed
     );
     if (milestone !== null) {

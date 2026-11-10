@@ -3,7 +3,8 @@ const COLS = 8;
 const CLEAR_TARGET_ROWS = Object.freeze([2, 3, 4]);
 const CLEAR_TARGET_COLS = Object.freeze([2, 3, 4, 5]);
 export const CYFUR_CREDITS_PER_TOKEN = 1000;
-export const LEVEL_TRANSITION_INTERVAL = 7;
+export const LEVEL_TRANSITION_MILESTONES = Object.freeze([9, 14]);
+export const RANDOM_LEVEL_TRANSITION_CHANCE = 0.35;
 export const STAR_TIME_CONFIG = Object.freeze({
     threeStarBaseSeconds: 25,
     threeStarSecondsPerMirror: 10,
@@ -12,15 +13,16 @@ export const STAR_TIME_CONFIG = Object.freeze({
 });
 export const LEVEL_STAR_TIME_OVERRIDES = Object.freeze({});
 
-export function getPendingLevelTransition(completedLevelCount, playedMilestones = []) {
-    if (!Number.isInteger(completedLevelCount) || completedLevelCount < 0 ||
-        !Array.isArray(playedMilestones)) {
-        throw new TypeError("A completed level count and played milestone list are required.");
+export function getPendingLevelTransition(completedLevelNumber, playedMilestones = [], random = Math.random) {
+    if (!Number.isInteger(completedLevelNumber) || completedLevelNumber < 0 || completedLevelNumber > 98 ||
+        !Array.isArray(playedMilestones) || typeof random !== "function") {
+        throw new TypeError("A completed level number, played milestone list, and random selector are required.");
     }
-    const milestone = Math.floor(completedLevelCount / LEVEL_TRANSITION_INTERVAL) * LEVEL_TRANSITION_INTERVAL;
-    return milestone >= LEVEL_TRANSITION_INTERVAL && !playedMilestones.includes(milestone)
-        ? milestone
-        : null;
+    if (playedMilestones.includes(completedLevelNumber)) return null;
+    if (LEVEL_TRANSITION_MILESTONES.includes(completedLevelNumber)) return completedLevelNumber;
+    if (completedLevelNumber < LEVEL_TRANSITION_MILESTONES[1] ||
+        random() >= RANDOM_LEVEL_TRANSITION_CHANCE) return null;
+    return completedLevelNumber;
 }
 
 export function getLevelStarTimeTargets(level) {
@@ -201,8 +203,8 @@ function buildRoute(random, start, target, minimumTurns) {
 
 function makeLevel(number, usedLayouts) {
     const band = Math.ceil(number / 10);
-    const requiredTurns = Math.min(1 + Math.floor((number - 1) / 8), 12);
-    const crystalCount = Math.min(1 + Math.floor((number - 1) / 3), 6);
+    const requiredTurns = Math.min(1 + Math.floor((number - 1) / 4), 12);
+    const crystalCount = Math.min(1 + Math.floor((number - 1) / 2), 8);
 
     for (let attempt = 0; attempt < 900; attempt++) {
         const random = randomFor(number * 7919 + attempt * 104729);
@@ -271,7 +273,7 @@ function makeLevel(number, usedLayouts) {
             const j = Math.floor(random() * (i + 1));
             [candidates[i], candidates[j]] = [candidates[j], candidates[i]];
         }
-        const obstacleCount = Math.min(2 + Math.floor((number - 1) / 2), 18, candidates.length);
+        const obstacleCount = Math.min(1 + number, 22, candidates.length);
         const obstacles = candidates.slice(0, obstacleCount);
         const layoutKey = JSON.stringify({
             start,

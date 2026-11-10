@@ -38,7 +38,8 @@ import {
     getLevelRewardPoints,
     getPendingLevelTransition,
     getLevelStarTimeTargets,
-    LEVEL_TRANSITION_INTERVAL,
+    LEVEL_TRANSITION_MILESTONES,
+    RANDOM_LEVEL_TRANSITION_CHANCE,
     mergeCompletedLevels,
     levels
 } from "../levels.js";
@@ -690,15 +691,30 @@ test("intro launch selects a current or next unlocked level and formats ledger c
     assert.equal(formatCyfurCredits("invalid"), "Unavailable");
 });
 
-test("level transition milestones occur every seven completed levels and are not replayed", () => {
-    assert.equal(LEVEL_TRANSITION_INTERVAL, 7);
-    assert.equal(getPendingLevelTransition(6), null);
-    assert.equal(getPendingLevelTransition(7), 7);
-    assert.equal(getPendingLevelTransition(8), 7);
-    assert.equal(getPendingLevelTransition(14, [7]), 14);
-    assert.equal(getPendingLevelTransition(20, [7, 14]), null);
-    assert.equal(getPendingLevelTransition(21, [7, 14]), 21);
+test("transition videos play after levels 9 and 14, then at random later boundaries", () => {
+    assert.deepEqual(LEVEL_TRANSITION_MILESTONES, [9, 14]);
+    assert.equal(RANDOM_LEVEL_TRANSITION_CHANCE, 0.35);
+    assert.equal(getPendingLevelTransition(8), null);
+    assert.equal(getPendingLevelTransition(9), 9);
+    assert.equal(getPendingLevelTransition(9, [9]), null);
+    assert.equal(getPendingLevelTransition(14, [9]), 14);
+    assert.equal(getPendingLevelTransition(15, [9, 14], () => 0), 15);
+    assert.equal(getPendingLevelTransition(15, [9, 14], () => 0.99), null);
     assert.throws(() => getPendingLevelTransition(-1), TypeError);
+    assert.throws(() => getPendingLevelTransition(99), TypeError);
+});
+
+test("campaign difficulty ramps crystals and obstacles while mirror count stays bounded", () => {
+    const scene = readFileSync(new URL("../script.js", import.meta.url), "utf8");
+    for (const level of levels) {
+        assert.equal(level.crystals.length, Math.min(1 + Math.floor((level.number - 1) / 2), 8));
+        assert.equal(level.solutionMirrors.length, level.par);
+    }
+    assert.ok(levels[19].obstacles.length >= 20);
+    assert.match(scene, /if \(!existing && placedMirrors\.size >= activeLevel\.par\)/);
+    assert.match(scene, /Mirror limit reached/);
+    assert.match(scene, /sectorMapPanel\.hidden = true/);
+    assert.match(scene, /sectorMapPanel\.hidden = false/);
 });
 
 test("startup plays company and player introductions, then game video, then opens the game menu", () => {
@@ -1092,10 +1108,12 @@ test("RelicGrid branding is used in the game and hidden scenes stop rendering", 
     assert.match(scene, /GRID\.start\.col = launchDirection === 1 \? -1 : GRID\.cols/);
     assert.match(scene, /activationRingMaterials\.forEach/);
     assert.match(app, /next-level[\s\S]*?startLevel\(number, true\)/);
-    assert.match(app, /LEVEL_TRANSITION_INTERVAL/);
+    assert.match(app, /LEVEL_TRANSITION_MILESTONES/);
     assert.match(app, /function playLevelTransition\(nextLevel, milestone\)/);
     assert.match(app, /const transitionClips = \["levels1\.mp4", "levels2\.mp4"\]/);
-    assert.match(app, /transitionClips\[\(milestone \/ LEVEL_TRANSITION_INTERVAL - 1\) % transitionClips\.length\]/);
+    assert.match(app, /milestone === LEVEL_TRANSITION_MILESTONES\[0\][\s\S]*?transitionClips\[0\]/);
+    assert.match(app, /milestone === LEVEL_TRANSITION_MILESTONES\[1\][\s\S]*?transitionClips\[1\]/);
+    assert.match(app, /getPendingLevelTransition\(\s*number - 1/);
     assert.match(app, /transitionMilestonesPlayed = \[\.\.\.new Set/);
     assert.match(app, /if \(transitionInProgress\) return/);
     const transitionFlow = app.slice(
@@ -3768,7 +3786,7 @@ test("all 99 generated layouts are unique, valid, and solvable through every ord
         ]));
         const mirrors = new Map(level.solutionMirrors.map((mirror) => [`${mirror.row},${mirror.col}`, mirror.orientation]));
         const crystalCells = [...crystals.keys()];
-        assert.equal(level.crystals.length, Math.min(1 + Math.floor((level.number - 1) / 3), 6));
+        assert.equal(level.crystals.length, Math.min(1 + Math.floor((level.number - 1) / 2), 8));
         assert.equal(crystalCells.length, level.crystals.length);
         for (const crystal of level.crystals) {
             const key = `${crystal.row},${crystal.col}`;
