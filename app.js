@@ -55,7 +55,6 @@ const accountEmailConfirmationCallback = isAccountEmailConfirmationCallback(wind
 const ImmersiveMode = registerPlugin("ImmersiveMode");
 const screens = [
     "video-screen",
-    "title-screen",
     "name-screen",
     "home-screen",
     "leaderboard-screen",
@@ -383,9 +382,6 @@ if (Capacitor.isNativePlatform()) {
 }
 document.addEventListener("keydown", (event) => {
     if (openingFlowFinished) return;
-    if (!document.getElementById("title-screen").hidden &&
-        event.target.closest?.("#title-continue-button") &&
-        ["Enter", " "].includes(event.key)) return;
     if (["Backspace", "Escape", "Enter", " "].includes(event.key)) {
         event.preventDefault();
         event.stopImmediatePropagation();
@@ -2714,8 +2710,7 @@ async function finishOpeningFlow() {
     videoSkip.onclick = null;
     delete videoScreen.dataset.openingSequence;
     delete videoScreen.dataset.companyIntro;
-    showScreen("title-screen");
-    document.getElementById("title-continue-button").focus();
+    await enterGameMenu();
 }
 
 async function enterGameMenu() {
@@ -3138,9 +3133,6 @@ document.getElementById("home-levels-toggle").addEventListener("click", (event) 
 document.getElementById("leaderboard-open").addEventListener("click", () => {
     showScreen("leaderboard-screen");
     void refreshLeaderboard();
-});
-document.getElementById("title-continue-button").addEventListener("click", () => {
-    void enterGameMenu();
 });
 document.getElementById("leaderboard-refresh").addEventListener("click", () => {
     void refreshLeaderboard();

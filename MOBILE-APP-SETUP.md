@@ -56,8 +56,8 @@ That scheme is registered in the generated Android and iOS projects.
 The installed app name is RelicGrid. On launch, the company video plays first,
 followed by the RelicGrid introduction in portrait mode. A **Next** button
 appears when that introduction finishes and starts the landscape game video.
-When the game video finishes, the title/menu screen appears; **Play Now**
-opens player identification or the home screen. Native screens return to
+When the game video finishes, player identification or the home screen opens
+directly. Native screens return to
 portrait after each video or when a video is skipped.
 
 Campaign game-point deposits are verified server-side through the Vercel

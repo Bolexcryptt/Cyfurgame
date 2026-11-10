@@ -716,12 +716,12 @@ test("startup plays company and player introductions, then game video, then open
     assert.match(openingFlow, /source === "intro\.mp4"[\s\S]*?showNextAfterIntroVideo\(\)/);
     assert.match(openingFlow, /videoAction\.textContent = "NEXT →"[\s\S]*?videoAction\.onclick = playGameVideo/);
     assert.match(app, /function playGameVideo\(\)[\s\S]*?playOpeningVideo\("gamevideo\.mp4"[\s\S]*?"landscape"/);
-    assert.match(app, /document\.getElementById\("title-continue-button"\)\.addEventListener\("click", \(\) => \{\s*void enterGameMenu\(\)/);
     const openingCompletion = app.slice(
         app.indexOf("async function finishOpeningFlow"),
         app.indexOf("\nfunction playCampaignEnding")
     );
-    assert.match(openingCompletion, /showScreen\("title-screen"\)/);
+    assert.match(openingCompletion, /await enterGameMenu\(\)/);
+    assert.doesNotMatch(app, /title-screen|title-continue-button/);
     assert.match(app, /async function enterGameMenu\(\)[\s\S]*?showNameOrHome\(\)[\s\S]*?wallet-card"\)\.scrollIntoView/);
     assert.match(openingFlow, /introVideo\.muted = true/);
     assert.match(openingFlow, /void playVideoInOrientation\(\s*introVideo,\s*offerNext,\s*\(\) => \{\s*introVideo\.muted = false/);
@@ -735,10 +735,9 @@ test("startup plays company and player introductions, then game video, then open
     assert.match(openingFlow, /void playVideoInOrientation\(\s*introVideo,\s*offerNext,[\s\S]*?orientation\s*\)/);
     assert.match(openingFlow, /videoSkip\.hidden = !allowSkip/);
     assert.match(openingFlow, /videoSkip\.onclick = allowSkip \? \(\) => void finishOpeningFlow\(\) : null/);
-    assert.match(app, /document\.addEventListener\("keydown", \(event\) => \{\s*if \(openingFlowFinished\) return;\s*if \(!document\.getElementById\("title-screen"\)\.hidden/);
+    assert.match(app, /document\.addEventListener\("keydown", \(event\) => \{\s*if \(openingFlowFinished\) return;\s*if \(\["Backspace", "Escape", "Enter", " "\]\.includes\(event\.key\)\)/);
     assert.match(app, /App\.addListener\("backButton", \(\{ canGoBack \}\) => \{\s*if \(!openingFlowFinished\) return/);
     assert.match(app, /await stopVideoPlayback\(introVideo\)/);
-    assert.match(app, /title-screen|title-continue-button/);
     assert.match(app, /player\.watchedGameIntro = true/);
     assert.match(app, /delete videoScreen\.dataset\.openingSequence/);
     assert.match(app, /pendingPhantomMobileCallback = phantomMobileCallback/);
@@ -766,8 +765,7 @@ test("startup plays company and player introductions, then game video, then open
     assert.match(styles, /\.video-screen\[data-opening-sequence="true"\] #intro-video\s*\{[^}]*object-fit: contain/);
     assert.match(styles, /\.video-screen\[data-company-intro="true"\] \.video-brand,[\s\S]*?\.video-shade\s*\{\s*visibility: hidden/);
     assert.doesNotMatch(styles, /\.video-screen\[data-company-intro="true"\][^{]*\.rotate-device-prompt/);
-    assert.match(styles, /\.title-screen\s*\{/);
-    assert.match(styles, /\.title-card\s*\{/);
+    assert.doesNotMatch(styles, /\.title-screen|\.title-card|\.title-logo/);
     assert.match(styles, /\.video-screen\[data-fullscreen-video="true"\]\s*\{[^}]*position: fixed;[^}]*height: 100dvh/);
     assert.match(styles, /\.video-screen\[data-fullscreen-video="true"\] \.intro-video\s*\{[^}]*object-fit: contain/);
     assert.match(html, /id="background-music"[^>]*loop/);
@@ -1109,8 +1107,7 @@ test("RelicGrid branding is used in the game and hidden scenes stop rendering", 
     assert.match(endingFlow, /transitionVideo\.onended = \(\) => void finish\(\)/);
     assert.match(app, /videoOrientationQuery = window\.matchMedia\("\(max-width: 900px\) and \(orientation: portrait\)"\)/);
     assert.match(app, /async function playVideoInOrientation\(video, onError, onPlaybackStarted, orientation = "portrait"\)/);
-    assert.match(html, /id="title-screen"/);
-    assert.match(html, /id="title-continue-button"[^>]*>PLAY NOW/);
+    assert.doesNotMatch(html, /title-screen|title-continue-button|PLAY NOW/);
     assert.match(html, /id="video-action-button"[^>]*hidden>Next/);
     assert.match(html, /id="game-access-form"/);
     assert.doesNotMatch(html, /id="legacy-game-access-points"|id="game-points-balance"/);
