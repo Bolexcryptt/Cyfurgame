@@ -2869,7 +2869,10 @@ async function saveWalletLevelCompletion(detail) {
     if (!response.ok || result.status !== "confirmed" ||
         !/^\d+$/.test(String(rewardAmount)) ||
         !/^\d+$/.test(String(balanceAmount))) {
-        throw new Error(result.error || `Secure completion failed (${response.status}).`);
+        const diagnostic = result.diagnosticCode
+            ? ` (${result.diagnosticCode}${result.stage ? ` at ${result.stage}` : ""})`
+            : "";
+        throw new Error(`${result.error || `Secure completion failed (${response.status})`}${diagnostic}.`);
     }
 
     document.getElementById("completion-stars").textContent = `${result.stars} / 3`;

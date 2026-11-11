@@ -752,7 +752,7 @@ test("startup plays company and player introductions, then game video, then open
     assert.match(openingFlow, /const playbackSequence = \+\+openingVideoSequence;[\s\S]*?activeOpeningVideoSource = source/);
     assert.match(openingFlow, /if \(playbackSequence !== openingVideoSequence \|\| !introVideo\.ended\) return/);
     assert.match(readFileSync(new URL("../style.css", import.meta.url), "utf8"), /\.video-screen\[data-opening-sequence="true"\]:not\(\[data-company-intro="true"\]\) #intro-video/);
-    assert.match(readFileSync(new URL("../style.css", import.meta.url), "utf8"), /\.video-screen\[data-company-intro="true"\] #intro-video \{\s*object-fit: contain;/);
+    assert.match(readFileSync(new URL("../style.css", import.meta.url), "utf8"), /\.video-screen\[data-company-intro="true"\] #intro-video \{[\s\S]*?inset: 0;[\s\S]*?object-fit: contain;[\s\S]*?border-radius: 0/);
     assert.match(openingFlow, /const showPlayNow = source === "intro\.mp4"[\s\S]*?videoAction\.textContent = "PLAY NOW →"[\s\S]*?videoAction\.onclick = showPlayNow \? playGameVideo : null/);
     assert.match(app, /videoScreen\.dataset\.openingVideoSize = source === "gamevideo\.mp4" \? "fullscreen" : "fit"/);
     assert.match(app, /videoScreen\.dataset\.openingVideoSize === "fullscreen"/);
@@ -781,6 +781,7 @@ test("startup plays company and player introductions, then game video, then open
     );
     assert.match(levelCompletionHandler, /await saveWalletLevelCompletionAutomatically\(detail\)/);
     assert.match(app, /async function saveWalletLevelCompletionAutomatically\(detail\)[\s\S]*?attempt < 3[\s\S]*?level_completion_unavailable/);
+    assert.match(app, /result\.diagnosticCode[\s\S]*?result\.stage[\s\S]*?throw new Error\(`\$\{result\.error/);
     assert.match(levelCompletionHandler, /Credit not confirmed: \$\{error\.message\}/);
     assert.match(levelCompletionHandler, /const nextLevelButton = document\.getElementById\("next-level"\);[\s\S]*?nextLevelButton\.hidden = false;[\s\S]*?nextLevelButton\.disabled = number >= 99;[\s\S]*?nextLevelButton\.dataset\.nextLevel = String\(number \+ 1\)/);
     assert.match(levelCompletionHandler, /nextLevelButton\.textContent = number >= 99 \? "CAMPAIGN COMPLETE" : "NEXT LEVEL →"/);
@@ -806,6 +807,7 @@ test("startup plays company and player introductions, then game video, then open
     const styles = readFileSync(new URL("../style.css", import.meta.url), "utf8");
     assert.match(styles, /\.video-screen\[data-opening-sequence="true"\]\s*\{[^}]*height: 100dvh/);
     assert.match(styles, /\.video-screen\[data-opening-sequence="true"\]:not\(\[data-company-intro="true"\]\) #intro-video\s*\{[^}]*object-fit: contain/);
+    assert.match(styles, /\.video-screen\[data-company-intro="true"\]\s*\{[^}]*background: #000/);
     assert.match(styles, /\.video-screen\[data-company-intro="true"\] \.video-brand,[\s\S]*?\.video-shade\s*\{\s*visibility: hidden/);
     assert.doesNotMatch(styles, /\.video-screen\[data-company-intro="true"\][^{]*\.rotate-device-prompt/);
     assert.doesNotMatch(styles, /\.title-screen|\.title-card|\.title-logo/);
@@ -1195,7 +1197,7 @@ test("RelicGrid branding is used in the game and hidden scenes stop rendering", 
     assert.match(styles, /\.intro-video \{[\s\S]*?object-fit: contain/);
     assert.match(styles, /\.video-screen\[data-opening-sequence="true"\] \{[\s\S]*?position: fixed;[\s\S]*?height: 100dvh/);
     assert.match(styles, /\.video-screen\[data-opening-sequence="true"\]:not\(\[data-company-intro="true"\]\) #intro-video \{[\s\S]*?width: 100%;[\s\S]*?height: 100%;[\s\S]*?object-fit: contain/);
-    assert.match(styles, /data-company-intro="true"\] #intro-video \{\s*object-fit: contain/);
+    assert.match(styles, /data-company-intro="true"\] #intro-video \{[\s\S]*?object-fit: contain/);
     assert.match(styles, /\.video-screen\[data-opening-sequence="true"\] \.video-brand,[\s\S]*?\.video-shade\s*\{\s*visibility: hidden/);
     assert.match(styles, /\.video-skip-button \{[\s\S]*?top: calc\(/);
     const immersivePlugin = readFileSync(new URL("../android/app/src/main/java/com/relicgrid/cyfurgame/ImmersiveModePlugin.java", import.meta.url), "utf8");

@@ -24,6 +24,7 @@ module.exports = async function levelCompletion(request, response) {
         return sendJson(response, 503, { error: "wallet_api_not_configured" });
     }
 
+    let failureStage = "authentication";
     try {
         const user = await authenticate(request);
         if (!user) return sendJson(response, 401, { error: "authentication_required" });
@@ -39,6 +40,7 @@ module.exports = async function levelCompletion(request, response) {
         }
 
         const pointsSession = gamePoints === true;
+        failureStage = "session_lookup";
         const sessions = await serviceRequest(
             `${pointsSession ? "game_point_level_sessions?select=id,player_id,level_number,timer_started_at,expires_at,completed_at" : "wallet_level_sessions?select=id,player_id,level_number,timer_started_at,expires_at,completed_at"}&id=eq.${encodeURIComponent(sessionId)}&player_id=eq.${encodeURIComponent(user.id)}&limit=1`
         );
@@ -79,10 +81,12 @@ module.exports = async function levelCompletion(request, response) {
         if (!Number.isFinite(elapsedMilliseconds) || elapsedMilliseconds < 0) {
             return sendJson(response, 422, { error: "invalid_server_timer" });
         }
+        failureStage = "level_configuration";
         const { level, economy, result: starsResult } = await getLevelEconomyAndStars(
             session.level_number,
             elapsedMilliseconds
         );
+        failureStage = "proof_verification";
         const proof = verifyLevelProof(level, mirrors, launchDirection);
         if (!proof.connected) {
             return sendJson(response, 422, {
@@ -96,6 +100,7 @@ module.exports = async function levelCompletion(request, response) {
                 ? economy.twoStarRefundCredits
                 : 0;
 
+        failureStage = "completion_rpc";
         const [completion] = await serviceRequest(rpcName, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -108,6 +113,7 @@ module.exports = async function levelCompletion(request, response) {
             })
         });
         if (!completion || !/^\d+$/.test(String(completion[balanceField]))) {
+            failureStage = "completion_response";
             throw new Error("Level completion RPC returned an invalid result.");
         }
 
@@ -123,25 +129,44 @@ module.exports = async function levelCompletion(request, response) {
     } catch (error) {
         console.error("Level completion failed closed.", {
             status: error.status ?? 500,
-            code: error.code ?? "level_completion_failed"
+            code: error.code ?? "level_completion_failed",
+            stage: failureStage
         });
-        if (error.status === 404 && error.code === "PGRST202") {
+        if (error.code === "PGRST202") {
             return sendJson(response, 503, {
                 error: request.body?.gamePoints === true
                     ? "game_points_migration_required"
                     : "wallet_migration_required"
             });
         }
-        if (error.status === 404 && error.code === "PGRST205") {
+        if (error.code === "PGRST205") {
             return sendJson(response, 503, {
                 error: request.body?.gamePoints === true
                     ? "game_points_schema_not_installed"
                     : "wallet_schema_not_installed"
             });
         }
-        if (error.code === "42702") {
+        if (error.code === "42702" || error.code === "42703") {
             return sendJson(response, 503, { error: "wallet_migration_required" });
         }
-        return sendJson(response, 502, { error: "level_completion_unavailable" });
+        if (error.code === "P0002") {
+            return sendJson(response, 403, { error: "level_session_not_found" });
+        }
+        if (error.code === "22023") {
+            if (/has not started or has expired/i.test(error.databaseMessage ?? "")) {
+                return sendJson(response, 422, { error: "level_session_not_started_or_expired" });
+            }
+            if (/reward does not match/i.test(error.databaseMessage ?? "")) {
+                return sendJson(response, 503, { error: "wallet_migration_required" });
+            }
+            return sendJson(response, 422, { error: "invalid_level_completion" });
+        }
+        const diagnosticCode = /^[A-Z0-9]{4,8}$/.test(error.code ?? "")
+            ? error.code
+            : undefined;
+        return sendJson(response, 502, {
+            error: "level_completion_unavailable",
+            ...(diagnosticCode ? { diagnosticCode, stage: failureStage } : {})
+        });
     }
 };

@@ -126,6 +126,7 @@ function resetScenario() {
         rpcClaimCalls: [],
         entryCalls: [],
         completionCalls: [],
+        completionRpcError: null,
         sessionCompletedAt: null,
         lastCompletion: null,
         entryResponse: {
@@ -217,6 +218,12 @@ function resetScenario() {
         if (path === "rpc/complete_game_point_level") {
             const body = JSON.parse(options.body);
             scenario.completionCalls.push(body);
+            if (scenario.completionRpcError) {
+                return dbResponse(400, {
+                    code: scenario.completionRpcError,
+                    message: "Completion RPC failed."
+                });
+            }
             if (scenario.sessionCompletedAt) {
                 return dbResponse(200, [{
                     balance_points: "5321",
@@ -364,6 +371,28 @@ test("three-star, two-star, one-star, and failed level outcomes receive only the
     assert.equal(failed.statusCode, 422);
     assert.equal(failed.payload.error, "battery_not_connected");
     assert.equal(scenario.completionCalls.length, 0);
+});
+
+test("completion RPC failures include a safe diagnostic stage and database code", async () => {
+    const level = levels[0];
+    scenario.completionRpcError = "XX000";
+    const response = await call(levelCompletion, "POST", {
+        sessionId,
+        mirrors: level.solutionMirrors.map(({ row, col, orientation }) => ({
+            row,
+            col,
+            slash: orientation === "/"
+        })),
+        launchDirection: level.start.direction,
+        gamePoints: true
+    });
+
+    assert.equal(response.statusCode, 502);
+    assert.deepEqual(response.payload, {
+        error: "level_completion_unavailable",
+        diagnosticCode: "XX000",
+        stage: "completion_rpc"
+    });
 });
 
 test("replaying a completed level session returns its prior record without another award", async () => {
