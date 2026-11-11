@@ -707,10 +707,16 @@ test("transition videos play after levels 9 and 14, then at random later boundar
 test("campaign difficulty ramps crystals and obstacles while mirror count stays bounded", () => {
     const scene = readFileSync(new URL("../script.js", import.meta.url), "utf8");
     for (const level of levels) {
-        assert.equal(level.crystals.length, Math.min(1 + Math.floor((level.number - 1) / 2), 8));
+        assert.equal(level.par, Math.min(2 + Math.floor((level.number - 1) / 3), 14));
+        assert.equal(level.crystals.length, Math.min(2 + Math.floor((level.number - 1) / 3), 10));
         assert.equal(level.solutionMirrors.length, level.par);
     }
+    assert.equal(levels[0].par, 2);
+    assert.equal(levels[0].crystals.length, 2);
+    assert.equal(levels[98].par, 14);
+    assert.equal(levels[98].crystals.length, 10);
     assert.ok(levels[19].obstacles.length >= 20);
+    assert.ok(levels[98].obstacles.length >= 15);
     assert.match(scene, /if \(!existing && placedMirrors\.size >= activeLevel\.par\)/);
     assert.match(scene, /Mirror limit reached/);
     assert.match(scene, /sectorMapPanel\.hidden = true/);
@@ -1199,7 +1205,7 @@ test("RelicGrid branding is used in the game and hidden scenes stop rendering", 
     assert.match(styles, /\.intro-video \{[\s\S]*?object-fit: contain/);
     assert.match(styles, /\.video-screen\[data-opening-sequence="true"\] \{[\s\S]*?position: fixed;[\s\S]*?height: 100dvh/);
     assert.match(styles, /\.video-screen\[data-opening-sequence="true"\]:not\(\[data-company-intro="true"\]\) #intro-video \{[\s\S]*?width: 100%;[\s\S]*?height: 100%;[\s\S]*?object-fit: contain/);
-    assert.match(styles, /data-company-intro="true"\] #intro-video \{[\s\S]*?width: 100%;[\s\S]*?height: 100%;[\s\S]*?object-fit: contain/);
+    assert.match(styles, /data-company-intro="true"\] #intro-video \{[\s\S]*?width: 100%;[\s\S]*?height: 100%;[\s\S]*?object-fit: cover/);
     assert.match(styles, /\.video-screen\[data-opening-sequence="true"\] \.video-brand,[\s\S]*?\.video-shade\s*\{\s*visibility: hidden/);
     assert.match(styles, /\.video-skip-button \{[\s\S]*?top: calc\(/);
     const immersivePlugin = readFileSync(new URL("../android/app/src/main/java/com/relicgrid/cyfurgame/ImmersiveModePlugin.java", import.meta.url), "utf8");
@@ -1851,7 +1857,10 @@ test("server proof requires every crystal to be hit in the correct color sequenc
     assert.equal(
         verifyLevelProof({
             ...level,
-            crystals: [{ ...level.crystals[0], ...openCell }, ...level.crystals.slice(1)]
+            crystals: [
+                ...level.crystals.slice(0, -1),
+                { ...level.crystals.at(-1), ...openCell }
+            ]
         }, mirrors, level.start.direction).reason,
         "crystal_missed"
     );
@@ -3706,7 +3715,7 @@ test("no battery connection is a fail with no stars and no payout", () => {
 });
 
 test("time thresholds are ordered and scale with each level's puzzle complexity", () => {
-    assert.deepEqual(levels[0].starTimeTargets, { threeSeconds: 35, twoSeconds: 80 });
+    assert.deepEqual(levels[0].starTimeTargets, { threeSeconds: 45, twoSeconds: 100 });
     for (const level of levels) {
         const targets = getLevelStarTimeTargets(level);
         assert.equal(level.starTimeTargets.threeSeconds, targets.threeSeconds);
@@ -3814,7 +3823,7 @@ test("all 99 generated layouts are unique, valid, and solvable through every ord
         ]));
         const mirrors = new Map(level.solutionMirrors.map((mirror) => [`${mirror.row},${mirror.col}`, mirror.orientation]));
         const crystalCells = [...crystals.keys()];
-        assert.equal(level.crystals.length, Math.min(1 + Math.floor((level.number - 1) / 2), 8));
+        assert.equal(level.crystals.length, Math.min(2 + Math.floor((level.number - 1) / 3), 10));
         assert.equal(crystalCells.length, level.crystals.length);
         for (const crystal of level.crystals) {
             const key = `${crystal.row},${crystal.col}`;

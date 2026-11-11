@@ -203,8 +203,8 @@ function buildRoute(random, start, target, minimumTurns) {
 
 function makeLevel(number, usedLayouts) {
     const band = Math.ceil(number / 10);
-    const requiredTurns = Math.min(1 + Math.floor((number - 1) / 4), 12);
-    const crystalCount = Math.min(1 + Math.floor((number - 1) / 2), 8);
+    const requiredTurns = Math.min(2 + Math.floor((number - 1) / 3), 14);
+    const crystalCount = Math.min(2 + Math.floor((number - 1) / 3), 10);
 
     for (let attempt = 0; attempt < 900; attempt++) {
         const random = randomFor(number * 7919 + attempt * 104729);
@@ -273,7 +273,7 @@ function makeLevel(number, usedLayouts) {
             const j = Math.floor(random() * (i + 1));
             [candidates[i], candidates[j]] = [candidates[j], candidates[i]];
         }
-        const obstacleCount = Math.min(1 + number, 22, candidates.length);
+        const obstacleCount = Math.min(4 + number, 28, candidates.length);
         const obstacles = candidates.slice(0, obstacleCount);
         const layoutKey = JSON.stringify({
             start,
