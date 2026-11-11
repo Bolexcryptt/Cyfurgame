@@ -1800,7 +1800,7 @@ function startScene() {
         if (!walletLevelSessionId) availableBalance.textContent = "Practice only";
         const nextLevelButton = document.getElementById("next-level");
         nextLevelButton.hidden = false;
-        nextLevelButton.disabled = true;
+        nextLevelButton.disabled = level.number >= levels.length;
         nextLevelButton.dataset.nextLevel = String(level.number + 1);
         nextLevelButton.textContent = level.number >= levels.length ? "CAMPAIGN COMPLETE" : "NEXT LEVEL →";
         completionSummary.hidden = false;
@@ -1853,6 +1853,7 @@ function startScene() {
             createPlayerMirror(row, col, true);
             setFeedback(`Mirror placed at row ${row + 1}, column ${col + 1}. Tap it again to rotate.`);
         }
+        updateTacticalHud();
         playSoundEffect("mirror");
 
         clearObjectGroup(activeBeamGroup);

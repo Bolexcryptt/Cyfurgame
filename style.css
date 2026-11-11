@@ -2121,6 +2121,9 @@ body {
     border-radius: 0;
     box-shadow: none;
 }
+.video-screen[data-level-transition="true"] #transition-video {
+    object-fit: cover;
+}
 .video-screen[data-fullscreen-video="true"] .video-brand,
 .video-screen[data-fullscreen-video="true"] .video-action,
 .video-screen[data-fullscreen-video="true"] .video-shade {

@@ -1,6 +1,6 @@
 import {
     CYFUR_CREDITS_PER_TOKEN,
-    LEVEL_TRANSITION_MILESTONES,
+    LEVEL_TRANSITION_INTERVAL,
     formatCyfurCredits,
     getCampaignStartLevel,
     getLevelEconomy,
@@ -129,7 +129,8 @@ function readPlayer() {
             transitionMilestonesPlayed: Array.isArray(parsed.transitionMilestonesPlayed)
                 ? [...new Set(parsed.transitionMilestonesPlayed.filter((milestone) =>
                     Number.isInteger(milestone) &&
-                    milestone >= LEVEL_TRANSITION_MILESTONES[0] &&
+                    milestone >= LEVEL_TRANSITION_INTERVAL &&
+                    milestone % LEVEL_TRANSITION_INTERVAL === 0 &&
                     milestone <= 98))]
                 : [],
             lastLevel: Math.min(99, Math.max(1, Number(parsed.lastLevel) || 1))
@@ -2415,15 +2416,13 @@ function playCampaignEnding() {
 }
 
 async function playLevelTransition(nextLevel, milestone) {
-    if (transitionInProgress) return;
+    if (transitionInProgress) return false;
     transitionInProgress = true;
     await stopVideoPlayback(introVideo);
     const transitionClips = ["levels1.mp4", "levels2.mp4"];
-    const clip = milestone === LEVEL_TRANSITION_MILESTONES[0]
+    const clip = Math.floor(milestone / LEVEL_TRANSITION_INTERVAL) % 2 === 1
         ? transitionClips[0]
-        : milestone === LEVEL_TRANSITION_MILESTONES[1]
-            ? transitionClips[1]
-            : transitionClips[Math.floor(Math.random() * transitionClips.length)];
+        : transitionClips[1];
     let finished = false;
     const finish = async () => {
         if (finished) return;
@@ -2434,6 +2433,7 @@ async function playLevelTransition(nextLevel, milestone) {
         finished = true;
         transitionInProgress = false;
         delete videoScreen.dataset.fullscreenVideo;
+        delete videoScreen.dataset.levelTransition;
         player.transitionMilestonesPlayed = [...new Set([
             ...player.transitionMilestonesPlayed,
             milestone
@@ -2442,11 +2442,23 @@ async function playLevelTransition(nextLevel, milestone) {
         transitionVideo.hidden = true;
         videoSkip.hidden = true;
         videoAction.hidden = true;
-        startLevel(nextLevel, true);
+        try {
+            const started = await startLevel(nextLevel, true);
+            if (!started) {
+                showScreen("play-screen");
+                document.getElementById("game-status").textContent =
+                    document.getElementById("level-entry-status").textContent;
+            }
+        } catch (error) {
+            console.error(`Level ${nextLevel} could not be started after its transition video.`, error);
+            showScreen("play-screen");
+            document.getElementById("game-status").textContent = error.message;
+        }
     };
     const offerContinue = (error) => {
         void stopVideoPlayback(transitionVideo);
         delete videoScreen.dataset.fullscreenVideo;
+        delete videoScreen.dataset.levelTransition;
         transitionVideo.hidden = true;
         console.error(`Inter-level transmission ${clip} could not be played.`, error);
         videoCaption.textContent = "Transmission unavailable. Continue to the next sector when ready.";
@@ -2457,6 +2469,7 @@ async function playLevelTransition(nextLevel, milestone) {
 
     showScreen("video-screen");
     videoScreen.dataset.fullscreenVideo = "true";
+    videoScreen.dataset.levelTransition = "true";
     introVideo.pause();
     introVideo.hidden = true;
     transitionVideo.pause();
@@ -2476,6 +2489,7 @@ async function playLevelTransition(nextLevel, milestone) {
     videoSkip.onclick = () => void finish();
     transitionVideo.onended = () => void finish();
     await playVideoInOrientation(transitionVideo, offerContinue, undefined, "landscape");
+    return true;
 }
 
 function clearCompletedOpeningVideo() {
@@ -2709,41 +2723,37 @@ document.getElementById("continue-game").addEventListener("click", () => {
     startLevel(getContinueLevel());
 });
 document.getElementById("next-level").addEventListener("click", async (event) => {
-    const number = Number(event.currentTarget.dataset.nextLevel);
-    if (!Number.isInteger(number) || number < 1 || number > 99) return;
-    if (pendingCompletionConfirmation?.number === number - 1) {
-        const button = event.currentTarget;
-        button.disabled = true;
-        try {
-            await saveWalletLevelCompletionAutomatically(pendingCompletionConfirmation.detail);
-            pendingCompletionConfirmation = null;
+    const button = event.currentTarget;
+    const number = Number(button.dataset.nextLevel);
+    if (!Number.isInteger(number) || number < 1 || number > 99 || button.disabled) return;
+    button.disabled = true;
+    try {
+        const pending = pendingCompletionConfirmation;
+        if (pending?.number === number - 1) {
+            await confirmPendingLevelCompletion(pending);
+            if (pendingCompletionConfirmation === pending) {
+                pendingCompletionConfirmation = null;
+            }
             renderProfile();
-        } catch (error) {
-            console.error("Level completion is still awaiting server confirmation.", error);
-            document.getElementById("game-status").textContent =
-                "We couldn't confirm completion yet. Nothing is awarded until the server confirms it. Try NEXT LEVEL again shortly.";
-            return;
-        } finally {
-            button.disabled = false;
         }
-    }
-    const milestone = getPendingLevelTransition(
-        number - 1,
-        player.transitionMilestonesPlayed
-    );
-    if (milestone !== null) {
-        playLevelTransition(number, milestone);
-    } else {
-        try {
+        const milestone = getPendingLevelTransition(
+            number - 1,
+            player.transitionMilestonesPlayed
+        );
+        if (milestone !== null) {
+            await playLevelTransition(number, milestone);
+        } else {
             const started = await startLevel(number, true);
             if (!started) {
                 document.getElementById("game-status").textContent =
                     document.getElementById("level-entry-status").textContent;
             }
-        } catch (error) {
-            console.error(`Level ${number} could not be started from the completion screen.`, error);
-            document.getElementById("game-status").textContent = error.message;
         }
+    } catch (error) {
+        console.error(`Level ${number} could not be started from the completion screen.`, error);
+        document.getElementById("game-status").textContent = error.message;
+    } finally {
+        button.disabled = Number(button.dataset.nextLevel) > 99;
     }
 });
 document.getElementById("home-levels-toggle").addEventListener("click", (event) => {
@@ -2946,6 +2956,18 @@ async function saveWalletLevelCompletionAutomatically(detail) {
     throw new Error("Automatic level completion save did not finish.");
 }
 
+async function confirmPendingLevelCompletion(pending) {
+    if (!pending.promise) {
+        pending.promise = saveWalletLevelCompletionAutomatically(pending.detail);
+    }
+    const confirmation = pending.promise;
+    try {
+        return await confirmation;
+    } finally {
+        if (pending.promise === confirmation) pending.promise = null;
+    }
+}
+
 const withdrawalAddressInput = document.getElementById("withdrawal-wallet-address");
 const withdrawalAmountInput = document.getElementById("withdrawal-amount");
 const withdrawalMaxButton = document.getElementById("withdrawal-max");
@@ -3019,10 +3041,13 @@ window.addEventListener("fluxgrid:level-complete", async (event) => {
     }
 
     if (detail.walletSessionId) {
-        pendingCompletionConfirmation = { detail, number };
+        const pending = { detail, number, promise: null };
+        pendingCompletionConfirmation = pending;
         try {
-            const result = await saveWalletLevelCompletionAutomatically(detail);
-            pendingCompletionConfirmation = null;
+            const result = await confirmPendingLevelCompletion(pending);
+            if (pendingCompletionConfirmation === pending) {
+                pendingCompletionConfirmation = null;
+            }
             const rewardAmount = detail.gamePointsSession ? result.rewardPoints : result.rewardCredits;
             const rewardUnit = detail.gamePointsSession ? "game points" : "credits";
             setLevelEntryMessage(

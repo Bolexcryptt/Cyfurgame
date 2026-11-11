@@ -3,8 +3,7 @@ const COLS = 8;
 const CLEAR_TARGET_ROWS = Object.freeze([2, 3, 4]);
 const CLEAR_TARGET_COLS = Object.freeze([2, 3, 4, 5]);
 export const CYFUR_CREDITS_PER_TOKEN = 1000;
-export const LEVEL_TRANSITION_MILESTONES = Object.freeze([9, 14]);
-export const RANDOM_LEVEL_TRANSITION_CHANCE = 0.35;
+export const LEVEL_TRANSITION_INTERVAL = 5;
 export const STAR_TIME_CONFIG = Object.freeze({
     threeStarBaseSeconds: 25,
     threeStarSecondsPerMirror: 10,
@@ -13,16 +12,16 @@ export const STAR_TIME_CONFIG = Object.freeze({
 });
 export const LEVEL_STAR_TIME_OVERRIDES = Object.freeze({});
 
-export function getPendingLevelTransition(completedLevelNumber, playedMilestones = [], random = Math.random) {
+export function getPendingLevelTransition(completedLevelNumber, playedMilestones = []) {
     if (!Number.isInteger(completedLevelNumber) || completedLevelNumber < 0 || completedLevelNumber > 98 ||
-        !Array.isArray(playedMilestones) || typeof random !== "function") {
-        throw new TypeError("A completed level number, played milestone list, and random selector are required.");
+        !Array.isArray(playedMilestones)) {
+        throw new TypeError("A completed level number and played milestone list are required.");
     }
-    if (playedMilestones.includes(completedLevelNumber)) return null;
-    if (LEVEL_TRANSITION_MILESTONES.includes(completedLevelNumber)) return completedLevelNumber;
-    if (completedLevelNumber < LEVEL_TRANSITION_MILESTONES[1] ||
-        random() >= RANDOM_LEVEL_TRANSITION_CHANCE) return null;
-    return completedLevelNumber;
+    return completedLevelNumber > 0 &&
+        completedLevelNumber % LEVEL_TRANSITION_INTERVAL === 0 &&
+        !playedMilestones.includes(completedLevelNumber)
+        ? completedLevelNumber
+        : null;
 }
 
 export function getLevelStarTimeTargets(level) {

@@ -117,7 +117,7 @@ test("authenticated account hydration uses server progress and ignores another l
         completedLevels: [1, 2, 3],
         unlockedLevel: 4,
         lastLevel: 9,
-        transitionMilestonesPlayed: [7],
+        transitionMilestonesPlayed: [5],
         tutorialSeen: true,
         watchedGameIntro: true
     }, {
@@ -144,7 +144,7 @@ test("same authenticated account keeps local-only settings but server progress s
         completedLevels: [1, 2, 3],
         unlockedLevel: 4,
         lastLevel: 6,
-        transitionMilestonesPlayed: [7],
+        transitionMilestonesPlayed: [5],
         tutorialSeen: true
     }, {
         id: playerId,
@@ -157,7 +157,7 @@ test("same authenticated account keeps local-only settings but server progress s
     assert.deepEqual(hydrated.completedLevels, [1, 4]);
     assert.equal(hydrated.unlockedLevel, 2);
     assert.equal(hydrated.lastLevel, 6);
-    assert.deepEqual(hydrated.transitionMilestonesPlayed, [7]);
+    assert.deepEqual(hydrated.transitionMilestonesPlayed, [5]);
     assert.equal(hydrated.tutorialSeen, true);
 });
 

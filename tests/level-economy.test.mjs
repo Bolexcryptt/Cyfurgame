@@ -38,8 +38,7 @@ import {
     getLevelRewardPoints,
     getPendingLevelTransition,
     getLevelStarTimeTargets,
-    LEVEL_TRANSITION_MILESTONES,
-    RANDOM_LEVEL_TRANSITION_CHANCE,
+    LEVEL_TRANSITION_INTERVAL,
     mergeCompletedLevels,
     levels
 } from "../levels.js";
@@ -691,17 +690,30 @@ test("intro launch selects a current or next unlocked level and formats ledger c
     assert.equal(formatCyfurCredits("invalid"), "Unavailable");
 });
 
-test("transition videos play after levels 9 and 14, then at random later boundaries", () => {
-    assert.deepEqual(LEVEL_TRANSITION_MILESTONES, [9, 14]);
-    assert.equal(RANDOM_LEVEL_TRANSITION_CHANCE, 0.35);
-    assert.equal(getPendingLevelTransition(8), null);
-    assert.equal(getPendingLevelTransition(9), 9);
-    assert.equal(getPendingLevelTransition(9, [9]), null);
-    assert.equal(getPendingLevelTransition(14, [9]), 14);
-    assert.equal(getPendingLevelTransition(15, [9, 14], () => 0), 15);
-    assert.equal(getPendingLevelTransition(15, [9, 14], () => 0.99), null);
+test("transition videos play every five completed levels without repeating a played boundary", () => {
+    assert.equal(LEVEL_TRANSITION_INTERVAL, 5);
+    for (let completed = 1; completed < 99; completed++) {
+        assert.equal(
+            getPendingLevelTransition(completed),
+            completed % 5 === 0 ? completed : null
+        );
+    }
+    assert.equal(getPendingLevelTransition(5, [5]), null);
     assert.throws(() => getPendingLevelTransition(-1), TypeError);
     assert.throws(() => getPendingLevelTransition(99), TypeError);
+});
+
+test("NEXT LEVEL remains available during reward confirmation and shares the pending save", () => {
+    const app = readFileSync(new URL("../app.js", import.meta.url), "utf8");
+    const scene = readFileSync(new URL("../script.js", import.meta.url), "utf8");
+    const clickHandler = app.slice(
+        app.indexOf('document.getElementById("next-level").addEventListener'),
+        app.indexOf('\ndocument.getElementById("home-levels-toggle")')
+    );
+    assert.match(clickHandler, /await confirmPendingLevelCompletion\(pending\)/);
+    assert.match(clickHandler, /await startLevel\(number, true\)/);
+    assert.match(app, /async function confirmPendingLevelCompletion\(pending\)/);
+    assert.match(scene, /nextLevelButton\.disabled = level\.number >= levels\.length/);
 });
 
 test("campaign difficulty ramps crystals and obstacles while mirror count stays bounded", () => {
@@ -718,6 +730,7 @@ test("campaign difficulty ramps crystals and obstacles while mirror count stays 
     assert.ok(levels[19].obstacles.length >= 20);
     assert.ok(levels[98].obstacles.length >= 15);
     assert.match(scene, /if \(!existing && placedMirrors\.size >= activeLevel\.par\)/);
+    assert.match(scene, /updateTacticalHud\(\);\s*playSoundEffect\("mirror"\)/);
     assert.match(scene, /Mirror limit reached/);
     assert.match(scene, /sectorMapPanel\.hidden = true/);
     assert.match(scene, /sectorMapPanel\.hidden = false/);
@@ -779,13 +792,13 @@ test("startup plays company and player introductions, then game video, then open
     assert.match(nextLevelHandler, /getPendingLevelTransition\(\s*number - 1/);
     assert.match(nextLevelHandler, /await startLevel\(number, true\)/);
     assert.match(nextLevelHandler, /if \(!started\)[\s\S]*?level-entry-status/);
-    assert.match(nextLevelHandler, /pendingCompletionConfirmation[\s\S]*?saveWalletLevelCompletionAutomatically\(pendingCompletionConfirmation\.detail\)[\s\S]*?await startLevel\(number, true\)/);
+    assert.match(nextLevelHandler, /pendingCompletionConfirmation[\s\S]*?await confirmPendingLevelCompletion\(pending\)[\s\S]*?await startLevel\(number, true\)/);
     assert.doesNotMatch(app, /pendingLevelCompletionRetry|RETRY SAVE & NEXT/);
     const levelCompletionHandler = app.slice(
         app.indexOf('window.addEventListener("fluxgrid:level-complete"'),
         app.indexOf('\nbackendReady = initializeBackend()')
     );
-    assert.match(levelCompletionHandler, /await saveWalletLevelCompletionAutomatically\(detail\)/);
+    assert.match(levelCompletionHandler, /await confirmPendingLevelCompletion\(pending\)/);
     assert.match(app, /async function saveWalletLevelCompletionAutomatically\(detail\)[\s\S]*?attempt < 3[\s\S]*?level_completion_unavailable/);
     assert.match(app, /result\.diagnosticCode[\s\S]*?result\.stage[\s\S]*?throw new Error\(`\$\{result\.error/);
     assert.match(levelCompletionHandler, /We couldn't confirm completion yet\.[\s\S]*?Nothing is awarded until the server confirms it\.[\s\S]*?NEXT LEVEL will retry before continuing/);
@@ -819,6 +832,7 @@ test("startup plays company and player introductions, then game video, then open
     assert.doesNotMatch(styles, /\.title-screen|\.title-card|\.title-logo/);
     assert.match(styles, /\.video-screen\[data-fullscreen-video="true"\]\s*\{[^}]*position: fixed;[^}]*height: 100dvh/);
     assert.match(styles, /\.video-screen\[data-fullscreen-video="true"\] \.intro-video\s*\{[^}]*object-fit: contain/);
+    assert.match(styles, /\.video-screen\[data-level-transition="true"\] #transition-video\s*\{\s*object-fit: cover/);
     assert.match(html, /id="background-music"[^>]*loop/);
     assert.match(app, /backgroundMusic\.src = "music\.mp3"/);
     assert.doesNotMatch(html, /music\.wav/);
@@ -1140,14 +1154,13 @@ test("RelicGrid branding is used in the game and hidden scenes stop rendering", 
     assert.match(scene, /GRID\.start\.col = launchDirection === 1 \? -1 : GRID\.cols/);
     assert.match(scene, /activationRingMaterials\.forEach/);
     assert.match(app, /next-level[\s\S]*?startLevel\(number, true\)/);
-    assert.match(app, /LEVEL_TRANSITION_MILESTONES/);
+    assert.match(app, /LEVEL_TRANSITION_INTERVAL/);
     assert.match(app, /function playLevelTransition\(nextLevel, milestone\)/);
     assert.match(app, /const transitionClips = \["levels1\.mp4", "levels2\.mp4"\]/);
-    assert.match(app, /milestone === LEVEL_TRANSITION_MILESTONES\[0\][\s\S]*?transitionClips\[0\]/);
-    assert.match(app, /milestone === LEVEL_TRANSITION_MILESTONES\[1\][\s\S]*?transitionClips\[1\]/);
+    assert.match(app, /Math\.floor\(milestone \/ LEVEL_TRANSITION_INTERVAL\) % 2 === 1[\s\S]*?transitionClips\[0\][\s\S]*?transitionClips\[1\]/);
     assert.match(app, /getPendingLevelTransition\(\s*number - 1/);
     assert.match(app, /transitionMilestonesPlayed = \[\.\.\.new Set/);
-    assert.match(app, /if \(transitionInProgress\) return/);
+    assert.match(app, /if \(transitionInProgress\) return false/);
     const transitionFlow = app.slice(
         app.indexOf("async function playLevelTransition"),
         app.indexOf("\nasync function showOpeningIntro")
@@ -1157,6 +1170,7 @@ test("RelicGrid branding is used in the game and hidden scenes stop rendering", 
     assert.match(transitionFlow, /transitionVideo\.onended = \(\) => void finish\(\)/);
     assert.match(transitionFlow, /await playVideoInOrientation\(transitionVideo, offerContinue, undefined, "landscape"\)/);
     assert.match(transitionFlow, /videoScreen\.dataset\.fullscreenVideo = "true"/);
+    assert.match(transitionFlow, /videoScreen\.dataset\.levelTransition = "true"/);
     const endingFlow = app.slice(
         app.indexOf("function playCampaignEnding"),
         app.indexOf("\nasync function playLevelTransition")
