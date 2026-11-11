@@ -54,12 +54,12 @@ server secrets in the app.
 Phantom mobile handoffs return through the `relicgrid://` app URL scheme.
 That scheme is registered in the generated Android and iOS projects.
 The installed app name is RelicGrid. On launch, the company video plays first
-in fullscreen landscape, followed by the fitted RelicGrid introduction in
-portrait mode. A **Play Now** button remains available during that introduction
-to enter the game immediately; otherwise, **Next** appears when it finishes and
-starts the landscape game video. When the game video finishes, player
-identification or the home screen opens directly. Native screens return to
-portrait after each video or when a video is skipped.
+fullscreen without cropping, followed by the fitted RelicGrid introduction in
+portrait mode. **Play Now** starts the landscape game video directly; when the
+introduction finishes, the game video starts automatically without an
+interstitial page. When the game video finishes, player identification or the
+home screen opens directly. Native screens return to portrait after each video
+or when a video is skipped.
 
 Campaign game-point deposits are verified server-side through the Vercel
 Solana RPC. Before enabling the flow, apply

@@ -157,6 +157,7 @@ let activeVideoPlayback = null;
 let transitionInProgress = false;
 let openingFlowFinished = false;
 let pendingLevel = null;
+let pendingLevelCompletionRetry = null;
 let activeWalletLevelSessionId = null;
 let walletTimerStartPromise = Promise.resolve(false);
 const pendingLevelEntryRequests = new Map();
@@ -2520,7 +2521,7 @@ function playOpeningVideo(source, caption, onEnded, allowSkip = false) {
     const showPlayNow = source === "intro.mp4";
     videoAction.textContent = "PLAY NOW →";
     videoAction.hidden = !showPlayNow;
-    videoAction.onclick = showPlayNow ? () => void finishOpeningFlow() : null;
+    videoAction.onclick = showPlayNow ? playGameVideo : null;
     videoCaption.textContent = caption;
     videoScreen.dataset.openingSequence = "true";
     videoScreen.dataset.companyIntro = String(source === "companyintro.mp4");
@@ -2537,7 +2538,7 @@ function playOpeningVideo(source, caption, onEnded, allowSkip = false) {
             return;
         }
         if (source === "intro.mp4") {
-            void showNextAfterIntroVideo();
+            playGameVideo();
             return;
         }
         onEnded();
@@ -2565,22 +2566,6 @@ function playOpeningVideo(source, caption, onEnded, allowSkip = false) {
         },
         orientation
     );
-}
-
-async function showNextAfterIntroVideo() {
-    if (!await stopVideoPlayback(introVideo)) {
-        videoAction.textContent = "RETRY PORTRAIT ORIENTATION";
-        videoAction.hidden = false;
-        videoAction.onclick = () => void showNextAfterIntroVideo();
-        return;
-    }
-    introVideo.hidden = true;
-    videoSkip.hidden = true;
-    videoSkip.onclick = null;
-    videoCaption.textContent = "Introduction complete. Continue to the game video.";
-    videoAction.textContent = "NEXT →";
-    videoAction.hidden = false;
-    videoAction.onclick = playGameVideo;
 }
 
 async function showOpeningIntro() {
@@ -2724,18 +2709,37 @@ document.getElementById("name-form").addEventListener("submit", async (event) =>
 document.getElementById("continue-game").addEventListener("click", () => {
     startLevel(getContinueLevel());
 });
-document.getElementById("next-level").addEventListener("click", (event) => {
-    const number = Number(event.currentTarget.dataset.nextLevel);
+document.getElementById("next-level").addEventListener("click", async (event) => {
+    const button = event.currentTarget;
+    const number = Number(button.dataset.nextLevel);
     if (!Number.isInteger(number) || number < 1 || number > 99) return;
+    if (pendingLevelCompletionRetry?.number === number - 1) {
+        button.disabled = true;
+        button.textContent = "CONFIRMING COMPLETION…";
+        try {
+            await saveWalletLevelCompletion(pendingLevelCompletionRetry);
+            pendingLevelCompletionRetry = null;
+        } catch (error) {
+            console.error("Level completion retry failed.", error);
+            button.disabled = false;
+            button.textContent = "RETRY SAVE & NEXT →";
+            document.getElementById("game-status").textContent =
+                `Level ${number - 1} is not recorded and no reward was credited: ${error.message}`;
+            return;
+        }
+        button.disabled = false;
+        button.textContent = "NEXT LEVEL →";
+    }
     const milestone = getPendingLevelTransition(
         number - 1,
         player.transitionMilestonesPlayed
     );
     if (milestone !== null) {
         playLevelTransition(number, milestone);
-    } else {
-        startLevel(number, true);
-    }
+    } else void startLevel(number, true).catch((error) => {
+        console.error(`Level ${number} could not be started from the completion screen.`, error);
+        setLevelEntryMessage(error.message, "error");
+    });
 });
 document.getElementById("home-levels-toggle").addEventListener("click", (event) => {
     const button = event.currentTarget;
@@ -3011,12 +3015,20 @@ window.addEventListener("fluxgrid:level-complete", async (event) => {
             );
         } catch (error) {
             console.error("Server-verified level completion could not be saved.", error);
+            pendingLevelCompletionRetry = detail;
             document.getElementById("completion-reward-note").textContent =
                 `Credit not confirmed: ${error.message}`;
             document.getElementById("completion-balance-note").textContent =
                 "Showing the last server-confirmed balance";
             document.getElementById("game-status").textContent =
                 `Level ${number} is not recorded and no reward was credited: ${error.message}`;
+            const nextLevelButton = document.getElementById("next-level");
+            nextLevelButton.hidden = false;
+            nextLevelButton.disabled = number >= 99;
+            nextLevelButton.dataset.nextLevel = String(number + 1);
+            nextLevelButton.textContent = number >= 99
+                ? "CAMPAIGN COMPLETE"
+                : "RETRY SAVE & NEXT →";
             return;
         }
     } else {
@@ -3031,12 +3043,10 @@ window.addEventListener("fluxgrid:level-complete", async (event) => {
     }
 
     const nextLevelButton = document.getElementById("next-level");
-    if (pendingLevel?.number === number && detail.walletSessionId) {
-        nextLevelButton.hidden = false;
-        nextLevelButton.disabled = number >= 99;
-        nextLevelButton.dataset.nextLevel = String(number + 1);
-        nextLevelButton.textContent = number >= 99 ? "CAMPAIGN COMPLETE" : "NEXT LEVEL →";
-    }
+    nextLevelButton.hidden = false;
+    nextLevelButton.disabled = number >= 99;
+    nextLevelButton.dataset.nextLevel = String(number + 1);
+    nextLevelButton.textContent = number >= 99 ? "CAMPAIGN COMPLETE" : "NEXT LEVEL →";
     renderProfile();
 });
 

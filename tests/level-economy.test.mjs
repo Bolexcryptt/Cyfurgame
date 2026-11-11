@@ -729,8 +729,8 @@ test("startup plays company and player introductions, then game video, then open
     assert.match(openingFlow, /playOpeningVideo\("companyintro\.mp4"/);
     assert.match(openingFlow, /playOpeningVideo\("intro\.mp4", "RelicGrid introduction"/);
     assert.match(openingFlow, /source === "companyintro\.mp4"[\s\S]*?playOpeningVideo\("intro\.mp4"/);
-    assert.match(openingFlow, /source === "intro\.mp4"[\s\S]*?showNextAfterIntroVideo\(\)/);
-    assert.match(openingFlow, /videoAction\.textContent = "NEXT →"[\s\S]*?videoAction\.onclick = playGameVideo/);
+    assert.match(openingFlow, /source === "intro\.mp4"[\s\S]*?playGameVideo\(\)/);
+    assert.doesNotMatch(openingFlow, /showNextAfterIntroVideo|Introduction complete\. Continue to the game video|NEXT →/);
     assert.match(app, /function playGameVideo\(\)[\s\S]*?playOpeningVideo\("gamevideo\.mp4"[\s\S]*?"landscape"/);
     const openingCompletion = app.slice(
         app.indexOf("async function finishOpeningFlow"),
@@ -748,8 +748,8 @@ test("startup plays company and player introductions, then game video, then open
     assert.match(app, /videoOrientationQuery\.matches &&\s*!nativeOrientationConfirmed/);
     assert.match(openingFlow, /function playGameVideo\(\)[\s\S]*?videoSkip\.hidden = false[\s\S]*?videoSkip\.onclick = \(\) => void finishOpeningFlow\(\)[\s\S]*?playOpeningVideo\("gamevideo\.mp4"[\s\S]*?true\)/);
     assert.match(openingFlow, /const orientation = source === "gamevideo\.mp4" \? "landscape" : "portrait"/);
-    assert.match(readFileSync(new URL("../style.css", import.meta.url), "utf8"), /\.video-screen\[data-company-intro="true"\] #intro-video \{\s*object-fit: cover;/);
-    assert.match(openingFlow, /const showPlayNow = source === "intro\.mp4"[\s\S]*?videoAction\.textContent = "PLAY NOW →"[\s\S]*?videoAction\.onclick = showPlayNow \? \(\) => void finishOpeningFlow\(\) : null/);
+    assert.match(readFileSync(new URL("../style.css", import.meta.url), "utf8"), /\.video-screen\[data-company-intro="true"\] #intro-video \{\s*object-fit: contain;/);
+    assert.match(openingFlow, /const showPlayNow = source === "intro\.mp4"[\s\S]*?videoAction\.textContent = "PLAY NOW →"[\s\S]*?videoAction\.onclick = showPlayNow \? playGameVideo : null/);
     assert.match(app, /videoScreen\.dataset\.openingVideoSize = source === "intro\.mp4" \? "fit" : "fullscreen"/);
     assert.match(app, /videoScreen\.dataset\.openingVideoSize === "fullscreen"/);
     assert.match(openingFlow, /void playVideoInOrientation\(\s*introVideo,\s*offerNext,[\s\S]*?orientation\s*\)/);
@@ -762,6 +762,14 @@ test("startup plays company and player introductions, then game video, then open
     assert.match(app, /delete videoScreen\.dataset\.openingSequence/);
     assert.match(app, /pendingPhantomMobileCallback = phantomMobileCallback/);
     assert.doesNotMatch(app, /continueAfterIntro/);
+    assert.match(app, /document\.getElementById\("next-level"\)\.addEventListener\("click", async \(event\) => \{[\s\S]*?await saveWalletLevelCompletion\(pendingLevelCompletionRetry\)[\s\S]*?startLevel\(number, true\)/);
+    assert.match(app, /pendingLevelCompletionRetry = detail;[\s\S]*?RETRY SAVE & NEXT →/);
+    const levelCompletionHandler = app.slice(
+        app.indexOf('window.addEventListener("fluxgrid:level-complete"'),
+        app.indexOf('\nbackendReady = initializeBackend()')
+    );
+    assert.match(levelCompletionHandler, /const nextLevelButton = document\.getElementById\("next-level"\);[\s\S]*?nextLevelButton\.hidden = false;[\s\S]*?nextLevelButton\.disabled = number >= 99;[\s\S]*?nextLevelButton\.dataset\.nextLevel = String\(number \+ 1\)/);
+    assert.doesNotMatch(levelCompletionHandler, /pendingLevel\?\.number === number/);
     const openingIntro = app.slice(app.indexOf("async function showOpeningIntro"), app.indexOf("\nfunction fitVideoFrame"));
     assert.match(openingIntro, /playOpeningVideo\("companyintro\.mp4"/);
     assert.doesNotMatch(openingIntro, /playGameVideo\(\)/);
@@ -1172,7 +1180,7 @@ test("RelicGrid branding is used in the game and hidden scenes stop rendering", 
     assert.match(styles, /\.intro-video \{[\s\S]*?object-fit: contain/);
     assert.match(styles, /\.video-screen\[data-opening-sequence="true"\] \{[\s\S]*?position: fixed;[\s\S]*?height: 100dvh/);
     assert.match(styles, /\.video-screen\[data-opening-sequence="true"\] #intro-video \{[\s\S]*?width: 100%;[\s\S]*?height: 100%;[\s\S]*?object-fit: contain/);
-    assert.match(styles, /data-company-intro="true"\] #intro-video \{\s*object-fit: cover/);
+    assert.match(styles, /data-company-intro="true"\] #intro-video \{\s*object-fit: contain/);
     assert.match(styles, /\.video-screen\[data-opening-sequence="true"\] \.video-brand,[\s\S]*?\.video-shade\s*\{\s*visibility: hidden/);
     assert.match(styles, /\.video-skip-button \{[\s\S]*?top: calc\(/);
     const immersivePlugin = readFileSync(new URL("../android/app/src/main/java/com/relicgrid/cyfurgame/ImmersiveModePlugin.java", import.meta.url), "utf8");
