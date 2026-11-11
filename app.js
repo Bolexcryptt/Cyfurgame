@@ -584,12 +584,6 @@ function renderProfile() {
         statCard("LEADERBOARD", supabaseConfigured ? backendStatus : "RelicGrid account service is unavailable")
     );
     renderPlayerAccountStatus();
-    renderWalletAccountProtection();
-}
-
-function renderWalletAccountProtection() {
-    const panel = document.getElementById("wallet-account-protection");
-    if (panel) panel.hidden = !supabaseConfigured || authUser?.is_anonymous !== true;
 }
 
 function renderPlayerAccountStatus() {
@@ -2685,11 +2679,6 @@ function leaveGameplay(toHome = true) {
 window.addEventListener("fluxgrid:core-activation-start", pauseMusic);
 window.addEventListener("fluxgrid:core-activation-cancel", startMusic);
 
-document.getElementById("account-upgrade-form").addEventListener("submit", requestAccountUpgrade);
-document.getElementById("account-upgrade-code-form").addEventListener("submit", verifyAccountUpgrade);
-document.getElementById("account-recovery-form").addEventListener("submit", requestAccountRecovery);
-document.getElementById("account-recovery-code-form").addEventListener("submit", verifyAccountRecovery);
-
 document.getElementById("name-form").addEventListener("submit", async (event) => {
     event.preventDefault();
     const name = playerNameInput.value.trim();
@@ -2811,14 +2800,6 @@ document.getElementById("deposit-signature-form").addEventListener("submit", asy
 document.getElementById("profile-open").addEventListener("click", () => {
     renderProfile();
     showScreen("profile-screen");
-});
-document.getElementById("wallet-protect-account").addEventListener("click", () => {
-    renderProfile();
-    showScreen("profile-screen");
-    document.getElementById("account-security-heading").scrollIntoView({
-        behavior: "smooth",
-        block: "start"
-    });
 });
 document.getElementById("levels-open").addEventListener("click", () => leaveGameplay());
 document.getElementById("play-home").addEventListener("click", () => leaveGameplay());

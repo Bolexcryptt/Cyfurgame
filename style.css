@@ -1216,26 +1216,6 @@ button { -webkit-tap-highlight-color: transparent; }
     align-content: start;
     gap: 7px;
 }
-.wallet-account-protection:not([hidden]) {
-    display: grid;
-    gap: 8px;
-    padding: 10px;
-    border: 1px solid rgba(255, 195, 91, .36);
-    border-radius: 4px;
-    background: rgba(68, 46, 17, .24);
-}
-.wallet-account-protection small {
-    color: #e6c997;
-    line-height: 1.5;
-}
-.wallet-account-protection .button {
-    justify-self: start;
-    padding: 11px;
-    border: 1px solid #87c4d324;
-    border-radius: 5px;
-    background: linear-gradient(135deg,#0b1721e8,#08111ae8);
-    box-shadow: inset 0 1px #e3fcff08;
-}
 .wallet-field-label {
     color: #819eac;
     font: 700 7px/1.5 "Consolas",monospace;
@@ -5446,78 +5426,3 @@ body {
 }
 .completion-balance > span,
 .completion-balance > strong { color: #a4f0cf; }
-
-.player-auth-panel,
-.player-account-security {
-    margin-top: 20px;
-    padding: 18px;
-    border: 1px solid #8ad7e22c;
-    border-radius: 6px;
-    background: #101923;
-}
-
-.player-auth-panel summary {
-    color: #b7dbe2;
-    font: 700 10px "Consolas", monospace;
-    letter-spacing: .1em;
-    cursor: pointer;
-}
-
-.player-auth-panel p,
-.player-account-security > p {
-    color: #a9b7c3;
-    font-size: 11px;
-    line-height: 1.6;
-}
-
-.player-account-security h2 {
-    margin: 8px 0;
-    color: #f5efff;
-    font-size: clamp(20px, 3vw, 26px);
-}
-
-.player-auth-form {
-    display: grid;
-    gap: 9px;
-    margin-top: 14px;
-}
-
-.player-auth-form label {
-    color: #9fb6c5;
-    font: 700 9px "Consolas", monospace;
-    letter-spacing: .09em;
-}
-
-.player-auth-form input {
-    width: 100%;
-    min-height: 42px;
-    padding: 10px 12px;
-    border: 1px solid #9bb7cc38;
-    border-radius: 4px;
-    background: #080f17;
-    color: #eff7fb;
-    font: 13px "Consolas", monospace;
-}
-
-.player-auth-form input:focus-visible,
-.player-auth-panel summary:focus-visible {
-    outline: 2px solid #8be2ed;
-    outline-offset: 2px;
-}
-
-.player-auth-form .button {
-    justify-self: start;
-    min-height: 40px;
-}
-
-.player-auth-panel .wallet-api-status,
-.player-account-security .wallet-api-status {
-    min-height: 0;
-    margin: 12px 0 0;
-}
-
-@media (max-width: 680px) {
-    .player-auth-panel,
-    .player-account-security { padding: 14px; }
-    .player-auth-form .button { width: 100%; }
-}

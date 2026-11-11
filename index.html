@@ -52,21 +52,6 @@
                     <input id="player-name" name="name" maxlength="20" autocomplete="nickname" required placeholder="Enter your name">
                     <button class="button button-primary" type="submit">SAVE & CONTINUE <span>→</span></button>
                 </form>
-                <details id="account-recovery-panel" class="player-auth-panel">
-                    <summary>RECOVER AN EXISTING PLAYER ACCOUNT</summary>
-                    <p>Use this after reinstalling or on a new device to restore an account with a verified recovery email. Recovery is allowed only while this new guest profile has no saved player data.</p>
-                    <form id="account-recovery-form" class="player-auth-form">
-                        <label for="account-recovery-email">ACCOUNT RECOVERY EMAIL</label>
-                        <input id="account-recovery-email" type="email" autocomplete="email" required>
-                        <button class="button button-quiet" type="submit">SEND SIGN-IN CODE</button>
-                    </form>
-                    <form id="account-recovery-code-form" class="player-auth-form" hidden>
-                        <label for="account-recovery-code">SIX-DIGIT EMAIL CODE</label>
-                        <input id="account-recovery-code" type="text" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" required>
-                        <button class="button button-primary" type="submit">RESTORE ACCOUNT</button>
-                    </form>
-                    <p id="account-recovery-status" class="wallet-api-status" role="status" aria-live="polite"></p>
-                </details>
             </div>
         </section>
 
@@ -193,10 +178,6 @@
                             <span class="wallet-field-label">VERIFIED IN-GAME BALANCE</span>
                             <b id="wallet-balance">—</b>
                             <small id="wallet-balance-state">SIGN IN TO VIEW BALANCE</small>
-                            <div id="wallet-account-protection" class="wallet-account-protection" hidden>
-                                <small>Protect this balance before reinstalling: link and verify a recovery email to restore this same account.</small>
-                                <button id="wallet-protect-account" class="button button-quiet" type="button">PROTECT ACCOUNT</button>
-                            </div>
                             <button id="wallet-balance-refresh" class="wallet-refresh" type="button">REFRESH BALANCE</button>
                         </div>
                     </div>
@@ -359,23 +340,6 @@
                 <span class="eyebrow">PILOT DOSSIER</span>
                 <h1>Your profile</h1>
                 <div id="profile-details" class="profile-details"></div>
-                <article class="info-card player-account-security" aria-labelledby="account-security-heading">
-                    <span class="eyebrow">RELICGRID PLAYER IDENTITY</span>
-                    <h2 id="account-security-heading">Protect account recovery</h2>
-                    <p>This anonymous identity remains available during normal app updates, but uninstalling can remove its saved sign-in session. Link and verify a recovery email to restore this same user ID; credits, game progress, leaderboard records, and linked Solana wallet stay attached.</p>
-                    <p id="account-identity-status" class="wallet-api-status" role="status" aria-live="polite">Checking RelicGrid player identity…</p>
-                    <form id="account-upgrade-form" class="player-auth-form" hidden>
-                        <label for="account-upgrade-email">RECOVERY EMAIL</label>
-                        <input id="account-upgrade-email" type="email" autocomplete="email" required>
-                        <button class="button button-primary" type="submit">SEND CONFIRMATION EMAIL</button>
-                    </form>
-                    <form id="account-upgrade-code-form" class="player-auth-form" hidden>
-                        <label for="account-upgrade-code">SIX-DIGIT EMAIL CODE (ALTERNATIVE)</label>
-                        <input id="account-upgrade-code" type="text" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" required>
-                        <button class="button button-quiet" type="submit">VERIFY EMAIL</button>
-                    </form>
-                    <p id="account-upgrade-status" class="wallet-api-status" role="status" aria-live="polite"></p>
-                </article>
             </main>
         </section>
 

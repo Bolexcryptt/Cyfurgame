@@ -1166,7 +1166,9 @@ test("RelicGrid branding is used in the game and hidden scenes stop rendering", 
     assert.equal((html.match(/id="deposit-signature"/g) || []).length, 1);
     assert.doesNotMatch(html, /id="legacy-game-access-points"|id="game-points-balance"/);
     assert.equal((html.match(/id="wallet-balance"/g) || []).length, 1);
-    assert.match(html, /id="wallet-protect-account"/);
+    assert.doesNotMatch(html, /account-recovery|account-upgrade|recovery email|wallet-protect-account/i);
+    assert.doesNotMatch(app, /getElementById\("account-(?:recovery|upgrade)-[^"]+"\)\.addEventListener/);
+    assert.doesNotMatch(app, /getElementById\("wallet-protect-account"\)/);
     const walletArchitecture = readFileSync(new URL("../WALLET-ARCHITECTURE.md", import.meta.url), "utf8");
     assert.match(walletArchitecture, /non-withdrawable/);
     assert.match(html, /id="rotate-device-prompt"/);
