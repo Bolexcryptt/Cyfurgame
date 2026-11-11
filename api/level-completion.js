@@ -8,6 +8,31 @@ const {
 const { getLevelEconomyAndStars, verifyLevelProof } = require("../server/lib/level-completion");
 const { areLevelsGloballyLocked } = require("../server/lib/level-lock");
 
+async function completeLevelSession(rpcName, options) {
+    for (let attempt = 0; attempt < 3; attempt++) {
+        try {
+            return await serviceRequest(rpcName, options);
+        } catch (error) {
+            const retryableStatus = [429, 500, 502, 503, 504].includes(error.status);
+            const retryableCode = [
+                "ECONNRESET",
+                "ETIMEDOUT",
+                "ECONNREFUSED",
+                "EAI_AGAIN",
+                "UND_ERR_CONNECT_TIMEOUT",
+                "UND_ERR_SOCKET"
+            ].includes(error.code);
+            const retryableNetworkError = error.name === "TypeError" && error.status === undefined;
+            if (attempt === 2 ||
+                (!retryableStatus && !retryableCode && !retryableNetworkError)) {
+                throw error;
+            }
+            await new Promise((resolve) => setTimeout(resolve, 250 * (attempt + 1)));
+        }
+    }
+    throw new Error("Level completion could not be confirmed.");
+}
+
 module.exports = async function levelCompletion(request, response) {
     if (handleApiCors(request, response)) return;
     if (request.method !== "POST") {
@@ -53,7 +78,7 @@ module.exports = async function levelCompletion(request, response) {
         const rewardField = pointsSession ? "reward_points" : "reward_credits";
         const balanceField = pointsSession ? "balance_points" : "balance_credits";
         if (session.completed_at) {
-            const [result] = await serviceRequest(rpcName, {
+            const [result] = await completeLevelSession(rpcName, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
@@ -101,7 +126,7 @@ module.exports = async function levelCompletion(request, response) {
                 : 0;
 
         failureStage = "completion_rpc";
-        const [completion] = await serviceRequest(rpcName, {
+        const [completion] = await completeLevelSession(rpcName, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({

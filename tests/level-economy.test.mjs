@@ -748,13 +748,13 @@ test("startup plays company and player introductions, then game video, then open
     assert.match(app, /await waitForNativeOrientation\(orientation\);\s*active\.nativeOrientationConfirmed = true/);
     assert.match(app, /videoOrientationQuery\.matches &&\s*!nativeOrientationConfirmed/);
     assert.match(openingFlow, /function playGameVideo\(\)[\s\S]*?videoSkip\.hidden = false[\s\S]*?videoSkip\.onclick = \(\) => void finishOpeningFlow\(\)[\s\S]*?playOpeningVideo\("gamevideo\.mp4"[\s\S]*?true\)/);
-    assert.match(openingFlow, /const orientation = source === "gamevideo\.mp4" \? "landscape" : "portrait"/);
+    assert.match(openingFlow, /const orientation = source === "gamevideo\.mp4" \|\| source === "companyintro\.mp4"[\s\S]*?"landscape"[\s\S]*?"portrait"/);
     assert.match(openingFlow, /const playbackSequence = \+\+openingVideoSequence;[\s\S]*?activeOpeningVideoSource = source/);
     assert.match(openingFlow, /if \(playbackSequence !== openingVideoSequence \|\| !introVideo\.ended\) return/);
     assert.match(readFileSync(new URL("../style.css", import.meta.url), "utf8"), /\.video-screen\[data-opening-sequence="true"\]:not\(\[data-company-intro="true"\]\) #intro-video/);
-    assert.match(readFileSync(new URL("../style.css", import.meta.url), "utf8"), /\.video-screen\[data-company-intro="true"\] #intro-video \{[\s\S]*?inset: 50% auto auto 50%;[\s\S]*?width: 200vw;[\s\S]*?height: auto;[\s\S]*?transform: translate\(-50%, -50%\);[\s\S]*?object-fit: contain;[\s\S]*?border-radius: 0/);
+    assert.match(readFileSync(new URL("../style.css", import.meta.url), "utf8"), /\.video-screen\[data-company-intro="true"\] #intro-video \{[\s\S]*?inset: 0;[\s\S]*?width: 100%;[\s\S]*?height: 100%;[\s\S]*?transform: none;[\s\S]*?object-fit: contain;[\s\S]*?border-radius: 0/);
     assert.match(openingFlow, /const showPlayNow = source === "intro\.mp4"[\s\S]*?videoAction\.textContent = "PLAY NOW →"[\s\S]*?videoAction\.onclick = showPlayNow \? playGameVideo : null/);
-    assert.match(app, /videoScreen\.dataset\.openingVideoSize = source === "gamevideo\.mp4" \? "fullscreen" : "fit"/);
+    assert.match(app, /videoScreen\.dataset\.openingVideoSize =\s*source === "gamevideo\.mp4" \|\| source === "companyintro\.mp4" \? "fullscreen" : "fit"/);
     assert.match(app, /videoScreen\.dataset\.openingVideoSize === "fullscreen"/);
     assert.match(openingFlow, /void playVideoInOrientation\(\s*introVideo,\s*offerNext,[\s\S]*?orientation\s*\)/);
     assert.match(openingFlow, /videoSkip\.hidden = !allowSkip/);
@@ -773,7 +773,7 @@ test("startup plays company and player introductions, then game video, then open
     assert.match(nextLevelHandler, /getPendingLevelTransition\(\s*number - 1/);
     assert.match(nextLevelHandler, /await startLevel\(number, true\)/);
     assert.match(nextLevelHandler, /if \(!started\)[\s\S]*?level-entry-status/);
-    assert.doesNotMatch(nextLevelHandler, /saveWalletLevelCompletion/);
+    assert.match(nextLevelHandler, /pendingCompletionConfirmation[\s\S]*?saveWalletLevelCompletionAutomatically\(pendingCompletionConfirmation\.detail\)[\s\S]*?await startLevel\(number, true\)/);
     assert.doesNotMatch(app, /pendingLevelCompletionRetry|RETRY SAVE & NEXT/);
     const levelCompletionHandler = app.slice(
         app.indexOf('window.addEventListener("fluxgrid:level-complete"'),
@@ -782,7 +782,7 @@ test("startup plays company and player introductions, then game video, then open
     assert.match(levelCompletionHandler, /await saveWalletLevelCompletionAutomatically\(detail\)/);
     assert.match(app, /async function saveWalletLevelCompletionAutomatically\(detail\)[\s\S]*?attempt < 3[\s\S]*?level_completion_unavailable/);
     assert.match(app, /result\.diagnosticCode[\s\S]*?result\.stage[\s\S]*?throw new Error\(`\$\{result\.error/);
-    assert.match(levelCompletionHandler, /Credit not confirmed: \$\{error\.message\}/);
+    assert.match(levelCompletionHandler, /We couldn't confirm completion yet\.[\s\S]*?Nothing is awarded until the server confirms it\.[\s\S]*?NEXT LEVEL will retry before continuing/);
     assert.match(levelCompletionHandler, /const nextLevelButton = document\.getElementById\("next-level"\);[\s\S]*?nextLevelButton\.hidden = false;[\s\S]*?nextLevelButton\.disabled = number >= 99;[\s\S]*?nextLevelButton\.dataset\.nextLevel = String\(number \+ 1\)/);
     assert.match(levelCompletionHandler, /nextLevelButton\.textContent = number >= 99 \? "CAMPAIGN COMPLETE" : "NEXT LEVEL →"/);
     assert.doesNotMatch(levelCompletionHandler, /pendingLevel\?\.number === number/);
@@ -1199,7 +1199,7 @@ test("RelicGrid branding is used in the game and hidden scenes stop rendering", 
     assert.match(styles, /\.intro-video \{[\s\S]*?object-fit: contain/);
     assert.match(styles, /\.video-screen\[data-opening-sequence="true"\] \{[\s\S]*?position: fixed;[\s\S]*?height: 100dvh/);
     assert.match(styles, /\.video-screen\[data-opening-sequence="true"\]:not\(\[data-company-intro="true"\]\) #intro-video \{[\s\S]*?width: 100%;[\s\S]*?height: 100%;[\s\S]*?object-fit: contain/);
-    assert.match(styles, /data-company-intro="true"\] #intro-video \{[\s\S]*?width: 200vw;[\s\S]*?object-fit: contain/);
+    assert.match(styles, /data-company-intro="true"\] #intro-video \{[\s\S]*?width: 100%;[\s\S]*?height: 100%;[\s\S]*?object-fit: contain/);
     assert.match(styles, /\.video-screen\[data-opening-sequence="true"\] \.video-brand,[\s\S]*?\.video-shade\s*\{\s*visibility: hidden/);
     assert.match(styles, /\.video-skip-button \{[\s\S]*?top: calc\(/);
     const immersivePlugin = readFileSync(new URL("../android/app/src/main/java/com/relicgrid/cyfurgame/ImmersiveModePlugin.java", import.meta.url), "utf8");

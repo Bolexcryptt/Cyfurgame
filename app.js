@@ -175,6 +175,7 @@ let levelStartInProgress = false;
 let withdrawalSystemReady = false;
 let withdrawalAvailableCredits = "0";
 let withdrawalHasActiveRequest = false;
+let pendingCompletionConfirmation = null;
 let pendingAccountEmail = "";
 let pendingAccountRecoveryPlayerId = null;
 let pendingPhantomMobileCallback = null;
@@ -2504,7 +2505,9 @@ function playGameVideo() {
 function playOpeningVideo(source, caption, onEnded, allowSkip = false) {
     const playbackSequence = ++openingVideoSequence;
     activeOpeningVideoSource = source;
-    const orientation = source === "gamevideo.mp4" ? "landscape" : "portrait";
+    const orientation = source === "gamevideo.mp4" || source === "companyintro.mp4"
+        ? "landscape"
+        : "portrait";
     introVideo.pause();
     introVideo.onerror = null;
     introVideo.onended = null;
@@ -2523,7 +2526,8 @@ function playOpeningVideo(source, caption, onEnded, allowSkip = false) {
     videoCaption.textContent = caption;
     videoScreen.dataset.openingSequence = "true";
     videoScreen.dataset.companyIntro = String(source === "companyintro.mp4");
-    videoScreen.dataset.openingVideoSize = source === "gamevideo.mp4" ? "fullscreen" : "fit";
+    videoScreen.dataset.openingVideoSize =
+        source === "gamevideo.mp4" || source === "companyintro.mp4" ? "fullscreen" : "fit";
     if (introVideo.readyState < HTMLMediaElement.HAVE_METADATA) {
         introVideo.addEventListener("loadedmetadata", () => fitVideoFrame(introVideo), { once: true });
     } else {
@@ -2707,6 +2711,22 @@ document.getElementById("continue-game").addEventListener("click", () => {
 document.getElementById("next-level").addEventListener("click", async (event) => {
     const number = Number(event.currentTarget.dataset.nextLevel);
     if (!Number.isInteger(number) || number < 1 || number > 99) return;
+    if (pendingCompletionConfirmation?.number === number - 1) {
+        const button = event.currentTarget;
+        button.disabled = true;
+        try {
+            await saveWalletLevelCompletionAutomatically(pendingCompletionConfirmation.detail);
+            pendingCompletionConfirmation = null;
+            renderProfile();
+        } catch (error) {
+            console.error("Level completion is still awaiting server confirmation.", error);
+            document.getElementById("game-status").textContent =
+                "We couldn't confirm completion yet. Nothing is awarded until the server confirms it. Try NEXT LEVEL again shortly.";
+            return;
+        } finally {
+            button.disabled = false;
+        }
+    }
     const milestone = getPendingLevelTransition(
         number - 1,
         player.transitionMilestonesPlayed
@@ -2999,8 +3019,10 @@ window.addEventListener("fluxgrid:level-complete", async (event) => {
     }
 
     if (detail.walletSessionId) {
+        pendingCompletionConfirmation = { detail, number };
         try {
             const result = await saveWalletLevelCompletionAutomatically(detail);
+            pendingCompletionConfirmation = null;
             const rewardAmount = detail.gamePointsSession ? result.rewardPoints : result.rewardCredits;
             const rewardUnit = detail.gamePointsSession ? "game points" : "credits";
             setLevelEntryMessage(
@@ -3010,11 +3032,11 @@ window.addEventListener("fluxgrid:level-complete", async (event) => {
         } catch (error) {
             console.error("Server-verified level completion could not be saved.", error);
             document.getElementById("completion-reward-note").textContent =
-                `Credit not confirmed: ${error.message}`;
+                "Completion is still being verified. The reward will appear after the server confirms it.";
             document.getElementById("completion-balance-note").textContent =
                 "Showing the last server-confirmed balance";
             document.getElementById("game-status").textContent =
-                `Level ${number} is not recorded and no reward was credited: ${error.message}`;
+                "We couldn't confirm completion yet. Nothing is awarded until the server confirms it. NEXT LEVEL will retry before continuing.";
             const nextLevelButton = document.getElementById("next-level");
             nextLevelButton.hidden = false;
             nextLevelButton.disabled = number >= 99;

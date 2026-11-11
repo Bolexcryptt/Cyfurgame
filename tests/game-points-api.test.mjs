@@ -127,6 +127,8 @@ function resetScenario() {
         entryCalls: [],
         completionCalls: [],
         completionRpcError: null,
+        completionRpcFailuresRemaining: 0,
+        completionRpcFailureAfterCommit: false,
         sessionCompletedAt: null,
         lastCompletion: null,
         entryResponse: {
@@ -218,6 +220,17 @@ function resetScenario() {
         if (path === "rpc/complete_game_point_level") {
             const body = JSON.parse(options.body);
             scenario.completionCalls.push(body);
+            if (scenario.completionRpcFailuresRemaining > 0) {
+                scenario.completionRpcFailuresRemaining--;
+                if (scenario.completionRpcFailureAfterCommit) {
+                    scenario.lastCompletion = body;
+                    scenario.sessionCompletedAt = new Date().toISOString();
+                }
+                return dbResponse(503, {
+                    code: "PGRST003",
+                    message: "Completion RPC temporarily unavailable."
+                });
+            }
             if (scenario.completionRpcError) {
                 return dbResponse(400, {
                     code: scenario.completionRpcError,
@@ -393,6 +406,33 @@ test("completion RPC failures include a safe diagnostic stage and database code"
         diagnosticCode: "XX000",
         stage: "completion_rpc"
     });
+    assert.equal(scenario.completionCalls.length, 1);
+});
+
+test("completion RPC retries return an already-committed reward without awarding twice", async () => {
+    const level = levels[0];
+    scenario.completionRpcFailuresRemaining = 1;
+    scenario.completionRpcFailureAfterCommit = true;
+    const response = await call(levelCompletion, "POST", {
+        sessionId,
+        mirrors: level.solutionMirrors.map(({ row, col, orientation }) => ({
+            row,
+            col,
+            slash: orientation === "/"
+        })),
+        launchDirection: level.start.direction,
+        gamePoints: true
+    });
+
+    assert.equal(response.statusCode, 200);
+    assert.equal(response.payload.status, "confirmed");
+    assert.equal(response.payload.rewardPoints, "160");
+    assert.equal(response.payload.duplicate, true);
+    assert.equal(scenario.completionCalls.length, 2);
+    assert.deepEqual(
+        scenario.completionCalls.map(({ p_session_id }) => p_session_id),
+        [sessionId, sessionId]
+    );
 });
 
 test("replaying a completed level session returns its prior record without another award", async () => {
