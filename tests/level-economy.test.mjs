@@ -752,7 +752,7 @@ test("startup plays company and player introductions, then game video, then open
     assert.match(openingFlow, /const playbackSequence = \+\+openingVideoSequence;[\s\S]*?activeOpeningVideoSource = source/);
     assert.match(openingFlow, /if \(playbackSequence !== openingVideoSequence \|\| !introVideo\.ended\) return/);
     assert.match(readFileSync(new URL("../style.css", import.meta.url), "utf8"), /\.video-screen\[data-opening-sequence="true"\]:not\(\[data-company-intro="true"\]\) #intro-video/);
-    assert.match(readFileSync(new URL("../style.css", import.meta.url), "utf8"), /\.video-screen\[data-company-intro="true"\] #intro-video \{[\s\S]*?inset: 0;[\s\S]*?object-fit: contain;[\s\S]*?border-radius: 0/);
+    assert.match(readFileSync(new URL("../style.css", import.meta.url), "utf8"), /\.video-screen\[data-company-intro="true"\] #intro-video \{[\s\S]*?inset: 0;[\s\S]*?object-fit: cover;[\s\S]*?border-radius: 0/);
     assert.match(openingFlow, /const showPlayNow = source === "intro\.mp4"[\s\S]*?videoAction\.textContent = "PLAY NOW →"[\s\S]*?videoAction\.onclick = showPlayNow \? playGameVideo : null/);
     assert.match(app, /videoScreen\.dataset\.openingVideoSize = source === "gamevideo\.mp4" \? "fullscreen" : "fit"/);
     assert.match(app, /videoScreen\.dataset\.openingVideoSize === "fullscreen"/);
@@ -1197,7 +1197,7 @@ test("RelicGrid branding is used in the game and hidden scenes stop rendering", 
     assert.match(styles, /\.intro-video \{[\s\S]*?object-fit: contain/);
     assert.match(styles, /\.video-screen\[data-opening-sequence="true"\] \{[\s\S]*?position: fixed;[\s\S]*?height: 100dvh/);
     assert.match(styles, /\.video-screen\[data-opening-sequence="true"\]:not\(\[data-company-intro="true"\]\) #intro-video \{[\s\S]*?width: 100%;[\s\S]*?height: 100%;[\s\S]*?object-fit: contain/);
-    assert.match(styles, /data-company-intro="true"\] #intro-video \{[\s\S]*?object-fit: contain/);
+    assert.match(styles, /data-company-intro="true"\] #intro-video \{[\s\S]*?object-fit: cover/);
     assert.match(styles, /\.video-screen\[data-opening-sequence="true"\] \.video-brand,[\s\S]*?\.video-shade\s*\{\s*visibility: hidden/);
     assert.match(styles, /\.video-skip-button \{[\s\S]*?top: calc\(/);
     const immersivePlugin = readFileSync(new URL("../android/app/src/main/java/com/relicgrid/cyfurgame/ImmersiveModePlugin.java", import.meta.url), "utf8");
