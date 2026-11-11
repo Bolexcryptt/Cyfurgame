@@ -159,7 +159,6 @@ let openingFlowFinished = false;
 let openingVideoSequence = 0;
 let activeOpeningVideoSource = null;
 let pendingLevel = null;
-let pendingLevelCompletionRetry = null;
 let activeWalletLevelSessionId = null;
 let walletTimerStartPromise = Promise.resolve(false);
 const pendingLevelEntryRequests = new Map();
@@ -2607,12 +2606,12 @@ function fitVideoFrame(video) {
 }
 
 async function startLevel(number, resumeMusic = false) {
-    if (levelStartInProgress) return;
+    if (levelStartInProgress) return false;
     const level = levels[number - 1];
-    if (!level) return;
+    if (!level) return false;
     if (levelsGloballyLocked) {
         setLevelEntryMessage("All levels are temporarily locked. Your saved progress is unchanged.", "disabled");
-        return;
+        return false;
     }
     levelStartInProgress = true;
     const musicWasPlaying = musicStarted && !backgroundMusic.paused;
@@ -2624,7 +2623,7 @@ async function startLevel(number, resumeMusic = false) {
         const entry = await requestLevelEntry(number);
         if (!entry) {
             stopNewMusic();
-            return;
+            return false;
         }
         const gameGuide = document.getElementById("game-guide");
         const showTutorial = number === 1 && !player.tutorialSeen;
@@ -2669,6 +2668,7 @@ async function startLevel(number, resumeMusic = false) {
                 }
             }));
         }, 0);
+        return true;
     } catch (error) {
         stopNewMusic();
         throw error;
@@ -2716,36 +2716,26 @@ document.getElementById("continue-game").addEventListener("click", () => {
     startLevel(getContinueLevel());
 });
 document.getElementById("next-level").addEventListener("click", async (event) => {
-    const button = event.currentTarget;
-    const number = Number(button.dataset.nextLevel);
+    const number = Number(event.currentTarget.dataset.nextLevel);
     if (!Number.isInteger(number) || number < 1 || number > 99) return;
-    if (pendingLevelCompletionRetry?.number === number - 1) {
-        button.disabled = true;
-        button.textContent = "CONFIRMING COMPLETION…";
-        try {
-            await saveWalletLevelCompletion(pendingLevelCompletionRetry);
-            pendingLevelCompletionRetry = null;
-        } catch (error) {
-            console.error("Level completion retry failed.", error);
-            button.disabled = false;
-            button.textContent = "RETRY SAVE & NEXT →";
-            document.getElementById("game-status").textContent =
-                `Level ${number - 1} is not recorded and no reward was credited: ${error.message}`;
-            return;
-        }
-        button.disabled = false;
-        button.textContent = "NEXT LEVEL →";
-    }
     const milestone = getPendingLevelTransition(
         number - 1,
         player.transitionMilestonesPlayed
     );
     if (milestone !== null) {
         playLevelTransition(number, milestone);
-    } else void startLevel(number, true).catch((error) => {
-        console.error(`Level ${number} could not be started from the completion screen.`, error);
-        setLevelEntryMessage(error.message, "error");
-    });
+    } else {
+        try {
+            const started = await startLevel(number, true);
+            if (!started) {
+                document.getElementById("game-status").textContent =
+                    document.getElementById("level-entry-status").textContent;
+            }
+        } catch (error) {
+            console.error(`Level ${number} could not be started from the completion screen.`, error);
+            document.getElementById("game-status").textContent = error.message;
+        }
+    }
 });
 document.getElementById("home-levels-toggle").addEventListener("click", (event) => {
     const button = event.currentTarget;
@@ -2938,6 +2928,20 @@ async function saveWalletLevelCompletion(detail) {
     return result;
 }
 
+async function saveWalletLevelCompletionAutomatically(detail) {
+    for (let attempt = 0; attempt < 3; attempt++) {
+        try {
+            return await saveWalletLevelCompletion(detail);
+        } catch (error) {
+            const retryable = /level_completion_unavailable|Secure completion failed \(5\d\d\)|Failed to fetch|NetworkError/i
+                .test(error.message);
+            if (!retryable || attempt === 2) throw error;
+            await new Promise((resolve) => setTimeout(resolve, 750 * (attempt + 1)));
+        }
+    }
+    throw new Error("Automatic level completion save did not finish.");
+}
+
 const withdrawalAddressInput = document.getElementById("withdrawal-wallet-address");
 const withdrawalAmountInput = document.getElementById("withdrawal-amount");
 const withdrawalMaxButton = document.getElementById("withdrawal-max");
@@ -3012,7 +3016,7 @@ window.addEventListener("fluxgrid:level-complete", async (event) => {
 
     if (detail.walletSessionId) {
         try {
-            const result = await saveWalletLevelCompletion(detail);
+            const result = await saveWalletLevelCompletionAutomatically(detail);
             const rewardAmount = detail.gamePointsSession ? result.rewardPoints : result.rewardCredits;
             const rewardUnit = detail.gamePointsSession ? "game points" : "credits";
             setLevelEntryMessage(
@@ -3021,7 +3025,6 @@ window.addEventListener("fluxgrid:level-complete", async (event) => {
             );
         } catch (error) {
             console.error("Server-verified level completion could not be saved.", error);
-            pendingLevelCompletionRetry = detail;
             document.getElementById("completion-reward-note").textContent =
                 `Credit not confirmed: ${error.message}`;
             document.getElementById("completion-balance-note").textContent =
@@ -3032,9 +3035,7 @@ window.addEventListener("fluxgrid:level-complete", async (event) => {
             nextLevelButton.hidden = false;
             nextLevelButton.disabled = number >= 99;
             nextLevelButton.dataset.nextLevel = String(number + 1);
-            nextLevelButton.textContent = number >= 99
-                ? "CAMPAIGN COMPLETE"
-                : "RETRY SAVE & NEXT →";
+            nextLevelButton.textContent = number >= 99 ? "CAMPAIGN COMPLETE" : "NEXT LEVEL →";
             return;
         }
     } else {

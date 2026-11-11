@@ -766,13 +766,24 @@ test("startup plays company and player introductions, then game video, then open
     assert.match(app, /delete videoScreen\.dataset\.openingSequence/);
     assert.match(app, /pendingPhantomMobileCallback = phantomMobileCallback/);
     assert.doesNotMatch(app, /continueAfterIntro/);
-    assert.match(app, /document\.getElementById\("next-level"\)\.addEventListener\("click", async \(event\) => \{[\s\S]*?await saveWalletLevelCompletion\(pendingLevelCompletionRetry\)[\s\S]*?startLevel\(number, true\)/);
-    assert.match(app, /pendingLevelCompletionRetry = detail;[\s\S]*?RETRY SAVE & NEXT →/);
+    const nextLevelHandler = app.slice(
+        app.indexOf('document.getElementById("next-level").addEventListener'),
+        app.indexOf('\ndocument.getElementById("home-levels-toggle")')
+    );
+    assert.match(nextLevelHandler, /getPendingLevelTransition\(\s*number - 1/);
+    assert.match(nextLevelHandler, /await startLevel\(number, true\)/);
+    assert.match(nextLevelHandler, /if \(!started\)[\s\S]*?level-entry-status/);
+    assert.doesNotMatch(nextLevelHandler, /saveWalletLevelCompletion/);
+    assert.doesNotMatch(app, /pendingLevelCompletionRetry|RETRY SAVE & NEXT/);
     const levelCompletionHandler = app.slice(
         app.indexOf('window.addEventListener("fluxgrid:level-complete"'),
         app.indexOf('\nbackendReady = initializeBackend()')
     );
+    assert.match(levelCompletionHandler, /await saveWalletLevelCompletionAutomatically\(detail\)/);
+    assert.match(app, /async function saveWalletLevelCompletionAutomatically\(detail\)[\s\S]*?attempt < 3[\s\S]*?level_completion_unavailable/);
+    assert.match(levelCompletionHandler, /Credit not confirmed: \$\{error\.message\}/);
     assert.match(levelCompletionHandler, /const nextLevelButton = document\.getElementById\("next-level"\);[\s\S]*?nextLevelButton\.hidden = false;[\s\S]*?nextLevelButton\.disabled = number >= 99;[\s\S]*?nextLevelButton\.dataset\.nextLevel = String\(number \+ 1\)/);
+    assert.match(levelCompletionHandler, /nextLevelButton\.textContent = number >= 99 \? "CAMPAIGN COMPLETE" : "NEXT LEVEL →"/);
     assert.doesNotMatch(levelCompletionHandler, /pendingLevel\?\.number === number/);
     const openingIntro = app.slice(app.indexOf("async function showOpeningIntro"), app.indexOf("\nfunction fitVideoFrame"));
     assert.match(openingIntro, /playOpeningVideo\("companyintro\.mp4"/);
