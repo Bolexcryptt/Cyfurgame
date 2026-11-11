@@ -156,6 +156,8 @@ let serverGamePointCompletions = [];
 let activeVideoPlayback = null;
 let transitionInProgress = false;
 let openingFlowFinished = false;
+let openingVideoSequence = 0;
+let activeOpeningVideoSource = null;
 let pendingLevel = null;
 let pendingLevelCompletionRetry = null;
 let activeWalletLevelSessionId = null;
@@ -2305,15 +2307,16 @@ function showNameOrHome() {
 }
 
 async function finishOpeningFlow() {
-    if (openingFlowFinished) return;
+    if (openingFlowFinished || activeOpeningVideoSource !== "gamevideo.mp4") return;
     if (!await stopVideoPlayback(introVideo)) {
-        videoCaption.textContent = "Portrait orientation could not be restored. Retry to continue.";
-        videoAction.textContent = "RETRY PORTRAIT ORIENTATION";
+        videoCaption.textContent = "Video orientation could not be restored. Retry to continue.";
+        videoAction.textContent = "RETRY VIDEO ORIENTATION";
         videoAction.hidden = false;
         videoAction.onclick = () => void finishOpeningFlow();
         return;
     }
     openingFlowFinished = true;
+    activeOpeningVideoSource = null;
     player.watchedGameIntro = true;
     savePlayer();
     introVideo.hidden = true;
@@ -2506,6 +2509,8 @@ function playGameVideo() {
 }
 
 function playOpeningVideo(source, caption, onEnded, allowSkip = false) {
+    const playbackSequence = ++openingVideoSequence;
+    activeOpeningVideoSource = source;
     const orientation = source === "gamevideo.mp4" ? "landscape" : "portrait";
     introVideo.pause();
     introVideo.onerror = null;
@@ -2525,13 +2530,14 @@ function playOpeningVideo(source, caption, onEnded, allowSkip = false) {
     videoCaption.textContent = caption;
     videoScreen.dataset.openingSequence = "true";
     videoScreen.dataset.companyIntro = String(source === "companyintro.mp4");
-    videoScreen.dataset.openingVideoSize = source === "intro.mp4" ? "fit" : "fullscreen";
+    videoScreen.dataset.openingVideoSize = source === "gamevideo.mp4" ? "fullscreen" : "fit";
     if (introVideo.readyState < HTMLMediaElement.HAVE_METADATA) {
         introVideo.addEventListener("loadedmetadata", () => fitVideoFrame(introVideo), { once: true });
     } else {
         fitVideoFrame(introVideo);
     }
     introVideo.onended = () => {
+        if (playbackSequence !== openingVideoSequence || !introVideo.ended) return;
         clearCompletedOpeningVideo();
         if (source === "companyintro.mp4") {
             playOpeningVideo("intro.mp4", "RelicGrid introduction", () => {});

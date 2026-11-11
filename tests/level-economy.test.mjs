@@ -720,6 +720,7 @@ test("campaign difficulty ramps crystals and obstacles while mirror count stays 
 test("startup plays company and player introductions, then game video, then opens the game menu", () => {
     const app = readFileSync(new URL("../app.js", import.meta.url), "utf8");
     assert.match(app, /async function finishOpeningFlow\(\)/);
+    assert.match(app, /async function finishOpeningFlow\(\) \{\s*if \(openingFlowFinished \|\| activeOpeningVideoSource !== "gamevideo\.mp4"\) return;/);
     assert.match(app, /async function showOpeningIntro\(\)/);
     const openingFlow = app.slice(
         app.indexOf("function playGameVideo"),
@@ -748,9 +749,12 @@ test("startup plays company and player introductions, then game video, then open
     assert.match(app, /videoOrientationQuery\.matches &&\s*!nativeOrientationConfirmed/);
     assert.match(openingFlow, /function playGameVideo\(\)[\s\S]*?videoSkip\.hidden = false[\s\S]*?videoSkip\.onclick = \(\) => void finishOpeningFlow\(\)[\s\S]*?playOpeningVideo\("gamevideo\.mp4"[\s\S]*?true\)/);
     assert.match(openingFlow, /const orientation = source === "gamevideo\.mp4" \? "landscape" : "portrait"/);
+    assert.match(openingFlow, /const playbackSequence = \+\+openingVideoSequence;[\s\S]*?activeOpeningVideoSource = source/);
+    assert.match(openingFlow, /if \(playbackSequence !== openingVideoSequence \|\| !introVideo\.ended\) return/);
+    assert.match(readFileSync(new URL("../style.css", import.meta.url), "utf8"), /\.video-screen\[data-opening-sequence="true"\]:not\(\[data-company-intro="true"\]\) #intro-video/);
     assert.match(readFileSync(new URL("../style.css", import.meta.url), "utf8"), /\.video-screen\[data-company-intro="true"\] #intro-video \{\s*object-fit: contain;/);
     assert.match(openingFlow, /const showPlayNow = source === "intro\.mp4"[\s\S]*?videoAction\.textContent = "PLAY NOW →"[\s\S]*?videoAction\.onclick = showPlayNow \? playGameVideo : null/);
-    assert.match(app, /videoScreen\.dataset\.openingVideoSize = source === "intro\.mp4" \? "fit" : "fullscreen"/);
+    assert.match(app, /videoScreen\.dataset\.openingVideoSize = source === "gamevideo\.mp4" \? "fullscreen" : "fit"/);
     assert.match(app, /videoScreen\.dataset\.openingVideoSize === "fullscreen"/);
     assert.match(openingFlow, /void playVideoInOrientation\(\s*introVideo,\s*offerNext,[\s\S]*?orientation\s*\)/);
     assert.match(openingFlow, /videoSkip\.hidden = !allowSkip/);
@@ -790,7 +794,7 @@ test("startup plays company and player introductions, then game video, then open
     const html = readFileSync(new URL("../index.html", import.meta.url), "utf8");
     const styles = readFileSync(new URL("../style.css", import.meta.url), "utf8");
     assert.match(styles, /\.video-screen\[data-opening-sequence="true"\]\s*\{[^}]*height: 100dvh/);
-    assert.match(styles, /\.video-screen\[data-opening-sequence="true"\] #intro-video\s*\{[^}]*object-fit: contain/);
+    assert.match(styles, /\.video-screen\[data-opening-sequence="true"\]:not\(\[data-company-intro="true"\]\) #intro-video\s*\{[^}]*object-fit: contain/);
     assert.match(styles, /\.video-screen\[data-company-intro="true"\] \.video-brand,[\s\S]*?\.video-shade\s*\{\s*visibility: hidden/);
     assert.doesNotMatch(styles, /\.video-screen\[data-company-intro="true"\][^{]*\.rotate-device-prompt/);
     assert.doesNotMatch(styles, /\.title-screen|\.title-card|\.title-logo/);
@@ -1179,7 +1183,7 @@ test("RelicGrid branding is used in the game and hidden scenes stop rendering", 
     assert.match(styles, /\.button\[hidden\]\s*\{\s*display:\s*none\s*!important;/);
     assert.match(styles, /\.intro-video \{[\s\S]*?object-fit: contain/);
     assert.match(styles, /\.video-screen\[data-opening-sequence="true"\] \{[\s\S]*?position: fixed;[\s\S]*?height: 100dvh/);
-    assert.match(styles, /\.video-screen\[data-opening-sequence="true"\] #intro-video \{[\s\S]*?width: 100%;[\s\S]*?height: 100%;[\s\S]*?object-fit: contain/);
+    assert.match(styles, /\.video-screen\[data-opening-sequence="true"\]:not\(\[data-company-intro="true"\]\) #intro-video \{[\s\S]*?width: 100%;[\s\S]*?height: 100%;[\s\S]*?object-fit: contain/);
     assert.match(styles, /data-company-intro="true"\] #intro-video \{\s*object-fit: contain/);
     assert.match(styles, /\.video-screen\[data-opening-sequence="true"\] \.video-brand,[\s\S]*?\.video-shade\s*\{\s*visibility: hidden/);
     assert.match(styles, /\.video-skip-button \{[\s\S]*?top: calc\(/);

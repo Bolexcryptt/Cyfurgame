@@ -2089,7 +2089,7 @@ body {
 .video-screen[data-opening-sequence="true"] .video-shade {
     visibility: hidden;
 }
-.video-screen[data-opening-sequence="true"] #intro-video {
+.video-screen[data-opening-sequence="true"]:not([data-company-intro="true"]) #intro-video {
     inset: 0;
     width: 100%;
     height: 100%;
@@ -2101,7 +2101,9 @@ body {
     border-radius: 0;
     box-shadow: none;
 }
-.video-screen[data-company-intro="true"] #intro-video { object-fit: contain; }
+.video-screen[data-company-intro="true"] #intro-video {
+    object-fit: contain;
+}
 .video-screen[data-fullscreen-video="true"] {
     position: fixed;
     z-index: 20;
