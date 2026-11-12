@@ -714,6 +714,24 @@ test("NEXT LEVEL remains available during reward confirmation and shares the pen
     assert.match(clickHandler, /await startLevel\(number, true\)/);
     assert.match(app, /async function confirmPendingLevelCompletion\(pending\)/);
     assert.match(scene, /nextLevelButton\.disabled = level\.number >= levels\.length/);
+    const completionSave = app.slice(
+        app.indexOf("async function saveWalletLevelCompletion(detail)"),
+        app.indexOf("\nasync function saveWalletLevelCompletionAutomatically")
+    );
+    assert.doesNotMatch(completionSave, /refreshOwnProgress\(/);
+    assert.match(completionSave, /if \(!response\.ok \|\| result\.status !== "confirmed" \|\|[\s\S]*?rewardAmount/);
+    assert.doesNotMatch(completionSave, /if \(!response\.ok \|\| result\.status !== "confirmed" \|\|[\s\S]{0,100}balanceAmount/);
+    assert.match(app, /function renderHome\(\)[\s\S]*?void refreshOwnProgress\(\)\.catch/);
+});
+
+test("mirror undo restores only the last two board states", () => {
+    const scene = readFileSync(new URL("../script.js", import.meta.url), "utf8");
+    const html = readFileSync(new URL("../index.html", import.meta.url), "utf8");
+    assert.match(html, /id="undo-mirror"[^>]*disabled>UNDO/);
+    assert.match(scene, /function undoMirrorAction\(\)[\s\S]*?mirrorActionHistory\.pop\(\)[\s\S]*?createPlayerMirror\(mirror\.row, mirror\.col, mirror\.slash\)/);
+    assert.match(scene, /if \(mirrorActionHistory\.length > 2\) mirrorActionHistory\.shift\(\)/);
+    assert.match(scene, /mirrorActionHistory\.length = 0/);
+    assert.match(scene, /undoButton\?\.addEventListener\("click", undoMirrorAction\)/);
 });
 
 test("campaign difficulty ramps crystals and obstacles while mirror count stays bounded", () => {
@@ -833,6 +851,7 @@ test("startup plays company and player introductions, then game video, then open
     assert.match(styles, /\.video-screen\[data-fullscreen-video="true"\]\s*\{[^}]*position: fixed;[^}]*height: 100dvh/);
     assert.match(styles, /\.video-screen\[data-fullscreen-video="true"\] \.intro-video\s*\{[^}]*object-fit: contain/);
     assert.match(styles, /\.video-screen\[data-level-transition="true"\] #transition-video\s*\{\s*object-fit: cover/);
+    assert.match(styles, /\.video-screen\[data-campaign-ending="true"\] #transition-video\s*\{\s*object-fit: cover/);
     assert.match(html, /id="background-music"[^>]*loop/);
     assert.match(app, /backgroundMusic\.src = "music\.mp3"/);
     assert.doesNotMatch(html, /music\.wav/);
@@ -1178,6 +1197,9 @@ test("RelicGrid branding is used in the game and hidden scenes stop rendering", 
     assert.match(endingFlow, /await stopVideoPlayback\(transitionVideo\)/);
     assert.match(endingFlow, /videoSkip\.onclick = \(\) => void finish\(\)/);
     assert.match(endingFlow, /transitionVideo\.onended = \(\) => void finish\(\)/);
+    assert.match(endingFlow, /videoScreen\.dataset\.fullscreenVideo = "true"/);
+    assert.match(endingFlow, /playVideoInOrientation\(transitionVideo,[\s\S]*?undefined, "landscape"\)/);
+    assert.match(endingFlow, /videoScreen\.dataset\.campaignEnding = "true"/);
     assert.match(app, /videoOrientationQuery = window\.matchMedia\("\(max-width: 900px\) and \(orientation: portrait\)"\)/);
     assert.match(app, /async function playVideoInOrientation\(video, onError, onPlaybackStarted, orientation = "portrait"\)/);
     assert.doesNotMatch(html, /title-screen|title-continue-button|PLAY NOW/);
@@ -1207,10 +1229,9 @@ test("RelicGrid branding is used in the game and hidden scenes stop rendering", 
     assert.match(app, /function fitVideoFrame\(video\)/);
     assert.match(html, /id="intro-video"[^>]*playsinline/);
     assert.match(app, /introVideo\.src = "gamevideo\.mp4"/);
-    assert.match(endingFlow, /playVideoInOrientation\(transitionVideo,[\s\S]*?undefined, "landscape"\)/);
     assert.match(app, /function playCampaignEnding\(\)/);
     assert.match(app, /transitionVideo\.src = "theend\.mp4"/);
-    assert.doesNotMatch(app, /if \(number === 99\) playCampaignEnding\(\)/);
+    assert.match(app, /if \(number === 99\) playCampaignEnding\(\)/);
     assert.equal(existsSync(new URL("../levels1.mp4", import.meta.url)), true);
     assert.equal(existsSync(new URL("../levels2.mp4", import.meta.url)), true);
     assert.equal(existsSync(new URL("../theend.mp4", import.meta.url)), true);

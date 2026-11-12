@@ -16,6 +16,7 @@ const statusTitle = document.getElementById("game-status-title");
 const statusText = document.getElementById("game-status");
 const traceButton = document.getElementById("trace-beam");
 const resetButton = document.getElementById("reset-game");
+const undoButton = document.getElementById("undo-mirror");
 const completionSummary = document.getElementById("completion-summary");
 const gameHud = document.querySelector(".game-hud");
 const sectorMapPanel = document.querySelector(".hud-map-panel");
@@ -166,6 +167,7 @@ function startScene() {
     const tileTargets = [];
     const sourceTargets = [];
     const placedMirrors = new Map();
+    const mirrorActionHistory = [];
     const levelCrystals = new Map();
     const raycaster = new THREE.Raycaster();
     const pointerNdc = new THREE.Vector2();
@@ -1653,6 +1655,7 @@ function startScene() {
         const mapGrid = document.getElementById("hud-map-grid");
         const objectiveCrystals = document.getElementById("hud-objective-crystals");
         const objectiveBattery = document.getElementById("hud-objective-battery");
+        if (undoButton) undoButton.disabled = mirrorActionHistory.length === 0 || tracing || corePowered;
         if (!crystalCount || !mirrorCountLabel || !crystalFill || !mirrorFill ||
             !laserState || !batteryState || !coreIndicator || !telemetryLevel ||
             !telemetryCrystals || !telemetryCrystalFill || !telemetryMirrors ||
@@ -1826,6 +1829,24 @@ function startScene() {
         window.dispatchEvent(new CustomEvent("fluxgrid:level-complete", { detail: pending.detail }));
     }
 
+    function undoMirrorAction() {
+        if (tracing || corePowered || mirrorActionHistory.length === 0) return;
+        const previousMirrors = mirrorActionHistory.pop();
+        placedMirrors.clear();
+        clearObjectGroup(mirrorGroup);
+        for (const mirror of previousMirrors) {
+            createPlayerMirror(mirror.row, mirror.col, mirror.slash);
+        }
+        resetCrystalStates();
+        clearObjectGroup(activeBeamGroup);
+        beamSegments.length = 0;
+        previewRoute = placedMirrors.size ? traceLight() : null;
+        if (previewRoute) drawActiveRoute(previewRoute, previewRoute.segments.length, true);
+        environmentNetwork.visible = true;
+        updateTacticalHud();
+        setFeedback("Undid the last mirror action.", "ready");
+    }
+
     function placeOrRotateMirror(row, col) {
         if (tracing || corePowered) return;
         if ((row === GRID.start.row && col === GRID.start.col) ||
@@ -1843,6 +1864,14 @@ function startScene() {
             setFeedback(`Mirror limit reached (${activeLevel.par}). Tap an existing mirror to rotate it.`, "miss");
             return;
         }
+        mirrorActionHistory.push(
+            [...placedMirrors.values()].map(({ row: mirrorRow, col: mirrorCol, slash }) => ({
+                row: mirrorRow,
+                col: mirrorCol,
+                slash
+            }))
+        );
+        if (mirrorActionHistory.length > 2) mirrorActionHistory.shift();
         startSolveTimer();
         resetCrystalStates();
         if (existing) {
@@ -1977,6 +2006,7 @@ function startScene() {
         launchDirection = activeLevel.start.direction;
         GRID.start.col = launchDirection === 1 ? -1 : GRID.cols;
         updateSourceMarker();
+        mirrorActionHistory.length = 0;
         placedMirrors.clear();
         clearObjectGroup(mirrorGroup);
         clearObjectGroup(activeBeamGroup);
@@ -2061,6 +2091,7 @@ function startScene() {
 
         traceButton.addEventListener("click", animateTrace);
         resetButton.addEventListener("click", resetGame);
+        undoButton?.addEventListener("click", undoMirrorAction);
     }
 
     function createLooseSlabs() {

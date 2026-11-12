@@ -173,6 +173,7 @@ let walletStatusSnapshot = null;
 let levelsGloballyLocked = true;
 let activeLevelEntryCostCredits = null;
 let levelStartInProgress = false;
+let nextLevelAdvanceInProgress = false;
 let withdrawalSystemReady = false;
 let withdrawalAvailableCredits = "0";
 let withdrawalHasActiveRequest = false;
@@ -381,6 +382,7 @@ function getContinueLevel() {
 }
 
 async function refreshOwnProgress() {
+    if (!authUser) return;
     const { data, error } = await supabase
         .from("level_completions")
         .select("level_number")
@@ -974,6 +976,9 @@ function renderHome() {
     showScreen("home-screen");
     void refreshGameConfig();
     void refreshWallet();
+    void refreshOwnProgress().catch((error) => {
+        console.error("Saved level progress could not be refreshed on the home screen.", error);
+    });
     void refreshServerGamePoints();
 }
 
@@ -2358,6 +2363,7 @@ function playCampaignEnding() {
         }
         finished = true;
         delete videoScreen.dataset.fullscreenVideo;
+        delete videoScreen.dataset.campaignEnding;
         transitionVideo.hidden = true;
         videoSkip.hidden = true;
         videoSkip.onclick = null;
@@ -2367,6 +2373,7 @@ function playCampaignEnding() {
     const offerContinue = (message) => {
         void stopVideoPlayback(transitionVideo);
         delete videoScreen.dataset.fullscreenVideo;
+        delete videoScreen.dataset.campaignEnding;
         transitionVideo.hidden = true;
         videoCaption.textContent = message;
         videoAction.textContent = "CONTINUE →";
@@ -2376,6 +2383,7 @@ function playCampaignEnding() {
 
     showScreen("video-screen");
     videoScreen.dataset.fullscreenVideo = "true";
+    videoScreen.dataset.campaignEnding = "true";
     introVideo.pause();
     introVideo.hidden = true;
     transitionVideo.pause();
@@ -2397,17 +2405,20 @@ function playCampaignEnding() {
     void playVideoInOrientation(transitionVideo, (error) => {
         console.warn("Campaign ending video could not autoplay.", error);
         delete videoScreen.dataset.fullscreenVideo;
+        delete videoScreen.dataset.campaignEnding;
         transitionVideo.hidden = true;
         videoCaption.textContent = "Tap to play the final transmission.";
         videoAction.textContent = "PLAY ENDING →";
         videoAction.hidden = false;
         videoAction.onclick = () => {
             videoScreen.dataset.fullscreenVideo = "true";
+            videoScreen.dataset.campaignEnding = "true";
             transitionVideo.hidden = false;
             videoAction.hidden = true;
             void playVideoInOrientation(transitionVideo, (retryError) => {
                 console.error("Campaign ending video could not start after interaction.", retryError);
                 delete videoScreen.dataset.fullscreenVideo;
+                delete videoScreen.dataset.campaignEnding;
                 transitionVideo.hidden = true;
                 offerContinue("The campaign ending video could not be played.");
             }, undefined, "landscape");
@@ -2725,8 +2736,14 @@ document.getElementById("continue-game").addEventListener("click", () => {
 document.getElementById("next-level").addEventListener("click", async (event) => {
     const button = event.currentTarget;
     const number = Number(button.dataset.nextLevel);
-    if (!Number.isInteger(number) || number < 1 || number > 99 || button.disabled) return;
-    button.disabled = true;
+    if (!Number.isInteger(number) || number < 1 || number > 99 ||
+        button.disabled || nextLevelAdvanceInProgress) return;
+    nextLevelAdvanceInProgress = true;
+    button.textContent = pendingCompletionConfirmation?.number === number - 1
+        ? "SAVING RESULT…"
+        : "OPENING NEXT LEVEL…";
+    document.getElementById("game-status").textContent =
+        "Preparing the next level. Wallet balance refreshes when you return home.";
     try {
         const pending = pendingCompletionConfirmation;
         if (pending?.number === number - 1) {
@@ -2753,7 +2770,8 @@ document.getElementById("next-level").addEventListener("click", async (event) =>
         console.error(`Level ${number} could not be started from the completion screen.`, error);
         document.getElementById("game-status").textContent = error.message;
     } finally {
-        button.disabled = Number(button.dataset.nextLevel) > 99;
+        nextLevelAdvanceInProgress = false;
+        if (Number(button.dataset.nextLevel) <= 99) button.textContent = "NEXT LEVEL →";
     }
 });
 document.getElementById("home-levels-toggle").addEventListener("click", (event) => {
@@ -2878,8 +2896,7 @@ async function saveWalletLevelCompletion(detail) {
     const rewardAmount = gamePointsSession ? result.rewardPoints : result.rewardCredits;
     const balanceAmount = gamePointsSession ? result.balancePoints : result.balanceCredits;
     if (!response.ok || result.status !== "confirmed" ||
-        !/^\d+$/.test(String(rewardAmount)) ||
-        !/^\d+$/.test(String(balanceAmount))) {
+        !/^\d+$/.test(String(rewardAmount))) {
         const diagnostic = result.diagnosticCode
             ? ` (${result.diagnosticCode}${result.stage ? ` at ${result.stage}` : ""})`
             : "";
@@ -2894,10 +2911,10 @@ async function saveWalletLevelCompletion(detail) {
             `${(result.elapsedMilliseconds / 1000).toFixed(1)} s`;
     }
     if (gamePointsSession) {
-        serverGamePoints = String(balanceAmount);
-        if (!/^\d+$/.test(serverGamePoints)) {
+        if (!/^\d+$/.test(String(balanceAmount))) {
             throw new Error("The completion response contained an invalid game-points balance.");
         }
+        serverGamePoints = String(balanceAmount);
         serverGamePointsVerified = true;
         renderLevels();
         player.completedLevels = [...new Set([...player.completedLevels, detail.number])].sort((a, b) => a - b);
@@ -2905,16 +2922,8 @@ async function saveWalletLevelCompletion(detail) {
         player.lastLevel = Math.min(99, detail.number + 1);
         savePlayer();
     } else {
-        document.getElementById("wallet-balance").textContent = formatCredits(balanceAmount);
-        document.getElementById("wallet-balance-state").textContent = "CREDITS · BACKEND VERIFIED";
-        walletStatusSnapshot = {
-            ...walletStatusSnapshot,
-            balanceCredits: String(balanceAmount),
-            balanceVerified: true
-        };
         document.getElementById("completion-balance-note").textContent =
-            `${formatCredits(balanceAmount)} off-chain wallet credits · backend verified`;
-        renderLevels();
+            "Wallet balance refreshes when you return home.";
     }
     const displayedRewardAmount = result.duplicate ? "0" : rewardAmount;
     const rewardLabel = document.getElementById("completion-reward-label");
@@ -2929,15 +2938,11 @@ async function saveWalletLevelCompletion(detail) {
         : displayedRewardAmount === "0"
             ? "No reward for this star rating"
             : "Credited to available balance";
-    document.getElementById("completion-balance").textContent = gamePointsSession
-        ? `${formatCredits(balanceAmount)} points`
-        : `${formatCredits(balanceAmount)} credits`;
-    document.getElementById("completion-balance-note").textContent =
-        gamePointsSession
-            ? "Available game points"
-            : "Available wallet credits";
-
-    await refreshOwnProgress();
+    if (gamePointsSession) {
+        document.getElementById("completion-balance").textContent =
+            `${formatCredits(balanceAmount)} points`;
+        document.getElementById("completion-balance-note").textContent = "Available game points";
+    }
     backendStatus = "Connected to the RelicGrid leaderboard.";
     return result;
 }
@@ -3067,6 +3072,7 @@ window.addEventListener("fluxgrid:level-complete", async (event) => {
             nextLevelButton.disabled = number >= 99;
             nextLevelButton.dataset.nextLevel = String(number + 1);
             nextLevelButton.textContent = number >= 99 ? "CAMPAIGN COMPLETE" : "NEXT LEVEL →";
+            if (number === 99) playCampaignEnding();
             return;
         }
     } else {
@@ -3077,6 +3083,7 @@ window.addEventListener("fluxgrid:level-complete", async (event) => {
         nextLevelButton.textContent = number >= 99 ? "PRACTICE COMPLETE" : "NEXT LEVEL →";
         document.getElementById("game-status").textContent =
             "Practice complete. No credits, leaderboard points, or saved progress were awarded.";
+        if (number === 99) playCampaignEnding();
         return;
     }
 
@@ -3086,6 +3093,7 @@ window.addEventListener("fluxgrid:level-complete", async (event) => {
     nextLevelButton.dataset.nextLevel = String(number + 1);
     nextLevelButton.textContent = number >= 99 ? "CAMPAIGN COMPLETE" : "NEXT LEVEL →";
     renderProfile();
+    if (number === 99) playCampaignEnding();
 });
 
 backendReady = initializeBackend();
