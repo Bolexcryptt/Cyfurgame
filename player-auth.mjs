@@ -51,13 +51,23 @@ export function hydratePlayerFromAuthenticatedAccount(player, authUser, profile,
     const completed = new Set(completedLevels);
     let nextLevel = 1;
     while (completed.has(nextLevel) && nextLevel < 99) nextLevel += 1;
+    const skippedLevels = sameIdentity && Array.isArray(player.skippedLevels)
+        ? [...new Set(player.skippedLevels.filter((level) =>
+            Number.isInteger(level) && level >= 1 && level < 99 && !completed.has(level)
+        ))]
+        : [];
+    const nextAfterSkip = skippedLevels.reduce(
+        (next, level) => Math.max(next, level + 1),
+        1
+    );
 
     return {
         ...player,
         name: profile.display_name || (sameIdentity ? player.name : ""),
         playerId: authUser.id,
         completedLevels,
-        unlockedLevel: nextLevel,
+        skippedLevels,
+        unlockedLevel: Math.max(nextLevel, nextAfterSkip),
         lastLevel: sameIdentity
             ? Math.min(99, Math.max(1, Number(player.lastLevel) || nextLevel))
             : nextLevel,

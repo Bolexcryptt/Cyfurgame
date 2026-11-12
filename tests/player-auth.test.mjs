@@ -161,6 +161,45 @@ test("same authenticated account keeps local-only settings but server progress s
     assert.equal(hydrated.tutorialSeen, true);
 });
 
+test("skipped-level unlocks survive account refresh and do not cross player identities", () => {
+    const samePlayer = hydratePlayerFromAuthenticatedAccount({
+        name: "Local callsign",
+        playerId,
+        completedLevels: [1],
+        skippedLevels: [2],
+        unlockedLevel: 3,
+        lastLevel: 2,
+        transitionMilestonesPlayed: []
+    }, {
+        id: playerId,
+        is_anonymous: true
+    }, {
+        display_name: ""
+    }, [1]);
+
+    assert.deepEqual(samePlayer.skippedLevels, [2]);
+    assert.equal(samePlayer.unlockedLevel, 3);
+    assert.equal(samePlayer.lastLevel, 2);
+
+    const otherPlayer = hydratePlayerFromAuthenticatedAccount({
+        name: "Another pilot",
+        playerId: "different-local-identity",
+        skippedLevels: [2],
+        unlockedLevel: 3,
+        lastLevel: 3,
+        transitionMilestonesPlayed: []
+    }, {
+        id: playerId,
+        is_anonymous: false
+    }, {
+        display_name: "Server Pilot"
+    }, []);
+
+    assert.deepEqual(otherPlayer.skippedLevels, []);
+    assert.equal(otherPlayer.unlockedLevel, 1);
+    assert.equal(otherPlayer.lastLevel, 1);
+});
+
 test("an invalid saved session fails closed instead of silently creating another player", async () => {
     let anonymousSignIns = 0;
     const auth = {

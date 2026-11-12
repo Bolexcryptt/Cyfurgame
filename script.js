@@ -17,6 +17,7 @@ const statusText = document.getElementById("game-status");
 const traceButton = document.getElementById("trace-beam");
 const resetButton = document.getElementById("reset-game");
 const undoButton = document.getElementById("undo-mirror");
+const skipLevelButton = document.getElementById("skip-level");
 const completionSummary = document.getElementById("completion-summary");
 const gameHud = document.querySelector(".game-hud");
 const sectorMapPanel = document.querySelector(".hud-map-panel");
@@ -182,6 +183,7 @@ function startScene() {
     let corePowered = false;
     let coreActivatedAt = null;
     let pendingLevelCompletion = null;
+    let skipLevelPending = false;
     let tracing = false;
     let launchDirection = 1;
     let firstLevelTutorial = false;
@@ -1654,6 +1656,8 @@ function startScene() {
 
     function showCompletionSummary(level, elapsedMilliseconds, result) {
         sectorMapPanel.hidden = true;
+        skipLevelButton.hidden = true;
+        skipLevelButton.disabled = true;
         const stars = result.stars;
         document.getElementById("completion-stars").textContent = `${stars} / 3`;
         document.getElementById("completion-star-icons").textContent = `${"★".repeat(stars)}${"☆".repeat(3 - stars)}`;
@@ -1697,7 +1701,7 @@ function startScene() {
     }
 
     function finishLevelCompletion(pending) {
-        if (pendingLevelCompletion !== pending) return;
+        if (pendingLevelCompletion !== pending || skipLevelPending) return;
         pendingLevelCompletion = null;
         showCompletionSummary(pending.level, pending.elapsedMilliseconds, pending.result);
         const starLabel = pending.result.stars === 3
@@ -1876,6 +1880,7 @@ function startScene() {
     }
 
     function resetGame() {
+        skipLevelPending = false;
         tracing = false;
         traceResult = null;
         if (pendingLevelCompletion) {
@@ -1889,6 +1894,8 @@ function startScene() {
         const nextLevelButton = document.getElementById("next-level");
         nextLevelButton.hidden = true;
         nextLevelButton.disabled = true;
+        skipLevelButton.hidden = activeLevel.number >= levels.length;
+        skipLevelButton.disabled = !walletLevelSessionId || activeLevel.number >= levels.length;
         resetCrystalStates();
         delete gameHud.dataset.completed;
         launchDirection = activeLevel.start.direction;
@@ -2674,6 +2681,14 @@ function startScene() {
     window.addEventListener("fluxgrid:load-level", (event) => {
         loadLevel(event.detail);
     });
+    window.addEventListener("fluxgrid:skip-level-pending", () => {
+        skipLevelPending = true;
+        skipLevelButton.disabled = true;
+    });
+    window.addEventListener("fluxgrid:skip-level-cancelled", () => {
+        skipLevelPending = false;
+        skipLevelButton.disabled = !walletLevelSessionId || activeLevel.number >= levels.length;
+    });
 
     const clock = new THREE.Clock();
     function scheduleRender() {
@@ -2803,7 +2818,7 @@ function startScene() {
             activationRingMaterials.forEach((material, index) => {
                 material.opacity = Math.max(0, 0.46 * (1 - activationProgress) - index * 0.035);
             });
-            if (activationProgress >= 1 && pendingLevelCompletion) {
+            if (activationProgress >= 1 && pendingLevelCompletion && !skipLevelPending) {
                 finishLevelCompletion(pendingLevelCompletion);
             }
         } else {

@@ -774,6 +774,49 @@ test("NEXT LEVEL advances without waiting for a completion RPC or server timer",
     assert.match(app, /function renderHome\(\)[\s\S]*?void refreshOwnProgress\(\)\.catch/);
 });
 
+test("SKIP LEVEL requires paid next-level entry, spends through the wallet path, and records no reward", () => {
+    const app = readFileSync(new URL("../app.js", import.meta.url), "utf8");
+    const scene = readFileSync(new URL("../script.js", import.meta.url), "utf8");
+    const html = readFileSync(new URL("../index.html", import.meta.url), "utf8");
+    const skipHandler = app.slice(
+        app.indexOf('document.getElementById("skip-level").addEventListener'),
+        app.indexOf('\ndocument.getElementById("next-level").addEventListener')
+    );
+    const startLevel = app.slice(
+        app.indexOf("async function startLevel"),
+        app.indexOf("\nfunction leaveGameplay")
+    );
+    const controlMarkup = html.slice(
+        html.indexOf('<div class="game-actions">'),
+        html.indexOf("</div>", html.indexOf('<div class="game-actions">'))
+    );
+    const controlsStyle = readFileSync(new URL("../style.css", import.meta.url), "utf8");
+
+    assert.match(html, /id="skip-level"[^>]*>SKIP LEVEL/);
+    assert.ok(controlMarkup.indexOf('id="undo-mirror"') < controlMarkup.indexOf('id="skip-level"'));
+    assert.ok(controlMarkup.indexOf('id="skip-level"') < controlMarkup.indexOf('id="reset-game"'));
+    assert.match(controlsStyle, /grid-template-areas:[\s\S]*?"undo skip"\s*"reset reset"\s*"power power"/);
+    assert.match(skipHandler, /skipLevelInProgress \|\| nextLevelAdvanceInProgress \|\| levelStartInProgress/);
+    assert.match(skipHandler, /!activeWalletLevelSessionId/);
+    assert.match(skipHandler, /await startLevel\(nextLevelNumber, true, true\)/);
+    assert.ok(skipHandler.indexOf("await startLevel(nextLevelNumber, true, true)") <
+        skipHandler.indexOf("player.skippedLevels ="));
+    assert.match(skipHandler, /player\.unlockedLevel = Math\.max\(player\.unlockedLevel, nextLevelNumber\)/);
+    assert.match(skipHandler, /No stars or reward were awarded/);
+    assert.doesNotMatch(skipHandler, /awardLocalGameReward|completedLevels\s*=/);
+    assert.match(startLevel, /if \(requirePaidEntry && entry\.practice\)/);
+    assert.match(startLevel, /skipButton\.hidden = number >= 99;\s*skipButton\.disabled = entry\.practice \|\| number >= 99/);
+    assert.match(startLevel, /const entry = await requestLevelEntry\(number\)/);
+    assert.match(app, /skippedLevels: Array\.isArray\(parsed\.skippedLevels\)/);
+    assert.match(app, /cell\.classList\.add\("is-skipped"\)/);
+    assert.match(scene, /fluxgrid:skip-level-pending/);
+    assert.match(scene, /fluxgrid:skip-level-cancelled/);
+    assert.match(scene, /pendingLevelCompletion !== pending \|\| skipLevelPending/);
+    assert.match(app, /window\.addEventListener\("fluxgrid:level-complete", \(event\) => \{\s*if \(skipLevelInProgress\) return/);
+    const walletMigration = readFileSync(new URL("../supabase-wallet-local-completions.sql", import.meta.url), "utf8");
+    assert.match(walletMigration, /apply_wallet_ledger_entry\(\s*p_player_id,\s*'game_entry',\s*-v_cost/);
+});
+
 test("local reward storage and completion summary are explicitly non-withdrawable", () => {
     const app = readFileSync(new URL("../app.js", import.meta.url), "utf8");
     const html = readFileSync(new URL("../index.html", import.meta.url), "utf8");
@@ -819,20 +862,18 @@ test("replayed levels get distinct, validated layouts without changing level dif
     for (const original of levels) {
         const baseKey = getLevelLayoutKey(original);
         const previousLayoutKeys = [baseKey];
-        const first = generateLevelVariant(original.number, 100000 + original.number, previousLayoutKeys);
-        const firstKey = getLevelLayoutKey(first);
-        const second = generateLevelVariant(
-            original.number,
-            200000 + original.number,
-            [...previousLayoutKeys, firstKey]
-        );
-        const layouts = [first, second];
         const seenLayoutKeys = new Set(previousLayoutKeys);
 
-        for (const variant of layouts) {
+        for (let replay = 0; replay < 4; replay++) {
+            const variant = generateLevelVariant(
+                original.number,
+                (replay + 1) * 100000 + original.number,
+                previousLayoutKeys
+            );
             const layoutKey = getLevelLayoutKey(variant);
             assert.equal(seenLayoutKeys.has(layoutKey), false);
             seenLayoutKeys.add(layoutKey);
+            previousLayoutKeys.push(layoutKey);
             assert.equal(variant.number, original.number);
             assert.equal(variant.par, original.par);
             assert.equal(variant.crystals.length, original.crystals.length);
@@ -870,8 +911,8 @@ test("replayed levels get distinct, validated layouts without changing level dif
         app.indexOf("async function startLevel"),
         app.indexOf("\nfunction leaveGameplay")
     );
-    assert.match(startLevel, /generateLevelVariant\(\s*number,\s*createLevelVariantSeed\(\),\s*layoutKey \? \[layoutKey\] : \[\]/);
-    assert.match(startLevel, /player\.lastLevelLayouts\[String\(number\)\] = getLevelLayoutKey\(level\)/);
+    assert.match(startLevel, /player\.levelLayoutHistory\[levelKey\] = \[\.\.\.new Set\(\[\.\.\.previousLayoutKeys, layoutKey\]\)\]/);
+    assert.match(app, /levelLayoutHistory: parsed\.levelLayoutHistory/);
 });
 
 test("ground decoration has no static linework while the live laser path remains", () => {
@@ -982,7 +1023,7 @@ test("startup plays company and player introductions, then game video, then open
         initializeBackend.indexOf("hydratePlayerFromAuthenticatedAccount("));
     assert.ok(initializeBackend.indexOf("hydratePlayerFromAuthenticatedAccount(") <
         initializeBackend.indexOf("await refreshOwnProgress();"));
-    assert.match(app, /async function startLevel\(number, resumeMusic = false\) \{\s*if \(levelStartInProgress\) return/);
+    assert.match(app, /async function startLevel\(number, resumeMusic = false, requirePaidEntry = false\) \{\s*if \(levelStartInProgress\) return/);
     assert.match(app, /window\.addEventListener\("fluxgrid:core-activation-start", pauseMusic\)/);
     assert.match(app, /window\.addEventListener\("fluxgrid:core-activation-cancel", startMusic\)/);
 
@@ -1006,7 +1047,7 @@ test("startup plays company and player introductions, then game video, then open
     assert.match(html, /LEVEL COMPLETED[\s\S]*ENTRY FEE[\s\S]*STAR RATING[\s\S]*LOCAL GAME REWARD[\s\S]*SOLVE TIME[\s\S]*LOCAL GAME REWARD BALANCE/);
 
     const scene = readFileSync(new URL("../script.js", import.meta.url), "utf8");
-    const activationFinish = scene.indexOf("if (activationProgress >= 1 && pendingLevelCompletion)");
+    const activationFinish = scene.indexOf("if (activationProgress >= 1 && pendingLevelCompletion && !skipLevelPending)");
     const finishCall = scene.indexOf("finishLevelCompletion(pendingLevelCompletion)", activationFinish);
     assert.ok(activationFinish >= 0);
     assert.ok(finishCall > activationFinish);
@@ -1014,6 +1055,27 @@ test("startup plays company and player introductions, then game video, then open
     assert.match(scene, /if \(pendingLevelCompletion\) \{\s*window\.dispatchEvent\(new CustomEvent\("fluxgrid:core-activation-cancel"\)\)/);
     assert.match(scene, /renderer\.shadowMap\.enabled = true/);
     assert.match(scene, /new THREE\.PointLight\(\s*crystalColors\[definition\.inputColor\]/);
+});
+
+test("campaign ending finishes on the landscape company-logo thank-you screen", () => {
+    const app = readFileSync(new URL("../app.js", import.meta.url), "utf8");
+    const html = readFileSync(new URL("../index.html", import.meta.url), "utf8");
+    const styles = readFileSync(new URL("../style.css", import.meta.url), "utf8");
+    const ending = app.slice(
+        app.indexOf("function playCampaignEnding"),
+        app.indexOf("\nasync function playLevelTransition")
+    );
+
+    assert.equal(existsSync(new URL("../endgamelogo.png", import.meta.url)), true);
+    assert.match(html, /id="video-screen"[\s\S]*id="campaign-thank-you"[\s\S]*<\/section>\s*<section id="name-screen"/);
+    assert.match(html, /id="campaign-thank-you"[\s\S]*?<img src="endgamelogo\.png" alt="CY-FUR Labs Inc\.">[\s\S]*?<p>Thanks for playing<\/p>/);
+    assert.match(ending, /await stopVideoPlayback\(transitionVideo, false\)/);
+    assert.match(ending, /videoScreen\.dataset\.campaignThankYou = "true"/);
+    assert.match(ending, /thankYou\.hidden = false/);
+    assert.match(app, /async function lockCampaignThankYouLandscape\(\)[\s\S]*?ScreenOrientation\.lock\(\{ orientation: "landscape" \}\)/);
+    assert.doesNotMatch(ending.slice(ending.indexOf("const finish"), ending.indexOf("const offerContinue")), /showNameOrHome/);
+    assert.match(styles, /\.video-screen\[data-campaign-thank-you="true"\] \.campaign-thank-you[\s\S]*?background: #000/);
+    assert.match(styles, /\.campaign-thank-you p[\s\S]*?color: #fff/);
 });
 
 test("wallet API publishes the same exchange rate and keeps deposits disabled", async () => {
@@ -1340,7 +1402,7 @@ test("RelicGrid branding is used in the game and hidden scenes stop rendering", 
         app.indexOf("function playCampaignEnding"),
         app.indexOf("\nasync function playLevelTransition")
     );
-    assert.match(endingFlow, /await stopVideoPlayback\(transitionVideo\)/);
+    assert.match(endingFlow, /await stopVideoPlayback\(transitionVideo, false\)/);
     assert.match(endingFlow, /videoSkip\.onclick = \(\) => void finish\(\)/);
     assert.match(endingFlow, /transitionVideo\.onended = \(\) => void finish\(\)/);
     assert.match(endingFlow, /videoScreen\.dataset\.fullscreenVideo = "true"/);
@@ -1484,7 +1546,7 @@ test("Android RelicGrid app supports landscape videos and restores portrait", ()
     assert.match(app, /ScreenOrientation\.lock\(\{ orientation \}\)/);
     assert.match(app, /ScreenOrientation\.lock\(\{ orientation: "portrait" \}\)/);
     assert.doesNotMatch(app, /ScreenOrientation\.unlock\(/);
-    assert.match(app, /async function stopVideoPlayback\(video\)[\s\S]*?return restorePortraitOrientation\(\)/);
+    assert.match(app, /async function stopVideoPlayback\(video, restoreOrientation = true\)[\s\S]*?return restoreOrientation \? restorePortraitOrientation\(\) : true/);
     assert.match(app, /async function failActiveVideoPlayback\(video, error\)[\s\S]*?await stopVideoPlayback\(video\)/);
     assert.match(app, /await ScreenOrientation\.lock\(\{ orientation \}\)/);
     assert.match(app, /await waitForNativeOrientation\(orientation\)/);

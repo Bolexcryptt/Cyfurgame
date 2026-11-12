@@ -118,7 +118,9 @@ function readPlayer() {
             tutorialSeen: false,
             unlockedLevel: 1,
             completedLevels: [],
+            skippedLevels: [],
             lastLevelLayouts: {},
+            levelLayoutHistory: {},
             localGameRewardEntries: [],
             transitionMilestonesPlayed: [],
             lastLevel: 1
@@ -136,6 +138,10 @@ function readPlayer() {
             completedLevels: Array.isArray(parsed.completedLevels)
                 ? [...new Set(parsed.completedLevels.filter((level) => Number.isInteger(level) && level >= 1 && level <= 99))]
                 : [],
+            skippedLevels: Array.isArray(parsed.skippedLevels)
+                ? [...new Set(parsed.skippedLevels.filter((level) =>
+                    Number.isInteger(level) && level >= 1 && level < 99))]
+                : [],
             lastLevelLayouts: parsed.lastLevelLayouts &&
                 typeof parsed.lastLevelLayouts === "object" &&
                 !Array.isArray(parsed.lastLevelLayouts)
@@ -145,6 +151,19 @@ function readPlayer() {
                     Number(level) <= 99 &&
                     typeof key === "string" &&
                     key.length <= 10000))
+                : {},
+            levelLayoutHistory: parsed.levelLayoutHistory &&
+                typeof parsed.levelLayoutHistory === "object" &&
+                !Array.isArray(parsed.levelLayoutHistory)
+                ? Object.fromEntries(Object.entries(parsed.levelLayoutHistory).filter(([level, keys]) =>
+                    Number.isInteger(Number(level)) &&
+                    Number(level) >= 1 &&
+                    Number(level) <= 99 &&
+                    Array.isArray(keys)
+                ).map(([level, keys]) => [
+                    level,
+                    [...new Set(keys.filter((key) => typeof key === "string" && key.length <= 10000))]
+                ]))
                 : {},
             localGameRewardEntries: normalizeLocalGameRewardEntries(parsed.localGameRewardEntries),
             transitionMilestonesPlayed: Array.isArray(parsed.transitionMilestonesPlayed)
@@ -165,7 +184,9 @@ function readPlayer() {
             tutorialSeen: false,
             unlockedLevel: 1,
             completedLevels: [],
+            skippedLevels: [],
             lastLevelLayouts: {},
+            levelLayoutHistory: {},
             localGameRewardEntries: [],
             transitionMilestonesPlayed: [],
             lastLevel: 1
@@ -196,6 +217,7 @@ let levelsGloballyLocked = true;
 let activeLevelEntryCostCredits = null;
 let levelStartInProgress = false;
 let nextLevelAdvanceInProgress = false;
+let skipLevelInProgress = false;
 let withdrawalSystemReady = false;
 let withdrawalAvailableCredits = "0";
 let withdrawalHasActiveRequest = false;
@@ -277,13 +299,29 @@ async function waitForNativeOrientation(expectedOrientation) {
     throw new Error(`Native screen did not enter ${expectedOrientation} orientation (reported ${currentOrientation}).`);
 }
 
-async function stopVideoPlayback(video) {
+async function stopVideoPlayback(video, restoreOrientation = true) {
     if (activeVideoPlayback && activeVideoPlayback.video !== video) return true;
     video.pause();
     if (activeVideoPlayback?.video === video) activeVideoPlayback = null;
     rotateDevicePrompt.hidden = true;
     delete videoScreen.dataset.orientationBlocked;
-    return restorePortraitOrientation();
+    return restoreOrientation ? restorePortraitOrientation() : true;
+}
+
+async function lockCampaignThankYouLandscape() {
+    if (!Capacitor.isNativePlatform()) return !videoOrientationQuery.matches;
+    try {
+        if (Capacitor.getPlatform() === "android") {
+            await ImmersiveMode.setEnabled({ enabled: true });
+            await StatusBar.hide();
+        }
+        await ScreenOrientation.lock({ orientation: "landscape" });
+        await waitForNativeOrientation("landscape");
+        return true;
+    } catch (error) {
+        console.error("Campaign thank-you screen could not enter landscape orientation.", error);
+        return false;
+    }
 }
 
 async function failActiveVideoPlayback(video, error) {
@@ -587,10 +625,12 @@ function renderProfile() {
     for (const level of levels) {
         const cell = document.createElement("span");
         const completedLevel = player.completedLevels.includes(level.number);
+        const skippedLevel = player.skippedLevels.includes(level.number);
         const currentLevel = level.number === continueLevel && !completedLevel;
         cell.className = `campaign-map-cell${completedLevel ? " is-cleared" : ""}${currentLevel ? " is-current" : ""}`;
+        if (skippedLevel && !completedLevel) cell.classList.add("is-skipped");
         cell.title = `Sector ${String(level.number).padStart(2, "0")}: ${
-            completedLevel ? "cleared" : currentLevel ? "next sector" : "available"
+            completedLevel ? "cleared" : skippedLevel ? "skipped" : currentLevel ? "next sector" : "available"
         }`;
         cell.setAttribute("aria-hidden", "true");
         campaignMapCells.append(cell);
@@ -965,6 +1005,7 @@ function renderLevels() {
     const continueLevel = getContinueLevel();
     for (const level of levels) {
         const completed = player.completedLevels.includes(level.number);
+        const skipped = player.skippedLevels.includes(level.number);
         const current = level.number === continueLevel && !completed;
         const item = document.createElement("li");
         const button = document.createElement("button");
@@ -991,7 +1032,7 @@ function renderLevels() {
             BigInt(walletBalance) >= BigInt(entryCostCredits);
         const levelLocked = levelsGloballyLocked;
         button.className =
-            `${levelLocked ? "is-locked" : "is-unlocked"}${completed ? " is-complete" : ""}${current ? " is-current" : ""}`;
+            `${levelLocked ? "is-locked" : "is-unlocked"}${completed ? " is-complete" : ""}${skipped ? " is-skipped" : ""}${current ? " is-current" : ""}`;
         button.disabled = levelLocked;
         const entryCost = document.createElement("small");
         entryCost.className = "level-cost";
@@ -1005,7 +1046,9 @@ function renderLevels() {
         detail.append(title, meta);
         const badge = document.createElement("span");
         badge.className = "level-state";
-        badge.textContent = levelLocked
+        badge.textContent = skipped
+            ? "SKIPPED"
+            : levelLocked
             ? "LOCKED"
             : hasWalletEntryCredits ? "ACCESS READY" : "FREE PRACTICE";
         const cost = document.createElement("span");
@@ -1014,6 +1057,8 @@ function renderLevels() {
         button.append(number, detail, cost, badge);
         button.setAttribute("aria-label", levelLocked
             ? `Level ${level.number} is locked`
+            : skipped
+                ? `Level ${level.number} was skipped`
             : hasWalletEntryCredits
                 ? `Play level ${level.number} using ${formatCredits(entryCostCredits)} wallet credits`
                 : paidGameplayEnabled
@@ -2411,20 +2456,24 @@ async function enterGameMenu() {
 
 function playCampaignEnding() {
     let finished = false;
+    const thankYou = document.getElementById("campaign-thank-you");
     const finish = async () => {
         if (finished) return;
-        if (!await stopVideoPlayback(transitionVideo)) {
-            offerContinue("Portrait orientation could not be restored. Retry to continue.");
-            return;
-        }
+        await stopVideoPlayback(transitionVideo, false);
         finished = true;
-        delete videoScreen.dataset.fullscreenVideo;
         delete videoScreen.dataset.campaignEnding;
         transitionVideo.hidden = true;
         videoSkip.hidden = true;
         videoSkip.onclick = null;
         videoAction.hidden = true;
-        showNameOrHome();
+        videoAction.onclick = null;
+        videoScreen.dataset.fullscreenVideo = "true";
+        videoScreen.dataset.campaignThankYou = "true";
+        thankYou.hidden = false;
+        if (!await lockCampaignThankYouLandscape()) {
+            videoScreen.dataset.orientationBlocked = "true";
+            rotateDevicePrompt.hidden = false;
+        }
     };
     const offerContinue = (message) => {
         void stopVideoPlayback(transitionVideo);
@@ -2440,6 +2489,8 @@ function playCampaignEnding() {
     showScreen("video-screen");
     videoScreen.dataset.fullscreenVideo = "true";
     videoScreen.dataset.campaignEnding = "true";
+    delete videoScreen.dataset.campaignThankYou;
+    thankYou.hidden = true;
     introVideo.pause();
     introVideo.hidden = true;
     transitionVideo.pause();
@@ -2684,7 +2735,7 @@ function fitVideoFrame(video) {
     videoScreen.style.setProperty("--phone-height", `${video.videoHeight * scale}px`);
 }
 
-async function startLevel(number, resumeMusic = false) {
+async function startLevel(number, resumeMusic = false, requirePaidEntry = false) {
     if (levelStartInProgress) return false;
     if (!levels[number - 1]) return false;
     if (levelsGloballyLocked) {
@@ -2698,14 +2749,26 @@ async function startLevel(number, resumeMusic = false) {
         if (!musicWasPlaying) stopMusic();
     };
     try {
-        const layoutKey = player.lastLevelLayouts[String(number)];
+        const levelKey = String(number);
+        const previousLayoutKeys = [
+            ...(player.levelLayoutHistory[levelKey] || []),
+            ...(player.lastLevelLayouts[levelKey] ? [player.lastLevelLayouts[levelKey]] : [])
+        ];
         const level = generateLevelVariant(
             number,
             createLevelVariantSeed(),
-            layoutKey ? [layoutKey] : []
+            [...new Set(previousLayoutKeys)]
         );
         const entry = await requestLevelEntry(number);
         if (!entry) {
+            stopNewMusic();
+            return false;
+        }
+        if (requirePaidEntry && entry.practice) {
+            setLevelEntryMessage(
+                "Skipping requires a verified paid entry for the next level. No skip was recorded.",
+                "error"
+            );
             stopNewMusic();
             return false;
         }
@@ -2716,6 +2779,9 @@ async function startLevel(number, resumeMusic = false) {
         document.getElementById("game-guide-toggle").setAttribute("aria-expanded", String(showTutorial));
         activeWalletLevelSessionId = entry.sessionId;
         activeLevelEntryCostCredits = entry.practice ? null : Number(entry.entryCostCredits);
+        const skipButton = document.getElementById("skip-level");
+        skipButton.hidden = number >= 99;
+        skipButton.disabled = entry.practice || number >= 99;
         if (!entry.practice) {
             document.getElementById("wallet-balance").textContent = formatCredits(entry.balanceCredits);
             document.getElementById("wallet-balance-state").textContent = "CREDITS · BACKEND VERIFIED";
@@ -2730,7 +2796,9 @@ async function startLevel(number, resumeMusic = false) {
             : `Level ${String(number).padStart(2, "0")} started. ${formatCredits(entry.entryCostCredits)} wallet credits deducted; verified balance ${formatCredits(entry.balanceCredits)}.`;
         setLevelEntryMessage(entryMessage, entry.practice ? "ready" : "success");
         player.lastLevel = number;
-        player.lastLevelLayouts[String(number)] = getLevelLayoutKey(level);
+        const layoutKey = getLevelLayoutKey(level);
+        player.lastLevelLayouts[levelKey] = layoutKey;
+        player.levelLayoutHistory[levelKey] = [...new Set([...previousLayoutKeys, layoutKey])];
         pendingLevel = level;
         savePlayer();
         document.getElementById("play-level").textContent = `LEVEL ${String(number).padStart(2, "0")}`;
@@ -2790,6 +2858,55 @@ document.getElementById("name-form").addEventListener("submit", async (event) =>
 
 document.getElementById("continue-game").addEventListener("click", () => {
     startLevel(getContinueLevel());
+});
+document.getElementById("skip-level").addEventListener("click", async (event) => {
+    const button = event.currentTarget;
+    const currentLevel = pendingLevel?.number;
+    if (skipLevelInProgress || nextLevelAdvanceInProgress || levelStartInProgress ||
+        button.disabled || button.hidden ||
+        !Number.isInteger(currentLevel) || currentLevel >= 99 ||
+        !activeWalletLevelSessionId ||
+        !document.getElementById("completion-summary").hidden) return;
+
+    skipLevelInProgress = true;
+    button.disabled = true;
+    button.textContent = "OPENING NEXT LEVEL…";
+    window.dispatchEvent(new CustomEvent("fluxgrid:skip-level-pending"));
+    let skipCommitted = false;
+    try {
+        const nextLevelNumber = currentLevel + 1;
+        const started = await startLevel(nextLevelNumber, true, true);
+        if (!started) {
+            document.getElementById("game-status").textContent =
+                document.getElementById("level-entry-status").textContent;
+            return;
+        }
+
+        player.skippedLevels = [...new Set([...player.skippedLevels, currentLevel])]
+            .filter((level) => !player.completedLevels.includes(level))
+            .sort((a, b) => a - b);
+        player.unlockedLevel = Math.max(player.unlockedLevel, nextLevelNumber);
+        savePlayer();
+        skipCommitted = true;
+        renderProfile();
+        renderLevels();
+        setLevelEntryMessage(
+            `Level ${currentLevel} skipped. No stars or reward were awarded; its entry fee remains spent.`,
+            "success"
+        );
+    } catch (error) {
+        console.error(`Level ${currentLevel} could not be skipped.`, error);
+        document.getElementById("game-status").textContent = error.message;
+    } finally {
+        skipLevelInProgress = false;
+        if (!skipCommitted) {
+            window.dispatchEvent(new CustomEvent("fluxgrid:skip-level-cancelled"));
+            button.textContent = "SKIP LEVEL →";
+            button.hidden = currentLevel >= 99;
+            button.disabled = !activeWalletLevelSessionId ||
+                !document.getElementById("completion-summary").hidden;
+        }
+    }
 });
 document.getElementById("next-level").addEventListener("click", async (event) => {
     const button = event.currentTarget;
@@ -2949,6 +3066,7 @@ document.getElementById("withdrawal-refresh")?.addEventListener("click", () => {
 });
 
 window.addEventListener("fluxgrid:level-complete", (event) => {
+    if (skipLevelInProgress) return;
     const detail = event.detail ?? {};
     const number = detail.number;
     if (!Number.isInteger(number) || number < 1 || number > 99) {
@@ -2984,6 +3102,7 @@ window.addEventListener("fluxgrid:level-complete", (event) => {
     const previousState = {
         localGameRewardEntries: player.localGameRewardEntries,
         completedLevels: player.completedLevels,
+        skippedLevels: player.skippedLevels,
         unlockedLevel: player.unlockedLevel,
         lastLevel: player.lastLevel,
         tutorialSeen: player.tutorialSeen
@@ -2998,6 +3117,7 @@ window.addEventListener("fluxgrid:level-complete", (event) => {
         });
         player.localGameRewardEntries = reward.entries;
         player.completedLevels = [...new Set([...player.completedLevels, number])].sort((a, b) => a - b);
+        player.skippedLevels = player.skippedLevels.filter((level) => level !== number);
         player.unlockedLevel = Math.min(99, Math.max(player.unlockedLevel, number + 1));
         player.lastLevel = Math.min(99, number + 1);
         savePlayer();
