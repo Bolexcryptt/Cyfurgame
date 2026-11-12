@@ -33,13 +33,16 @@ import {
     CYFUR_CREDITS_PER_TOKEN,
     evaluateLevelStars,
     formatCyfurCredits,
+    generateLevelVariant,
     getCampaignStartLevel,
     getLevelEconomy,
+    getLevelLayoutKey,
     getLevelRewardPoints,
     getPendingLevelTransition,
     getLevelStarTimeTargets,
     LEVEL_TRANSITION_INTERVAL,
     mergeCompletedLevels,
+    traceLaserRoute,
     levels
 } from "../levels.js";
 import {
@@ -810,6 +813,65 @@ test("campaign difficulty ramps crystals and obstacles while mirror count stays 
     assert.match(scene, /Mirror limit reached/);
     assert.match(scene, /sectorMapPanel\.hidden = true/);
     assert.match(scene, /sectorMapPanel\.hidden = false/);
+});
+
+test("replayed levels get distinct, validated layouts without changing level difficulty", () => {
+    for (const original of levels) {
+        const baseKey = getLevelLayoutKey(original);
+        const previousLayoutKeys = [baseKey];
+        const first = generateLevelVariant(original.number, 100000 + original.number, previousLayoutKeys);
+        const firstKey = getLevelLayoutKey(first);
+        const second = generateLevelVariant(
+            original.number,
+            200000 + original.number,
+            [...previousLayoutKeys, firstKey]
+        );
+        const layouts = [first, second];
+        const seenLayoutKeys = new Set(previousLayoutKeys);
+
+        for (const variant of layouts) {
+            const layoutKey = getLevelLayoutKey(variant);
+            assert.equal(seenLayoutKeys.has(layoutKey), false);
+            seenLayoutKeys.add(layoutKey);
+            assert.equal(variant.number, original.number);
+            assert.equal(variant.par, original.par);
+            assert.equal(variant.crystals.length, original.crystals.length);
+            assert.equal(variant.obstacles.length, original.obstacles.length);
+            assert.deepEqual(variant.economy, original.economy);
+            assert.deepEqual(variant.starTimeTargets, original.starTimeTargets);
+            assert.ok(variant.target.row >= 2 && variant.target.row <= 4);
+            assert.ok(variant.target.col >= 2 && variant.target.col <= 5);
+
+            const mirrorCells = new Set(variant.solutionMirrors.map(({ row, col }) => `${row},${col}`));
+            const crystalCells = new Set(variant.crystals.map(({ row, col }) => `${row},${col}`));
+            const obstacleCells = new Set(variant.obstacles.map(({ row, col }) => `${row},${col}`));
+            assert.equal(mirrorCells.size, variant.par);
+            for (const cell of mirrorCells) {
+                assert.equal(crystalCells.has(cell), false);
+                assert.equal(obstacleCells.has(cell), false);
+            }
+            for (const cell of crystalCells) assert.equal(obstacleCells.has(cell), false);
+            assert.equal(obstacleCells.has(`${variant.target.row},${variant.target.col}`), false);
+            assert.equal(obstacleCells.has(`${variant.start.row},${variant.start.col}`), false);
+
+            const solution = new Map(variant.solutionMirrors.map((mirror) => [
+                `${mirror.row},${mirror.col}`,
+                mirror.orientation
+            ]));
+            const route = traceLaserRoute(variant, solution, variant.start.direction);
+            assert.equal(route.outcome, "powered", `Generated replay of level ${variant.number} is not solvable.`);
+            assert.equal(route.reflections, variant.par);
+            assert.equal(route.crystalHits.length, variant.crystals.length);
+        }
+    }
+
+    const app = readFileSync(new URL("../app.js", import.meta.url), "utf8");
+    const startLevel = app.slice(
+        app.indexOf("async function startLevel"),
+        app.indexOf("\nfunction leaveGameplay")
+    );
+    assert.match(startLevel, /generateLevelVariant\(\s*number,\s*createLevelVariantSeed\(\),\s*layoutKey \? \[layoutKey\] : \[\]/);
+    assert.match(startLevel, /player\.lastLevelLayouts\[String\(number\)\] = getLevelLayoutKey\(level\)/);
 });
 
 test("ground decoration has no static linework while the live laser path remains", () => {
@@ -3877,6 +3939,12 @@ test("deposit transaction API prepares and broadcasts through the authenticated 
 test("each connected star outcome uses its configured time threshold and payout", () => {
     for (const level of levels) {
         const { threeSeconds, twoSeconds } = level.starTimeTargets;
+        const payouts = [
+            evaluateLevelStars(level, threeSeconds * 1000),
+            evaluateLevelStars(level, threeSeconds * 1000 + 1),
+            evaluateLevelStars(level, twoSeconds * 1000),
+            evaluateLevelStars(level, twoSeconds * 1000 + 1)
+        ];
         assert.deepEqual(evaluateLevelStars(level, threeSeconds * 1000), {
             stars: 3,
             rewardCredits: level.economy.threeStarPayoutCredits,
@@ -3892,6 +3960,14 @@ test("each connected star outcome uses its configured time threshold and payout"
             rewardCredits: 0,
             status: "completed"
         });
+        assert.ok(
+            payouts[0].rewardCredits > payouts[1].rewardCredits &&
+            payouts[1].rewardCredits > payouts[3].rewardCredits,
+            `Level ${level.number} must pay more for faster completion.`
+        );
+        assert.ok(payouts.every((result, index) =>
+            index === 0 || payouts[index - 1].rewardCredits >= result.rewardCredits
+        ));
     }
 });
 
@@ -3903,17 +3979,22 @@ test("no battery connection is a fail with no stars and no payout", () => {
     });
 });
 
-test("time thresholds are ordered and scale with each level's puzzle complexity", () => {
-    assert.deepEqual(levels[0].starTimeTargets, { threeSeconds: 45, twoSeconds: 100 });
+test("par-based time thresholds stay inside the requested non-overlapping performance tiers", () => {
     for (const level of levels) {
         const targets = getLevelStarTimeTargets(level);
         assert.equal(level.starTimeTargets.threeSeconds, targets.threeSeconds);
         assert.equal(level.starTimeTargets.twoSeconds, targets.twoSeconds);
+        assert.ok(targets.threeSeconds >= 10 && targets.threeSeconds <= 20);
+        assert.ok(targets.twoSeconds >= 30 && targets.twoSeconds <= 40);
         assert.ok(targets.threeSeconds < targets.twoSeconds);
         assert.equal(evaluateLevelStars(level, targets.threeSeconds * 1000 - 1).stars, 3);
+        assert.equal(evaluateLevelStars(level, targets.threeSeconds * 1000).stars, 3);
+        assert.equal(evaluateLevelStars(level, targets.threeSeconds * 1000 + 1).stars, 2);
         assert.equal(evaluateLevelStars(level, targets.twoSeconds * 1000).stars, 2);
         assert.equal(evaluateLevelStars(level, targets.twoSeconds * 1000 + 1).stars, 1);
     }
+    assert.deepEqual(levels[0].starTimeTargets, { threeSeconds: 10, twoSeconds: 30 });
+    assert.deepEqual(levels[98].starTimeTargets, { threeSeconds: 20, twoSeconds: 40 });
 });
 
 test("invalid elapsed times and incomplete solves never receive a reward", () => {

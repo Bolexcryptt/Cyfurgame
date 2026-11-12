@@ -3,8 +3,10 @@ import {
     LEVEL_TRANSITION_INTERVAL,
     evaluateLevelStars,
     formatCyfurCredits,
+    generateLevelVariant,
     getCampaignStartLevel,
     getLevelEconomy,
+    getLevelLayoutKey,
     getPendingLevelTransition,
     mergeCompletedLevels,
     levels
@@ -116,6 +118,7 @@ function readPlayer() {
             tutorialSeen: false,
             unlockedLevel: 1,
             completedLevels: [],
+            lastLevelLayouts: {},
             localGameRewardEntries: [],
             transitionMilestonesPlayed: [],
             lastLevel: 1
@@ -133,6 +136,16 @@ function readPlayer() {
             completedLevels: Array.isArray(parsed.completedLevels)
                 ? [...new Set(parsed.completedLevels.filter((level) => Number.isInteger(level) && level >= 1 && level <= 99))]
                 : [],
+            lastLevelLayouts: parsed.lastLevelLayouts &&
+                typeof parsed.lastLevelLayouts === "object" &&
+                !Array.isArray(parsed.lastLevelLayouts)
+                ? Object.fromEntries(Object.entries(parsed.lastLevelLayouts).filter(([level, key]) =>
+                    Number.isInteger(Number(level)) &&
+                    Number(level) >= 1 &&
+                    Number(level) <= 99 &&
+                    typeof key === "string" &&
+                    key.length <= 10000))
+                : {},
             localGameRewardEntries: normalizeLocalGameRewardEntries(parsed.localGameRewardEntries),
             transitionMilestonesPlayed: Array.isArray(parsed.transitionMilestonesPlayed)
                 ? [...new Set(parsed.transitionMilestonesPlayed.filter((milestone) =>
@@ -152,6 +165,7 @@ function readPlayer() {
             tutorialSeen: false,
             unlockedLevel: 1,
             completedLevels: [],
+            lastLevelLayouts: {},
             localGameRewardEntries: [],
             transitionMilestonesPlayed: [],
             lastLevel: 1
@@ -191,6 +205,15 @@ let pendingPhantomMobileCallback = null;
 
 function savePlayer() {
     localStorage.setItem(storageKey, JSON.stringify(player));
+}
+
+function createLevelVariantSeed() {
+    if (!window.crypto || typeof window.crypto.getRandomValues !== "function") {
+        throw new Error("Secure random generation is unavailable for this level.");
+    }
+    const seed = new Uint32Array(1);
+    window.crypto.getRandomValues(seed);
+    return seed[0];
 }
 
 async function refreshServerGamePoints() {
@@ -2663,8 +2686,7 @@ function fitVideoFrame(video) {
 
 async function startLevel(number, resumeMusic = false) {
     if (levelStartInProgress) return false;
-    const level = levels[number - 1];
-    if (!level) return false;
+    if (!levels[number - 1]) return false;
     if (levelsGloballyLocked) {
         setLevelEntryMessage("All levels are temporarily locked. Your saved progress is unchanged.", "disabled");
         return false;
@@ -2676,6 +2698,12 @@ async function startLevel(number, resumeMusic = false) {
         if (!musicWasPlaying) stopMusic();
     };
     try {
+        const layoutKey = player.lastLevelLayouts[String(number)];
+        const level = generateLevelVariant(
+            number,
+            createLevelVariantSeed(),
+            layoutKey ? [layoutKey] : []
+        );
         const entry = await requestLevelEntry(number);
         if (!entry) {
             stopNewMusic();
@@ -2702,6 +2730,7 @@ async function startLevel(number, resumeMusic = false) {
             : `Level ${String(number).padStart(2, "0")} started. ${formatCredits(entry.entryCostCredits)} wallet credits deducted; verified balance ${formatCredits(entry.balanceCredits)}.`;
         setLevelEntryMessage(entryMessage, entry.practice ? "ready" : "success");
         player.lastLevel = number;
+        player.lastLevelLayouts[String(number)] = getLevelLayoutKey(level);
         pendingLevel = level;
         savePlayer();
         document.getElementById("play-level").textContent = `LEVEL ${String(number).padStart(2, "0")}`;
@@ -2998,7 +3027,7 @@ window.addEventListener("fluxgrid:level-complete", (event) => {
     document.getElementById("completion-reward").textContent =
         `+${formatCredits(rewardAmount)} credits`;
     document.getElementById("completion-reward-note").textContent = reward.awarded
-        ? "Saved on this device only · not withdrawable"
+        ? `${result.stars === 1 ? "1 star: 0 reward · " : ""}3 stars ≤ ${level.starTimeTargets.threeSeconds}s; 2 stars ≤ ${level.starTimeTargets.twoSeconds}s · saved on device, not withdrawable`
         : "This paid entry has already been rewarded";
     document.getElementById("completion-balance").textContent =
         `${formatCredits(getLocalGameRewardBalance(player.localGameRewardEntries))} credits`;

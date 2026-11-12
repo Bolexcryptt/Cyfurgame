@@ -133,13 +133,18 @@ Automated local tests cover deterministic conversion, wallet-signature verificat
 
 ## Economy and gameplay
 
-Existing economy rules are unchanged:
+Wallet entry prices are unchanged. Completion time selects one of three local reward tiers:
 
 - Entry cost: `floor(100 × 1.08^(level − 1))`
 - Three-star payout: `floor(entry cost × 1.6)`
 - Two-star refund: `floor(entry cost × 0.4)`
 - One-star completion or failure: `0`
+- Three stars: finish at or below a par-derived threshold from 10 to 20 seconds.
+- Two stars: finish after the three-star threshold and at or below a threshold from 30 to 40 seconds.
+- One star: finish after the two-star threshold.
 
-Paid campaign entry still deducts its fee from the verified wallet through the server. A successful paid completion adds its star-rated reward to the device's separate local-game-reward balance once per entry session. That local reward is not a verified wallet credit, cannot fund another entry, and cannot be withdrawn. Local campaign progress is saved on the device and is not server-synced.
+Paid campaign entry still deducts its fee from the verified wallet through the server. A successful paid completion adds its star-rated reward to the device's separate local-game-reward balance once per entry session. The completion screen immediately shows the stars, exact reward, and timing cutoffs. That local reward is not a verified wallet credit, cannot fund another entry, and cannot be withdrawn. Local campaign progress is saved on the device and is not server-synced.
+
+Every time a level is entered, a seeded variant generator rearranges the source, battery, mirrors, crystals, and obstacles while retaining that level's mirror par, crystal count, obstacle count, entry fee, reward amounts, and time thresholds. The app remembers the last layout used for each level and excludes it on the next replay. Each candidate is checked against its generated mirror solution and full crystal route before it can be loaded; generation fails explicitly rather than returning an invalid layout.
 
 The current client does not call the level timer or completion endpoints. Completion rewards and campaign progress are local and immediate; the server does not verify puzzle proof or award a wallet reward for this client flow. Wallet entry fees, deposits, and withdrawals remain server-authoritative. The new entry migration removes only the stale active-session restriction needed to continue paying for later levels; it does not alter player balances or ledger history. Automated tests do not replace live database and production verification.

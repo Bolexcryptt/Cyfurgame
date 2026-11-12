@@ -5,10 +5,10 @@ const CLEAR_TARGET_COLS = Object.freeze([2, 3, 4, 5]);
 export const CYFUR_CREDITS_PER_TOKEN = 1000;
 export const LEVEL_TRANSITION_INTERVAL = 5;
 export const STAR_TIME_CONFIG = Object.freeze({
-    threeStarBaseSeconds: 25,
-    threeStarSecondsPerMirror: 10,
-    twoStarBaseSeconds: 60,
-    twoStarSecondsPerMirror: 20
+    threeStarBaseSeconds: 10,
+    threeStarSecondsPerMirror: 1,
+    threeStarMaxSeconds: 20,
+    twoStarWindowSeconds: 20
 });
 export const LEVEL_STAR_TIME_OVERRIDES = Object.freeze({});
 
@@ -26,9 +26,14 @@ export function getPendingLevelTransition(completedLevelNumber, playedMilestones
 
 export function getLevelStarTimeTargets(level) {
     const complexity = Math.max(1, level?.par ?? 1);
+    const threeSeconds = Math.min(
+        STAR_TIME_CONFIG.threeStarMaxSeconds,
+        STAR_TIME_CONFIG.threeStarBaseSeconds +
+            Math.max(0, complexity - 2) * STAR_TIME_CONFIG.threeStarSecondsPerMirror
+    );
     const defaults = {
-        threeSeconds: STAR_TIME_CONFIG.threeStarBaseSeconds + complexity * STAR_TIME_CONFIG.threeStarSecondsPerMirror,
-        twoSeconds: STAR_TIME_CONFIG.twoStarBaseSeconds + complexity * STAR_TIME_CONFIG.twoStarSecondsPerMirror
+        threeSeconds,
+        twoSeconds: threeSeconds + STAR_TIME_CONFIG.twoStarWindowSeconds
     };
     const overrides = LEVEL_STAR_TIME_OVERRIDES[level?.number] ?? {};
     const targets = {
@@ -36,7 +41,9 @@ export function getLevelStarTimeTargets(level) {
         twoSeconds: overrides.twoSeconds ?? defaults.twoSeconds
     };
     if (!Number.isFinite(targets.threeSeconds) || !Number.isFinite(targets.twoSeconds) ||
-        targets.threeSeconds < 0 || targets.twoSeconds <= targets.threeSeconds) {
+        targets.threeSeconds < 10 || targets.threeSeconds > 20 ||
+        targets.twoSeconds < 30 || targets.twoSeconds > 40 ||
+        targets.twoSeconds <= targets.threeSeconds) {
         throw new RangeError(`Invalid star-time thresholds for level ${level?.number ?? "unknown"}.`);
     }
     return targets;
@@ -150,6 +157,54 @@ function randomFor(seed) {
     };
 }
 
+export function getLevelLayoutKey(level) {
+    if (!level || !level.start || !level.target ||
+        !Array.isArray(level.solutionMirrors) ||
+        !Array.isArray(level.crystals) ||
+        !Array.isArray(level.obstacles)) {
+        throw new TypeError("A complete level layout is required.");
+    }
+    return JSON.stringify({
+        start: level.start,
+        target: level.target,
+        solutionMirrors: level.solutionMirrors,
+        crystals: level.crystals,
+        obstacles: level.obstacles
+    });
+}
+
+function isValidGeneratedLevel(level) {
+    const obstacleCells = new Set(level.obstacles.map(({ row, col }) => `${row},${col}`));
+    const crystalCells = new Set(level.crystals.map(({ row, col }) => `${row},${col}`));
+    const mirrorMap = new Map(level.solutionMirrors.map(({ row, col, orientation }) => [
+        `${row},${col}`,
+        orientation
+    ]));
+    const sourceCell = `${level.start.row},${level.start.col}`;
+    const targetCell = `${level.target.row},${level.target.col}`;
+
+    if (level.start.col !== -1 && level.start.col !== COLS ||
+        level.start.row < 0 || level.start.row >= ROWS ||
+        level.target.row < 0 || level.target.row >= ROWS ||
+        level.target.col < 0 || level.target.col >= COLS ||
+        obstacleCells.has(sourceCell) || obstacleCells.has(targetCell) ||
+        crystalCells.has(sourceCell) || crystalCells.has(targetCell)) {
+        return false;
+    }
+
+    for (const cell of obstacleCells) {
+        if (crystalCells.has(cell) || mirrorMap.has(cell)) return false;
+    }
+    for (const cell of crystalCells) {
+        if (mirrorMap.has(cell)) return false;
+    }
+
+    const route = traceLaserRoute(level, mirrorMap, level.start.direction);
+    return route.outcome === "powered" &&
+        route.reflections === level.par &&
+        route.crystalHits.length === level.crystals.length;
+}
+
 function reflect(incoming, outgoing) {
     if (SLASH[incoming] === outgoing) return "/";
     if (BACKSLASH[incoming] === outgoing) return "\\";
@@ -200,13 +255,13 @@ function buildRoute(random, start, target, minimumTurns) {
     return search(start.row, start.col, start.direction, 0, 0);
 }
 
-function makeLevel(number, usedLayouts) {
+function makeLevel(number, usedLayouts, seedOffset = 0, requiredObstacleCount) {
     const band = Math.ceil(number / 10);
     const requiredTurns = Math.min(2 + Math.floor((number - 1) / 3), 14);
     const crystalCount = Math.min(2 + Math.floor((number - 1) / 3), 10);
 
     for (let attempt = 0; attempt < 900; attempt++) {
-        const random = randomFor(number * 7919 + attempt * 104729);
+        const random = randomFor((number * 7919 + attempt * 104729 + seedOffset) >>> 0);
         const direction = random() < 0.5 ? 1 : 3;
         const start = {
             row: Math.floor(random() * ROWS),
@@ -272,9 +327,10 @@ function makeLevel(number, usedLayouts) {
             const j = Math.floor(random() * (i + 1));
             [candidates[i], candidates[j]] = [candidates[j], candidates[i]];
         }
-        const obstacleCount = Math.min(4 + number, 28, candidates.length);
+        const obstacleCount = requiredObstacleCount ?? Math.min(4 + number, 28, candidates.length);
+        if (candidates.length < obstacleCount) continue;
         const obstacles = candidates.slice(0, obstacleCount);
-        const layoutKey = JSON.stringify({
+        const layoutKey = getLevelLayoutKey({
             start,
             target,
             solutionMirrors,
@@ -283,11 +339,10 @@ function makeLevel(number, usedLayouts) {
         });
         if (usedLayouts.has(layoutKey)) continue;
 
-        usedLayouts.add(layoutKey);
         const par = solutionMirrors.length;
         const entryCost = Math.floor(100 * Math.pow(1.08, number - 1));
         const starTimeTargets = getLevelStarTimeTargets({ number, par });
-        return Object.freeze({
+        const level = Object.freeze({
             number,
             title: `SECTOR ${String(number).padStart(2, "0")}`,
             band,
@@ -306,9 +361,26 @@ function makeLevel(number, usedLayouts) {
             }),
             starTimeTargets: Object.freeze(starTimeTargets)
         });
+        if (!isValidGeneratedLevel(level)) continue;
+
+        usedLayouts.add(layoutKey);
+        return level;
     }
 
     throw new Error(`Unable to generate a unique solvable layout for level ${number}.`);
+}
+
+export function generateLevelVariant(number, seed, excludedLayoutKeys = []) {
+    if (!Number.isInteger(number) || number < 1 || number > 99 ||
+        !Number.isSafeInteger(seed) || !Array.isArray(excludedLayoutKeys) ||
+        excludedLayoutKeys.some((key) => typeof key !== "string")) {
+        throw new TypeError("A valid level number, integer seed, and excluded layouts are required.");
+    }
+    const usedLayouts = new Set([
+        getLevelLayoutKey(levels[number - 1]),
+        ...excludedLayoutKeys
+    ]);
+    return makeLevel(number, usedLayouts, seed >>> 0, levels[number - 1].obstacles.length);
 }
 
 export function getLevelEconomy(levelNumber) {

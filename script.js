@@ -1667,6 +1667,7 @@ function startScene() {
         const rewardLabel = document.getElementById("completion-reward-label");
         const reward = document.getElementById("completion-reward");
         const rewardNote = document.getElementById("completion-reward-note");
+        const timeTargets = level.starTimeTargets;
         rewardLabel.textContent = walletLevelSessionId
             ? "LOCAL GAME REWARD"
             : "PRACTICE REWARD";
@@ -1674,7 +1675,7 @@ function startScene() {
             ? `+${result.rewardCredits.toLocaleString("en-US")} credits`
             : "0 credits";
         rewardNote.textContent = walletLevelSessionId
-            ? "Saved on this device only · not withdrawable"
+            ? `${stars === 1 ? "1★: 0 reward · " : ""}3★ ≤ ${timeTargets.threeSeconds}s; 2★ ≤ ${timeTargets.twoSeconds}s · saved on device, not withdrawable`
             : "Practice clears do not earn rewards";
         const availableBalance = document.getElementById("completion-balance");
         document.getElementById("completion-balance-note").textContent =
