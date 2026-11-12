@@ -124,8 +124,6 @@ function startScene() {
         coreActivationGroup.add(ring);
         activationRingMaterials.push(material);
     });
-    const environmentNetwork = new THREE.Group();
-    platform.add(environmentNetwork);
     const interactionGroup = new THREE.Group();
     platform.add(interactionGroup);
     const levelObjectGroup = new THREE.Group();
@@ -963,7 +961,6 @@ function startScene() {
             return seed / 4294967296;
         };
         const vertices = [];
-        const seamVertices = [];
 
         for (let r = 0; r <= rows; r++) {
             vertices[r] = [];
@@ -1019,81 +1016,10 @@ function startScene() {
                     0.045
                 );
                 tile.position.y += (random() - 0.5) * 0.1;
-
-                for (let i = 0; i < plate.length; i++) {
-                    const a = plate[i];
-                    const b = plate[(i + 1) % plate.length];
-                    seamVertices.push(a[0], 0.15, a[1], b[0], 0.15, b[1]);
-                }
             }
         }
 
-        const seamGeometry = new THREE.BufferGeometry();
-        seamGeometry.setAttribute("position", new THREE.Float32BufferAttribute(seamVertices, 3));
-        platform.add(new THREE.LineSegments(seamGeometry, materials.seam));
-        createCracks();
         createLooseSlabs();
-    }
-
-    function createCracks() {
-        const paths = [
-            [[-5.8, -2.9], [-5.32, -2.62], [-5.03, -2.15], [-4.54, -2.01]],
-            [[-5.03, -2.15], [-5.22, -1.71], [-4.93, -1.34]],
-            [[-4.9, 0.3], [-4.41, 0.12], [-4.12, -0.27], [-3.72, -0.44]],
-            [[-4.12, -0.27], [-3.96, -0.75], [-3.61, -0.98]],
-            [[-5.45, 2.1], [-4.93, 2.31], [-4.65, 2.77], [-4.13, 2.94]],
-            [[-4.65, 2.77], [-4.91, 3.15]],
-            [[-3.25, -3.5], [-2.85, -3.15], [-2.77, -2.64], [-2.31, -2.43]],
-            [[-2.77, -2.64], [-3.21, -2.32]],
-            [[-2.55, 0.06], [-2.06, 0.28], [-1.82, 0.76], [-1.31, 0.86]],
-            [[-1.82, 0.76], [-2.12, 1.2]],
-            [[-2.88, 2.13], [-2.39, 1.95], [-2.1, 1.48]],
-            [[-0.55, -3.5], [-0.22, -3.03], [0.25, -2.91], [0.51, -2.42]],
-            [[-0.22, -3.03], [-0.71, -2.78]],
-            [[-0.75, 1.88], [-0.35, 1.62], [-0.16, 1.14], [0.33, 0.95]],
-            [[-0.16, 1.14], [-0.49, 0.74]],
-            [[-1.05, 3.24], [-0.6, 2.94], [-0.44, 2.48]],
-            [[2.7, -3.42], [3.14, -3.11], [3.28, -2.64], [3.76, -2.39]],
-            [[3.28, -2.64], [2.91, -2.19]],
-            [[4.15, -0.65], [4.5, -0.26], [4.4, 0.18], [4.87, 0.48]],
-            [[4.4, 0.18], [4.06, 0.59]],
-            [[3.62, 2.68], [3.96, 2.28], [4.43, 2.18], [4.74, 1.79]],
-            [[-3.66, 3.7], [-3.28, 3.43], [-3.16, 3.02]]
-        ];
-        const crackVertices = [];
-        paths.forEach((path) => {
-            for (let i = 0; i < path.length - 1; i++) {
-                const [x1, z1] = path[i];
-                const [x2, z2] = path[i + 1];
-                crackVertices.push(x1, 0.195, z1, x2, 0.195, z2);
-            }
-        });
-        const crackGeometry = new THREE.BufferGeometry();
-        crackGeometry.setAttribute("position", new THREE.Float32BufferAttribute(crackVertices, 3));
-        platform.add(new THREE.LineSegments(crackGeometry, materials.seam));
-
-        const seamMat = new THREE.MeshBasicMaterial({ color: 0x252321 });
-        const fracturedSeamVertices = [];
-        [
-            [[-6.2, -1.0], [-5.75, -0.95], [-5.48, -0.52]],
-            [[-3.7, 1.2], [-3.33, 1.02], [-3.11, 0.58]],
-            [[-1.1, -1.6], [-0.75, -1.83], [-0.26, -1.8]],
-            [[0.12, 2.8], [0.55, 2.65], [0.75, 2.2]],
-            [[2.72, 1.8], [3.15, 1.63], [3.5, 1.82]],
-            [[4.8, -2.52], [4.38, -2.21], [4.15, -1.79]]
-        ].forEach((path) => {
-            for (let i = 0; i < path.length - 1; i++) {
-                const [x1, z1] = path[i];
-                const [x2, z2] = path[i + 1];
-                fracturedSeamVertices.push(x1, 0.19, z1, x2, 0.19, z2);
-            }
-        });
-        const fracturedSeamGeometry = new THREE.BufferGeometry();
-        fracturedSeamGeometry.setAttribute(
-            "position",
-            new THREE.Float32BufferAttribute(fracturedSeamVertices, 3)
-        );
-        platform.add(new THREE.LineSegments(fracturedSeamGeometry, seamMat));
     }
 
     function createGameplaySurface() {
@@ -1212,45 +1138,6 @@ function startScene() {
         };
         update();
         return update;
-    }
-
-    function createSquarePlacementGrid() {
-        const grid = new THREE.Group();
-        const lineMaterial = makeMaterial(0x39352f, 0.98, 0, {
-            transparent: true,
-            opacity: 0.2
-        });
-        const lineWidth = 0.009;
-        const lineHeight = 0.006;
-        const left = gridX(0) - GRID.step / 2;
-        const right = gridX(GRID.cols - 1) + GRID.step / 2;
-        const back = gridZ(0) - GRID.step / 2;
-        const front = gridZ(GRID.rows - 1) + GRID.step / 2;
-        const y = 0.19;
-
-        for (let col = 0; col <= GRID.cols; col++) {
-            const x = left + col * GRID.step;
-            addBox(
-                grid,
-                [lineWidth, lineHeight, front - back],
-                [x, y, (back + front) / 2],
-                lineMaterial,
-                { castShadow: false, receiveShadow: false }
-            );
-        }
-
-        for (let row = 0; row <= GRID.rows; row++) {
-            const z = back + row * GRID.step;
-            addBox(
-                grid,
-                [right - left, lineHeight, lineWidth],
-                [(left + right) / 2, y, z],
-                lineMaterial,
-                { castShadow: false, receiveShadow: false }
-            );
-        }
-
-        platform.add(grid);
     }
 
     function createPlayerMirror(row, col, slash = true) {
@@ -1583,7 +1470,6 @@ function startScene() {
         createLevelObstacles();
         resetGame();
         updateSourceMarker();
-        environmentNetwork.visible = false;
         statusTitle.textContent = `Level ${String(level.number).padStart(2, "0")} — ${level.title}`;
         document.getElementById("first-level-tutorial").hidden = !firstLevelTutorial;
         if (firstLevelTutorial) {
@@ -1842,7 +1728,6 @@ function startScene() {
         beamSegments.length = 0;
         previewRoute = placedMirrors.size ? traceLight() : null;
         if (previewRoute) drawActiveRoute(previewRoute, previewRoute.segments.length, true);
-        environmentNetwork.visible = true;
         updateTacticalHud();
         setFeedback("Undid the last mirror action.", "ready");
     }
@@ -1968,7 +1853,6 @@ function startScene() {
         startSolveTimer();
         previewRoute = traceLight();
         resetCrystalStates();
-        environmentNetwork.visible = false;
         drawActiveRoute(previewRoute, 0);
         if (sourcePylon?.userData.beaconLight) sourcePylon.userData.beaconLight.intensity = 12;
         tracing = true;
@@ -2011,7 +1895,6 @@ function startScene() {
         clearObjectGroup(mirrorGroup);
         clearObjectGroup(activeBeamGroup);
         beamSegments.length = 0;
-        environmentNetwork.visible = true;
         setCorePowered(false);
         coreLight.intensity = 14;
         if (sourcePylon?.userData.beaconLight) sourcePylon.userData.beaconLight.intensity = 7;
@@ -2482,82 +2365,6 @@ function startScene() {
 
     }
 
-    function addLightPath(points, color, radius = 0.018) {
-        const material = new THREE.MeshBasicMaterial({
-            color,
-            toneMapped: false,
-            blending: THREE.AdditiveBlending
-        });
-        const glowMaterial = new THREE.MeshBasicMaterial({
-            color,
-            transparent: true,
-            opacity: 0.075,
-            depthWrite: false,
-            toneMapped: false,
-            blending: THREE.AdditiveBlending
-        });
-        for (let i = 0; i < points.length - 1; i++) {
-            const [x1, z1, h1 = 0.38] = points[i];
-            const [x2, z2, h2 = 0.38] = points[i + 1];
-            const start = new THREE.Vector3(x1, h1, z1);
-            const end = new THREE.Vector3(x2, h2, z2);
-            const path = new THREE.LineCurve3(start, end);
-            environmentNetwork.add(
-                new THREE.Mesh(new THREE.TubeGeometry(path, 1, radius * 3.4, 7, false), glowMaterial),
-                new THREE.Mesh(new THREE.TubeGeometry(path, 1, radius, 6, false), material)
-            );
-        }
-        points.slice(1, -1).forEach(([x, z, height = 0.38]) => {
-            const junction = new THREE.Mesh(
-                new THREE.SphereGeometry(radius * 2.2, 8, 6),
-                new THREE.MeshBasicMaterial({ color, toneMapped: false })
-            );
-            junction.position.set(x, height, z);
-            environmentNetwork.add(junction);
-        });
-    }
-
-    function createLightNetwork() {
-        addLightPath([
-            [-2.55, -3.55, 0.48], [-2.55, -2.87, 0.38], [-3.08, -2.42, 0.38],
-            [-3.08, -1.76, 0.38], [-4.35, -1.76, 0.38], [-4.35, -0.92, 0.38],
-            [-5.1, -1.15, 0.47]
-        ], colors.pink, 0.022);
-        addLightPath([
-            [-5.1, -1.15, 0.44], [-4.43, -0.62, 0.38], [-3.53, -0.62, 0.38],
-            [-2.82, -1.42, 0.38], [-1.15, -1.78, 0.48]
-        ], colors.pink, 0.021);
-
-        addLightPath([
-            [-3.62, 2.95, 0.42], [-2.72, 2.05, 0.38], [-2.2, 1.48, 0.46],
-            [-2.2, -0.92, 0.38], [-0.82, -0.92, 0.38], [-0.82, 1.16, 0.46]
-        ], colors.amber, 0.024);
-        addLightPath([
-            [-2.2, 1.48, 0.43], [-1.2, 1.48, 0.38], [-1.2, -0.08, 0.43],
-            [0.02, -0.82, 0.48], [1.35, 0.1, 0.62], [3.08, -1.55, 0.4],
-            [5.0, 0.58, 0.54]
-        ], colors.amber, 0.024);
-
-        addLightPath([
-            [2.82, -3.75, 0.52], [2.38, -2.72, 0.38], [1.42, -1.95, 0.38],
-            [0.38, -0.95, 0.38], [-0.82, -0.92, 0.43], [-0.82, 1.16, 0.55]
-        ], colors.blue, 0.023);
-        addLightPath([
-            [-0.82, 1.16, 0.46], [0.55, 0.62, 0.39], [1.35, 0.1, 0.68],
-            [2.23, 1.13, 0.4], [2.96, 2.05, 0.4], [3.88, 3.0, 0.53]
-        ], colors.blue, 0.026);
-
-        [
-            { x: -3.62, z: 2.95, color: colors.amber },
-            { x: 0.02, z: -0.82, color: colors.pink },
-            { x: 2.82, z: -3.75, color: colors.blue }
-        ].forEach(({ x, z, color }) => {
-            const lamp = configureQualityLight(new THREE.PointLight(color, 3.5, 4.5, 2));
-            lamp.position.set(x, 0.48, z);
-            platform.add(lamp);
-        });
-    }
-
     function createCore() {
         const firstCoreChild = platform.children.length;
         const x = 1.35;
@@ -2855,8 +2662,6 @@ function startScene() {
     createColumnsAndRuins();
     createCore();
     createTerminals();
-    createLightNetwork();
-    createSquarePlacementGrid();
     const hoverRing = createGameplaySurface();
     bindCameraControls();
     bindGameplay(hoverRing);

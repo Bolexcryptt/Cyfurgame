@@ -776,6 +776,17 @@ test("campaign difficulty ramps crystals and obstacles while mirror count stays 
     assert.match(scene, /sectorMapPanel\.hidden = false/);
 });
 
+test("ground decoration has no static linework while the live laser path remains", () => {
+    const scene = readFileSync(new URL("../script.js", import.meta.url), "utf8");
+    const floor = scene.slice(
+        scene.indexOf("function createFracturedFloor"),
+        scene.indexOf("\nfunction createGameplaySurface")
+    );
+    assert.doesNotMatch(floor, /LineSegments|createCracks|seamVertices/);
+    assert.doesNotMatch(scene, /createLightNetwork|createSquarePlacementGrid/);
+    assert.match(scene, /function traceLight\(\)[\s\S]*?traceLaserRoute\(activeLevel/);
+});
+
 test("startup plays company and player introductions, then game video, then opens the game menu", () => {
     const app = readFileSync(new URL("../app.js", import.meta.url), "utf8");
     assert.match(app, /async function finishOpeningFlow\(\)/);
@@ -1872,7 +1883,7 @@ test("wallet-link API validates the configured cluster and fee-payer account bef
     }
 });
 
-test("server proof validator accepts the generated solution and rejects fabricated routes", () => {
+test("server proof validator accepts every generated solution and rejects fabricated routes", async () => {
     for (const level of levels) {
         const solution = level.solutionMirrors.map(({ row, col, orientation }) => ({
             row,
@@ -1880,17 +1891,25 @@ test("server proof validator accepts the generated solution and rejects fabricat
             slash: orientation === "/"
         }));
         assert.deepEqual(
-            verifyLevelProof(level, solution, level.start.direction),
+            await verifyLevelProof(level, solution, level.start.direction),
             { connected: true, reflections: level.par },
             `Level ${level.number} solution must reach its battery.`
         );
     }
-    assert.equal(verifyLevelProof(levels[0], [], levels[0].start.direction).connected, false);
-    assert.equal(verifyLevelProof(levels[0], [{ row: -1, col: 1, slash: true }], 1).connected, false);
-    assert.equal(verifyLevelProof(levels[0], [], 0).connected, false);
+    assert.deepEqual(
+        await verifyLevelProof(levels[10], levels[10].solutionMirrors.map(({ row, col, orientation }) => ({
+            row,
+            col,
+            slash: orientation === "/"
+        })), levels[10].start.direction),
+        { connected: true, reflections: 5 }
+    );
+    assert.equal((await verifyLevelProof(levels[0], [], levels[0].start.direction)).connected, false);
+    assert.equal((await verifyLevelProof(levels[0], [{ row: -1, col: 1, slash: true }], 1)).connected, false);
+    assert.equal((await verifyLevelProof(levels[0], [], 0)).connected, false);
 });
 
-test("server proof requires every crystal to be hit in the correct color sequence", () => {
+test("server proof requires every crystal to be hit in the correct color sequence", async () => {
     const level = levels[0];
     const mirrors = level.solutionMirrors.map(({ row, col, orientation }) => ({
         row,
@@ -1908,34 +1927,34 @@ test("server proof requires every crystal to be hit in the correct color sequenc
 
     assert.ok(level.crystals.length >= 1);
     assert.deepEqual(
-        verifyLevelProof(level, mirrors, level.start.direction),
+        await verifyLevelProof(level, mirrors, level.start.direction),
         { connected: true, reflections: level.par }
     );
     assert.equal(
-        verifyLevelProof({
+        (await verifyLevelProof({
             ...level,
             crystals: [
                 ...level.crystals.slice(0, -1),
                 { ...level.crystals.at(-1), ...openCell }
             ]
-        }, mirrors, level.start.direction).reason,
+        }, mirrors, level.start.direction)).reason,
         "crystal_missed"
     );
     assert.equal(
-        verifyLevelProof({
+        (await verifyLevelProof({
             ...level,
             crystals: [{
                 ...level.crystals[0],
                 inputColor: (level.crystals[0].inputColor + 1) % 3
             }, ...level.crystals.slice(1)]
-        }, mirrors, level.start.direction).reason,
+        }, mirrors, level.start.direction)).reason,
         "crystal_mismatch"
     );
     assert.equal(
-        verifyLevelProof(level, [
+        (await verifyLevelProof(level, [
             ...mirrors,
             { row: level.crystals[0].row, col: level.crystals[0].col, slash: true }
-        ], level.start.direction).reason,
+        ], level.start.direction)).reason,
         "invalid_mirror_position"
     );
 });

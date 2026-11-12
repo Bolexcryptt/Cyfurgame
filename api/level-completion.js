@@ -112,7 +112,7 @@ module.exports = async function levelCompletion(request, response) {
             elapsedMilliseconds
         );
         failureStage = "proof_verification";
-        const proof = verifyLevelProof(level, mirrors, launchDirection);
+        const proof = await verifyLevelProof(level, mirrors, launchDirection);
         if (!proof.connected) {
             return sendJson(response, 422, {
                 error: "battery_not_connected",

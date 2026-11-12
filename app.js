@@ -2985,7 +2985,8 @@ async function saveWalletLevelCompletion(detail) {
         const diagnostic = result.diagnosticCode
             ? ` (${result.diagnosticCode}${result.stage ? ` at ${result.stage}` : ""})`
             : "";
-        throw new Error(`${result.error || `Secure completion failed (${response.status})`}${diagnostic}.`);
+        const reason = result.reason ? `: ${result.reason}` : "";
+        throw new Error(`${result.error || `Secure completion failed (${response.status})`}${reason}${diagnostic}.`);
     }
 
     document.getElementById("completion-stars").textContent = `${result.stars} / 3`;
