@@ -1,6 +1,7 @@
 import {
     CYFUR_CREDITS_PER_TOKEN,
     LEVEL_TRANSITION_INTERVAL,
+    evaluateLevelStars,
     formatCyfurCredits,
     getCampaignStartLevel,
     getLevelEconomy,
@@ -49,11 +50,13 @@ import {
     setPhantomMobilePendingAction,
     startPhantomMobileConnect
 } from "./wallet-provider.mjs";
+import {
+    awardLocalGameReward,
+    getLocalGameRewardBalance,
+    normalizeLocalGameRewardEntries
+} from "./game-reward-ledger.mjs";
 
 const storageKey = "fluxgrid.player.v1";
-const LEVEL_AUTH_TIMEOUT_MS = 10000;
-const LEVEL_TIMER_START_TIMEOUT_MS = 10000;
-const LEVEL_COMPLETION_TIMEOUT_MS = 20000;
 const accountEmailConfirmationCallback = isAccountEmailConfirmationCallback(window.location);
 const ImmersiveMode = registerPlugin("ImmersiveMode");
 const screens = [
@@ -113,6 +116,7 @@ function readPlayer() {
             tutorialSeen: false,
             unlockedLevel: 1,
             completedLevels: [],
+            localGameRewardEntries: [],
             transitionMilestonesPlayed: [],
             lastLevel: 1
         };
@@ -129,6 +133,7 @@ function readPlayer() {
             completedLevels: Array.isArray(parsed.completedLevels)
                 ? [...new Set(parsed.completedLevels.filter((level) => Number.isInteger(level) && level >= 1 && level <= 99))]
                 : [],
+            localGameRewardEntries: normalizeLocalGameRewardEntries(parsed.localGameRewardEntries),
             transitionMilestonesPlayed: Array.isArray(parsed.transitionMilestonesPlayed)
                 ? [...new Set(parsed.transitionMilestonesPlayed.filter((milestone) =>
                     Number.isInteger(milestone) &&
@@ -147,6 +152,7 @@ function readPlayer() {
             tutorialSeen: false,
             unlockedLevel: 1,
             completedLevels: [],
+            localGameRewardEntries: [],
             transitionMilestonesPlayed: [],
             lastLevel: 1
         };
@@ -164,7 +170,6 @@ let openingVideoSequence = 0;
 let activeOpeningVideoSource = null;
 let pendingLevel = null;
 let activeWalletLevelSessionId = null;
-let walletTimerStartPromise = Promise.resolve(false);
 const pendingLevelEntryRequests = new Map();
 let levelEntryRequestInProgress = false;
 let depositVerificationInProgress = false;
@@ -180,7 +185,6 @@ let nextLevelAdvanceInProgress = false;
 let withdrawalSystemReady = false;
 let withdrawalAvailableCredits = "0";
 let withdrawalHasActiveRequest = false;
-let pendingCompletionConfirmation = null;
 let pendingAccountEmail = "";
 let pendingAccountRecoveryPlayerId = null;
 let pendingPhantomMobileCallback = null;
@@ -525,6 +529,7 @@ function startMusic() {
 }
 
 function renderProfile() {
+    renderLocalGameRewards();
     const completed = player.completedLevels.length;
     const name = player.name || "Pilot";
     const continueLevel = getContinueLevel();
@@ -591,6 +596,31 @@ function renderProfile() {
         statCard("LEADERBOARD", supabaseConfigured ? backendStatus : "RelicGrid account service is unavailable")
     );
     renderPlayerAccountStatus();
+}
+
+function renderLocalGameRewards() {
+    const entries = normalizeLocalGameRewardEntries(player.localGameRewardEntries);
+    player.localGameRewardEntries = entries;
+    document.getElementById("local-game-reward-balance").textContent =
+        `${formatCredits(getLocalGameRewardBalance(entries))} credits`;
+
+    const history = document.getElementById("local-game-reward-history");
+    const recentEntries = entries.slice(-5).reverse();
+    if (recentEntries.length === 0) {
+        const empty = document.createElement("li");
+        empty.textContent = "No local game rewards recorded.";
+        history.replaceChildren(empty);
+        return;
+    }
+
+    const fragment = document.createDocumentFragment();
+    for (const entry of recentEntries) {
+        const item = document.createElement("li");
+        item.textContent =
+            `Level ${entry.levelNumber} · ${entry.stars} star${entry.stars === 1 ? "" : "s"} · +${formatCredits(entry.amountCredits)} credits`;
+        fragment.append(item);
+    }
+    history.replaceChildren(fragment);
 }
 
 function renderPlayerAccountStatus() {
@@ -1028,38 +1058,6 @@ function setLevelEntryMessage(message, state = "disabled") {
     const status = document.getElementById("level-entry-status");
     status.textContent = message;
     status.dataset.state = state;
-}
-
-async function waitForLevelRequest(promise, timeoutMilliseconds, timeoutMessage) {
-    let timeoutId;
-    try {
-        return await Promise.race([
-            promise,
-            new Promise((resolve, reject) => {
-                timeoutId = window.setTimeout(
-                    () => reject(new Error(timeoutMessage)),
-                    timeoutMilliseconds
-                );
-            })
-        ]);
-    } finally {
-        window.clearTimeout(timeoutId);
-    }
-}
-
-async function fetchLevelRequest(url, options, timeoutMilliseconds, timeoutMessage) {
-    const controller = new AbortController();
-    const timeoutId = window.setTimeout(() => controller.abort(), timeoutMilliseconds);
-    try {
-        const response = await fetch(url, { ...options, signal: controller.signal });
-        const result = await response.json().catch(() => ({}));
-        return { response, result };
-    } catch (error) {
-        if (controller.signal.aborted) throw new Error(timeoutMessage);
-        throw error;
-    } finally {
-        window.clearTimeout(timeoutId);
-    }
 }
 
 async function requestLevelEntry(levelNumber) {
@@ -2690,14 +2688,9 @@ async function startLevel(number, resumeMusic = false) {
         document.getElementById("game-guide-toggle").setAttribute("aria-expanded", String(showTutorial));
         activeWalletLevelSessionId = entry.sessionId;
         activeLevelEntryCostCredits = entry.practice ? null : Number(entry.entryCostCredits);
-        walletTimerStartPromise = Promise.resolve(false);
         if (!entry.practice) {
             document.getElementById("wallet-balance").textContent = formatCredits(entry.balanceCredits);
             document.getElementById("wallet-balance-state").textContent = "CREDITS · BACKEND VERIFIED";
-            document.getElementById("completion-balance").textContent =
-                `${formatCredits(entry.balanceCredits)} credits`;
-            document.getElementById("completion-balance-note").textContent =
-                "Available after entry fee";
             walletStatusSnapshot = {
                 ...walletStatusSnapshot,
                 balanceCredits: String(entry.balanceCredits),
@@ -2742,6 +2735,7 @@ function leaveGameplay(toHome = true) {
 
 window.addEventListener("fluxgrid:core-activation-start", pauseMusic);
 window.addEventListener("fluxgrid:core-activation-cancel", startMusic);
+window.addEventListener("fluxgrid:game-reset", startMusic);
 
 document.getElementById("name-form").addEventListener("submit", async (event) => {
     event.preventDefault();
@@ -2774,20 +2768,10 @@ document.getElementById("next-level").addEventListener("click", async (event) =>
     if (!Number.isInteger(number) || number < 1 || number > 99 ||
         button.disabled || nextLevelAdvanceInProgress) return;
     nextLevelAdvanceInProgress = true;
-    button.textContent = pendingCompletionConfirmation?.number === number - 1
-        ? "SAVING RESULT…"
-        : "OPENING NEXT LEVEL…";
+    button.textContent = "OPENING NEXT LEVEL…";
     document.getElementById("game-status").textContent =
-        "Preparing the next level. Wallet balance refreshes when you return home.";
+        "Your local result is saved. Preparing the next paid entry.";
     try {
-        const pending = pendingCompletionConfirmation;
-        if (pending?.number === number - 1) {
-            await confirmPendingLevelCompletion(pending);
-            if (pendingCompletionConfirmation === pending) {
-                pendingCompletionConfirmation = null;
-            }
-            renderProfile();
-        }
         const milestone = getPendingLevelTransition(
             number - 1,
             player.transitionMilestonesPlayed
@@ -2906,159 +2890,6 @@ document.getElementById("game-guide-close").addEventListener("click", () => {
 });
 document.querySelectorAll("[data-home]").forEach((button) => button.addEventListener("click", renderHome));
 
-async function requestWalletLevelTimer(sessionId, gamePoints) {
-    const { data, error } = await waitForLevelRequest(
-        supabase.auth.getSession(),
-        LEVEL_AUTH_TIMEOUT_MS,
-        "Player session check timed out before the timer started."
-    );
-    if (error) throw error;
-    const accessToken = data.session?.access_token;
-    if (!accessToken) throw new Error("Player authentication expired before the timer started.");
-    const { response, result } = await fetchLevelRequest(
-        apiUrl("level-session"),
-        {
-            method: "POST",
-            headers: {
-                Authorization: `Bearer ${accessToken}`,
-                "Content-Type": "application/json"
-            },
-            body: JSON.stringify({ sessionId, gamePoints }),
-            cache: "no-store"
-        },
-        LEVEL_TIMER_START_TIMEOUT_MS,
-        "Server level timer request timed out."
-    );
-    if (!response.ok || !result.startedAt) {
-        throw new Error(result.error || `Server timer could not start (${response.status}).`);
-    }
-    return true;
-}
-
-async function ensureWalletLevelTimerStarted(detail) {
-    try {
-        if (await walletTimerStartPromise) return;
-    } catch (error) {
-        console.warn("The original server timer request did not finish; retrying its idempotent start.", error);
-    }
-    walletTimerStartPromise = requestWalletLevelTimer(
-        detail.walletSessionId,
-        detail.gamePointsSession === true
-    );
-    await walletTimerStartPromise;
-}
-
-async function saveWalletLevelCompletion(detail) {
-    const { data, error } = await waitForLevelRequest(
-        supabase.auth.getSession(),
-        LEVEL_AUTH_TIMEOUT_MS,
-        "Player session check timed out before completion was saved."
-    );
-    if (error) throw error;
-    const accessToken = data.session?.access_token;
-    if (!accessToken) throw new Error("Player authentication expired before completion was saved.");
-    await ensureWalletLevelTimerStarted(detail);
-    const { response, result } = await fetchLevelRequest(
-        apiUrl("level-completion"),
-        {
-            method: "POST",
-            headers: {
-                Authorization: `Bearer ${accessToken}`,
-                "Content-Type": "application/json"
-            },
-            body: JSON.stringify({
-                sessionId: detail.walletSessionId,
-                mirrors: detail.mirrors,
-                launchDirection: detail.launchDirection,
-                gamePoints: detail.gamePointsSession === true
-            }),
-            cache: "no-store"
-        },
-        LEVEL_COMPLETION_TIMEOUT_MS,
-        "Level completion request timed out. Tap NEXT LEVEL to retry safely."
-    );
-    const gamePointsSession = detail.gamePointsSession === true;
-    const rewardAmount = gamePointsSession ? result.rewardPoints : result.rewardCredits;
-    const balanceAmount = gamePointsSession ? result.balancePoints : result.balanceCredits;
-    if (!response.ok || result.status !== "confirmed" ||
-        !/^\d+$/.test(String(rewardAmount))) {
-        const diagnostic = result.diagnosticCode
-            ? ` (${result.diagnosticCode}${result.stage ? ` at ${result.stage}` : ""})`
-            : "";
-        const reason = result.reason ? `: ${result.reason}` : "";
-        throw new Error(`${result.error || `Secure completion failed (${response.status})`}${reason}${diagnostic}.`);
-    }
-
-    document.getElementById("completion-stars").textContent = `${result.stars} / 3`;
-    document.getElementById("completion-star-icons").textContent =
-        `${"★".repeat(result.stars)}${"☆".repeat(3 - result.stars)}`;
-    if (Number.isFinite(result.elapsedMilliseconds) && result.elapsedMilliseconds >= 0) {
-        document.getElementById("completion-time").textContent =
-            `${(result.elapsedMilliseconds / 1000).toFixed(1)} s`;
-    }
-    if (gamePointsSession) {
-        if (!/^\d+$/.test(String(balanceAmount))) {
-            throw new Error("The completion response contained an invalid game-points balance.");
-        }
-        serverGamePoints = String(balanceAmount);
-        serverGamePointsVerified = true;
-        renderLevels();
-        player.completedLevels = [...new Set([...player.completedLevels, detail.number])].sort((a, b) => a - b);
-        player.unlockedLevel = Math.min(99, Math.max(player.unlockedLevel, detail.number + 1));
-        player.lastLevel = Math.min(99, detail.number + 1);
-        savePlayer();
-    } else {
-        document.getElementById("completion-balance-note").textContent =
-            "Wallet balance refreshes when you return home.";
-    }
-    const displayedRewardAmount = result.duplicate ? "0" : rewardAmount;
-    const rewardLabel = document.getElementById("completion-reward-label");
-    const reward = document.getElementById("completion-reward");
-    const rewardNote = document.getElementById("completion-reward-note");
-    rewardLabel.textContent = displayedRewardAmount === "0"
-        ? gamePointsSession ? "NO POINT REWARD" : "NO CREDIT REWARD"
-        : gamePointsSession ? "CONFIRMED POINT REWARD" : "CONFIRMED CREDIT REWARD";
-    reward.textContent = `${formatCredits(displayedRewardAmount)} ${gamePointsSession ? "points" : "credits"}`;
-    rewardNote.textContent = result.duplicate
-        ? "Level already cleared · repeat reward prevented"
-        : displayedRewardAmount === "0"
-            ? "No reward for this star rating"
-            : "Credited to available balance";
-    if (gamePointsSession) {
-        document.getElementById("completion-balance").textContent =
-            `${formatCredits(balanceAmount)} points`;
-        document.getElementById("completion-balance-note").textContent = "Available game points";
-    }
-    backendStatus = "Connected to the RelicGrid leaderboard.";
-    return result;
-}
-
-async function saveWalletLevelCompletionAutomatically(detail) {
-    for (let attempt = 0; attempt < 3; attempt++) {
-        try {
-            return await saveWalletLevelCompletion(detail);
-        } catch (error) {
-            const retryable = /level_completion_unavailable|level_timer_unavailable|Secure completion failed \(5\d\d\)|timed out|Failed to fetch|NetworkError/i
-                .test(error.message);
-            if (!retryable || attempt === 2) throw error;
-            await new Promise((resolve) => setTimeout(resolve, 750 * (attempt + 1)));
-        }
-    }
-    throw new Error("Automatic level completion save did not finish.");
-}
-
-async function confirmPendingLevelCompletion(pending) {
-    if (!pending.promise) {
-        pending.promise = saveWalletLevelCompletionAutomatically(pending.detail);
-    }
-    const confirmation = pending.promise;
-    try {
-        return await confirmation;
-    } finally {
-        if (pending.promise === confirmation) pending.promise = null;
-    }
-}
-
 const withdrawalAddressInput = document.getElementById("withdrawal-wallet-address");
 const withdrawalAmountInput = document.getElementById("withdrawal-amount");
 const withdrawalMaxButton = document.getElementById("withdrawal-max");
@@ -3088,19 +2919,7 @@ document.getElementById("withdrawal-refresh")?.addEventListener("click", () => {
     void refreshWithdrawalStatus();
 });
 
-window.addEventListener("fluxgrid:level-timer-start", (event) => {
-    const sessionId = event.detail?.walletSessionId;
-    const gamePoints = event.detail?.gamePointsSession === true;
-    if (!sessionId || sessionId !== activeWalletLevelSessionId) return;
-    walletTimerStartPromise = requestWalletLevelTimer(sessionId, gamePoints);
-    void walletTimerStartPromise.catch((error) => {
-        console.error("Server-authoritative level timer did not start.", error);
-        document.getElementById("game-status").textContent =
-            "Server timer could not start. Completion will not be credited; please retry after checking your connection.";
-    });
-});
-
-window.addEventListener("fluxgrid:level-complete", async (event) => {
+window.addEventListener("fluxgrid:level-complete", (event) => {
     const detail = event.detail ?? {};
     const number = detail.number;
     if (!Number.isInteger(number) || number < 1 || number > 99) {
@@ -3109,57 +2928,94 @@ window.addEventListener("fluxgrid:level-complete", async (event) => {
     }
     if (number === 1 && !player.tutorialSeen) {
         player.tutorialSeen = true;
-        savePlayer();
     }
 
-    if (detail.walletSessionId) {
-        const pending = { detail, number, promise: null };
-        pendingCompletionConfirmation = pending;
-        try {
-            const result = await confirmPendingLevelCompletion(pending);
-            if (pendingCompletionConfirmation === pending) {
-                pendingCompletionConfirmation = null;
-            }
-            const rewardAmount = detail.gamePointsSession ? result.rewardPoints : result.rewardCredits;
-            const rewardUnit = detail.gamePointsSession ? "game points" : "credits";
-            setLevelEntryMessage(
-                `Level ${number} saved. ${rewardAmount} ${rewardUnit} ${rewardAmount === "0" ? "awarded" : "confirmed"}; balance is backend verified.`,
-                "success"
-            );
-        } catch (error) {
-            console.error("Server-verified level completion could not be saved.", error);
-            document.getElementById("completion-reward-note").textContent =
-                "Completion is still being verified. The reward will appear after the server confirms it.";
-            document.getElementById("completion-balance-note").textContent =
-                "Showing the last server-confirmed balance";
-            document.getElementById("game-status").textContent =
-                "We couldn't confirm completion yet. Nothing is awarded until the server confirms it. NEXT LEVEL will retry before continuing.";
-            const nextLevelButton = document.getElementById("next-level");
-            nextLevelButton.hidden = false;
-            nextLevelButton.disabled = number >= 99;
-            nextLevelButton.dataset.nextLevel = String(number + 1);
-            nextLevelButton.textContent = number >= 99 ? "CAMPAIGN COMPLETE" : "NEXT LEVEL →";
-            if (number === 99) playCampaignEnding();
-            return;
-        }
-    } else {
+    if (!detail.walletSessionId || detail.gamePointsSession === true) {
+        savePlayer();
         const nextLevelButton = document.getElementById("next-level");
         nextLevelButton.hidden = false;
         nextLevelButton.disabled = number >= 99;
         nextLevelButton.dataset.nextLevel = String(number + 1);
         nextLevelButton.textContent = number >= 99 ? "PRACTICE COMPLETE" : "NEXT LEVEL →";
         document.getElementById("game-status").textContent =
-            "Practice complete. No credits, leaderboard points, or saved progress were awarded.";
+            "Practice complete. No wallet credits, local reward, or campaign progress was awarded.";
         if (number === 99) playCampaignEnding();
         return;
     }
+
+    const level = levels[number - 1];
+    const result = evaluateLevelStars(level, detail.elapsedMilliseconds, true);
+    if (result.status !== "completed") {
+        console.error("Completed level did not produce a valid local reward result.", detail);
+        document.getElementById("game-status").textContent =
+            "The local result could not be calculated. Your wallet balance was not changed.";
+        return;
+    }
+
+    const previousState = {
+        localGameRewardEntries: player.localGameRewardEntries,
+        completedLevels: player.completedLevels,
+        unlockedLevel: player.unlockedLevel,
+        lastLevel: player.lastLevel,
+        tutorialSeen: player.tutorialSeen
+    };
+    let reward;
+    try {
+        reward = awardLocalGameReward(player.localGameRewardEntries, {
+            entryId: detail.walletSessionId,
+            levelNumber: number,
+            stars: result.stars,
+            amountCredits: result.rewardCredits
+        });
+        player.localGameRewardEntries = reward.entries;
+        player.completedLevels = [...new Set([...player.completedLevels, number])].sort((a, b) => a - b);
+        player.unlockedLevel = Math.min(99, Math.max(player.unlockedLevel, number + 1));
+        player.lastLevel = Math.min(99, number + 1);
+        savePlayer();
+    } catch (error) {
+        Object.assign(player, previousState);
+        console.error("Local level reward could not be saved on this device.", error);
+        document.getElementById("completion-reward-note").textContent =
+            "Could not save this local reward on this device.";
+        document.getElementById("game-status").textContent =
+            "Your result was solved, but its local reward could not be saved. Your wallet was not changed.";
+        const nextLevelButton = document.getElementById("next-level");
+        nextLevelButton.hidden = false;
+        nextLevelButton.disabled = number >= 99;
+        nextLevelButton.dataset.nextLevel = String(number + 1);
+        nextLevelButton.textContent = number >= 99 ? "CAMPAIGN COMPLETE" : "NEXT LEVEL →";
+        if (number === 99) playCampaignEnding();
+        return;
+    }
+
+    renderProfile();
+    renderLevels();
+    const rewardAmount = reward.awarded ? result.rewardCredits : 0;
+    document.getElementById("completion-stars").textContent = `${result.stars} / 3`;
+    document.getElementById("completion-star-icons").textContent =
+        `${"★".repeat(result.stars)}${"☆".repeat(3 - result.stars)}`;
+    document.getElementById("completion-reward-label").textContent = "LOCAL GAME REWARD";
+    document.getElementById("completion-reward").textContent =
+        `+${formatCredits(rewardAmount)} credits`;
+    document.getElementById("completion-reward-note").textContent = reward.awarded
+        ? "Saved on this device only · not withdrawable"
+        : "This paid entry has already been rewarded";
+    document.getElementById("completion-balance").textContent =
+        `${formatCredits(getLocalGameRewardBalance(player.localGameRewardEntries))} credits`;
+    document.getElementById("completion-balance-note").textContent =
+        "Device-only gameplay balance · not withdrawable";
+    document.getElementById("game-status").textContent =
+        `Level ${number} cleared. +${formatCredits(rewardAmount)} local game credits; not added to your wallet.`;
+    setLevelEntryMessage(
+        `Level ${number} cleared. Local reward: ${formatCredits(rewardAmount)} credits. This balance is device-only and cannot be withdrawn.`,
+        "success"
+    );
 
     const nextLevelButton = document.getElementById("next-level");
     nextLevelButton.hidden = false;
     nextLevelButton.disabled = number >= 99;
     nextLevelButton.dataset.nextLevel = String(number + 1);
     nextLevelButton.textContent = number >= 99 ? "CAMPAIGN COMPLETE" : "NEXT LEVEL →";
-    renderProfile();
     if (number === 99) playCampaignEnding();
 });
 

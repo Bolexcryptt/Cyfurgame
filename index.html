@@ -175,10 +175,18 @@
                         <p class="wallet-description">Your verified credits and deposit activity, secured by RelicGrid's server-side payment checks.</p>
                         <p class="wallet-exchange-rate">EXCHANGE RATE <b id="wallet-exchange-rate">1 CYFUR = 1,000 CREDITS</b> · DISPLAY ONLY</p>
                         <div class="wallet-data-panel wallet-balance-panel">
-                            <span class="wallet-field-label">VERIFIED IN-GAME BALANCE</span>
+                            <span class="wallet-field-label">VERIFIED WALLET BALANCE</span>
                             <b id="wallet-balance">—</b>
                             <small id="wallet-balance-state">SIGN IN TO VIEW BALANCE</small>
                             <button id="wallet-balance-refresh" class="wallet-refresh" type="button">REFRESH BALANCE</button>
+                        </div>
+                        <div class="wallet-data-panel local-game-reward-panel">
+                            <span class="wallet-field-label">DEVICE-ONLY GAME REWARDS · NOT WITHDRAWABLE</span>
+                            <b id="local-game-reward-balance">0 credits</b>
+                            <small>Separate from your verified wallet balance; cannot be used for deposits or withdrawals.</small>
+                            <ol id="local-game-reward-history" class="local-game-reward-history" aria-label="Recent local game rewards">
+                                <li>No local game rewards recorded.</li>
+                            </ol>
                         </div>
                     </div>
                     <div class="wallet-home-details">
@@ -227,7 +235,7 @@
                         <div class="wallet-emblem" aria-hidden="true"><i></i><b>W</b></div>
                         <span class="eyebrow"><span class="wallet-signal"></span> PLAYER WITHDRAWAL // SECURE SERVER-SIDE TRANSFER</span>
                         <h2 id="withdrawal-heading">Withdraw CYFUR</h2>
-                        <p class="wallet-description">Withdrawal requests unlock after levels 1-30 have server-saved completion records; local game-access-point clears do not count. Transfers are sent on-chain only after the approved treasury, wallet config, and signer are verified.</p>
+                        <p class="wallet-description">Withdrawal requests unlock after levels 1-30 have server-saved completion records; device-only campaign clears and local game rewards do not count. Transfers are sent on-chain only after the approved treasury, wallet config, and signer are verified.</p>
                     </div>
                     <div class="wallet-home-details">
                         <div class="wallet-withdrawal-summary">
@@ -324,7 +332,7 @@
                         <tbody id="leaderboard-rows"></tbody>
                     </table>
                 </div>
-                <p class="leaderboard-footnote">Rank is based on the number of distinct completed levels; ties are ordered by callsign, then account creation time. Progress is shared through RelicGrid.</p>
+                <p class="leaderboard-footnote">Rank is based on server-saved distinct level clears; ties are ordered by callsign, then account creation time. Device-only campaign progress and local game rewards are not sent to the leaderboard.</p>
             </main>
         </section>
 
@@ -462,7 +470,7 @@
                             <small id="completion-star-icons" aria-hidden="true"></small>
                         </div>
                         <div class="completion-metric">
-                            <span id="completion-reward-label">ESTIMATED CREDIT REWARD</span>
+                            <span id="completion-reward-label">LOCAL GAME REWARD</span>
                             <strong id="completion-reward">—</strong>
                             <small id="completion-reward-note"></small>
                         </div>
@@ -471,7 +479,7 @@
                             <strong id="completion-time">—</strong>
                         </div>
                         <div class="completion-metric completion-balance">
-                            <span>AVAILABLE BALANCE</span>
+                            <span>LOCAL GAME REWARD BALANCE</span>
                             <strong id="completion-balance">—</strong>
                             <small id="completion-balance-note"></small>
                         </div>

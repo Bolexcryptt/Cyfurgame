@@ -42,6 +42,11 @@ import {
     mergeCompletedLevels,
     levels
 } from "../levels.js";
+import {
+    awardLocalGameReward,
+    getLocalGameRewardBalance,
+    normalizeLocalGameRewardEntries
+} from "../game-reward-ledger.mjs";
 
 const require = createRequire(import.meta.url);
 const nacl = require("tweetnacl");
@@ -703,47 +708,78 @@ test("transition videos play every five completed levels without repeating a pla
     assert.throws(() => getPendingLevelTransition(99), TypeError);
 });
 
-test("NEXT LEVEL remains available during reward confirmation and shares the pending save", () => {
+test("local gameplay rewards are recorded once per paid entry and remain separate from the wallet", () => {
+    const first = awardLocalGameReward([], {
+        entryId: "paid-entry-13",
+        levelNumber: 13,
+        stars: 3,
+        amountCredits: 401,
+        awardedAt: "2025-01-01T00:00:00.000Z"
+    });
+    assert.equal(first.awarded, true);
+    assert.equal(first.balanceCredits, "401");
+
+    const duplicate = awardLocalGameReward(first.entries, {
+        entryId: "paid-entry-13",
+        levelNumber: 13,
+        stars: 3,
+        amountCredits: 401,
+        awardedAt: "2025-01-01T00:01:00.000Z"
+    });
+    assert.equal(duplicate.awarded, false);
+    assert.equal(duplicate.balanceCredits, "401");
+
+    const second = awardLocalGameReward(duplicate.entries, {
+        entryId: "paid-entry-14",
+        levelNumber: 14,
+        stars: 2,
+        amountCredits: 42,
+        awardedAt: "2025-01-01T00:02:00.000Z"
+    });
+    assert.equal(second.balanceCredits, "443");
+    assert.equal(getLocalGameRewardBalance(second.entries), "443");
+    assert.equal(normalizeLocalGameRewardEntries(second.entries).length, 2);
+    assert.throws(() => awardLocalGameReward(second.entries, {
+        entryId: "invalid",
+        levelNumber: 100,
+        stars: 3,
+        amountCredits: 1
+    }), /valid paid level reward record/);
+});
+
+test("NEXT LEVEL advances without waiting for a completion RPC or server timer", () => {
     const app = readFileSync(new URL("../app.js", import.meta.url), "utf8");
     const scene = readFileSync(new URL("../script.js", import.meta.url), "utf8");
     const clickHandler = app.slice(
         app.indexOf('document.getElementById("next-level").addEventListener'),
         app.indexOf('\ndocument.getElementById("home-levels-toggle")')
     );
-    assert.match(clickHandler, /await confirmPendingLevelCompletion\(pending\)/);
     assert.match(clickHandler, /await startLevel\(number, true\)/);
-    assert.match(app, /async function confirmPendingLevelCompletion\(pending\)/);
+    assert.doesNotMatch(clickHandler, /confirmPendingLevelCompletion|level-completion|level-session/);
+    assert.doesNotMatch(app, /saveWalletLevelCompletion|requestWalletLevelTimer|confirmPendingLevelCompletion/);
+    assert.doesNotMatch(app, /apiUrl\("level-completion"\)|apiUrl\("level-session"\)/);
+    assert.doesNotMatch(scene, /fluxgrid:level-timer-start/);
     assert.match(scene, /nextLevelButton\.disabled = level\.number >= levels\.length/);
-    const completionSave = app.slice(
-        app.indexOf("async function saveWalletLevelCompletion(detail)"),
-        app.indexOf("\nasync function saveWalletLevelCompletionAutomatically")
+    const completionHandler = app.slice(
+        app.indexOf('window.addEventListener("fluxgrid:level-complete"'),
+        app.indexOf("\nbackendReady = initializeBackend()")
     );
-    assert.doesNotMatch(completionSave, /refreshOwnProgress\(/);
-    assert.match(completionSave, /if \(!response\.ok \|\| result\.status !== "confirmed" \|\|[\s\S]*?rewardAmount/);
-    assert.doesNotMatch(completionSave, /if \(!response\.ok \|\| result\.status !== "confirmed" \|\|[\s\S]{0,100}balanceAmount/);
+    assert.match(completionHandler, /awardLocalGameReward/);
+    assert.match(completionHandler, /savePlayer\(\)/);
+    assert.match(completionHandler, /not added to your wallet/);
+    assert.doesNotMatch(completionHandler, /fetch\(|supabase\.rpc|level-completion/);
     assert.match(app, /function renderHome\(\)[\s\S]*?void refreshOwnProgress\(\)\.catch/);
 });
 
-test("level completion retries the idempotent server timer start and bounds stalled requests", () => {
+test("local reward storage and completion summary are explicitly non-withdrawable", () => {
     const app = readFileSync(new URL("../app.js", import.meta.url), "utf8");
-    const timerRequest = app.slice(
-        app.indexOf("async function requestWalletLevelTimer"),
-        app.indexOf("\nasync function saveWalletLevelCompletion")
-    );
-    const completionSave = app.slice(
-        app.indexOf("async function saveWalletLevelCompletion(detail)"),
-        app.indexOf("\nasync function saveWalletLevelCompletionAutomatically")
-    );
-    const timerSql = readFileSync(
-        new URL("../supabase-wallet-deposit-processing.sql", import.meta.url),
-        "utf8"
-    );
-    assert.match(app, /async function waitForLevelRequest\(promise[\s\S]*?Promise\.race\([\s\S]*?timeoutMessage/);
-    assert.match(app, /async function fetchLevelRequest\([\s\S]*?new AbortController\(\)[\s\S]*?controller\.abort\(\)/);
-    assert.match(timerRequest, /async function ensureWalletLevelTimerStarted\(detail\)[\s\S]*?catch \(error\)[\s\S]*?requestWalletLevelTimer/);
-    assert.match(completionSave, /await ensureWalletLevelTimerStarted\(detail\)/);
-    assert.match(completionSave, /fetchLevelRequest\([\s\S]*?LEVEL_COMPLETION_TIMEOUT_MS/);
-    assert.match(timerSql, /timer_started_at = coalesce\(timer_started_at, now\(\)\)/);
+    const html = readFileSync(new URL("../index.html", import.meta.url), "utf8");
+    assert.match(app, /localGameRewardEntries: normalizeLocalGameRewardEntries\(parsed\.localGameRewardEntries\)/);
+    assert.match(app, /player\.localGameRewardEntries = reward\.entries/);
+    assert.match(html, /VERIFIED WALLET BALANCE/);
+    assert.match(html, /DEVICE-ONLY GAME REWARDS · NOT WITHDRAWABLE/);
+    assert.match(html, /id="local-game-reward-history"/);
+    assert.match(html, /LOCAL GAME REWARD BALANCE/);
 });
 
 test("mirror undo restores only the last two board states", () => {
@@ -785,6 +821,23 @@ test("ground decoration has no static linework while the live laser path remains
     assert.doesNotMatch(floor, /LineSegments|createCracks|seamVertices/);
     assert.doesNotMatch(scene, /createLightNetwork|createSquarePlacementGrid/);
     assert.match(scene, /function traceLight\(\)[\s\S]*?traceLaserRoute\(activeLevel/);
+});
+
+test("mirror placement rejects blocks and hides the placement marker on them", () => {
+    const scene = readFileSync(new URL("../script.js", import.meta.url), "utf8");
+    const app = readFileSync(new URL("../app.js", import.meta.url), "utf8");
+    const placement = scene.slice(
+        scene.indexOf("function placeOrRotateMirror"),
+        scene.indexOf("function toggleLaunchDirection")
+    );
+    assert.match(
+        placement,
+        /activeLevel\.obstacles\.some\(\(obstacle\) => obstacle\.row === row && obstacle\.col === col\)[\s\S]*?Mirrors cannot be placed on blocks\.[\s\S]*?return;/
+    );
+    assert.match(scene, /hoverRing\.visible = !corePowered && !tracing && obstacleIndex < 0/);
+    const reset = scene.slice(scene.indexOf("function resetGame"), scene.indexOf("function pickTile"));
+    assert.match(reset, /new CustomEvent\("fluxgrid:game-reset"\)/);
+    assert.match(app, /window\.addEventListener\("fluxgrid:game-reset", startMusic\)/);
 });
 
 test("startup plays company and player introductions, then game video, then opens the game menu", () => {
@@ -843,16 +896,14 @@ test("startup plays company and player introductions, then game video, then open
     assert.match(nextLevelHandler, /getPendingLevelTransition\(\s*number - 1/);
     assert.match(nextLevelHandler, /await startLevel\(number, true\)/);
     assert.match(nextLevelHandler, /if \(!started\)[\s\S]*?level-entry-status/);
-    assert.match(nextLevelHandler, /pendingCompletionConfirmation[\s\S]*?await confirmPendingLevelCompletion\(pending\)[\s\S]*?await startLevel\(number, true\)/);
-    assert.doesNotMatch(app, /pendingLevelCompletionRetry|RETRY SAVE & NEXT/);
+    assert.doesNotMatch(nextLevelHandler, /pendingCompletionConfirmation|confirmPendingLevelCompletion/);
     const levelCompletionHandler = app.slice(
         app.indexOf('window.addEventListener("fluxgrid:level-complete"'),
         app.indexOf('\nbackendReady = initializeBackend()')
     );
-    assert.match(levelCompletionHandler, /await confirmPendingLevelCompletion\(pending\)/);
-    assert.match(app, /async function saveWalletLevelCompletionAutomatically\(detail\)[\s\S]*?attempt < 3[\s\S]*?level_completion_unavailable/);
-    assert.match(app, /result\.diagnosticCode[\s\S]*?result\.stage[\s\S]*?throw new Error\(`\$\{result\.error/);
-    assert.match(levelCompletionHandler, /We couldn't confirm completion yet\.[\s\S]*?Nothing is awarded until the server confirms it\.[\s\S]*?NEXT LEVEL will retry before continuing/);
+    assert.match(levelCompletionHandler, /awardLocalGameReward/);
+    assert.match(levelCompletionHandler, /Device-only gameplay balance · not withdrawable/);
+    assert.doesNotMatch(levelCompletionHandler, /confirmPendingLevelCompletion|level-completion|supabase\.rpc|fetch\(/);
     assert.match(levelCompletionHandler, /const nextLevelButton = document\.getElementById\("next-level"\);[\s\S]*?nextLevelButton\.hidden = false;[\s\S]*?nextLevelButton\.disabled = number >= 99;[\s\S]*?nextLevelButton\.dataset\.nextLevel = String\(number \+ 1\)/);
     assert.match(levelCompletionHandler, /nextLevelButton\.textContent = number >= 99 \? "CAMPAIGN COMPLETE" : "NEXT LEVEL →"/);
     assert.doesNotMatch(levelCompletionHandler, /pendingLevel\?\.number === number/);
@@ -890,7 +941,7 @@ test("startup plays company and player introductions, then game video, then open
     assert.doesNotMatch(html, /music\.wav/);
     assert.match(html, /id="completion-balance"/);
     assert.doesNotMatch(html, /CAMPAIGN SCORE|TOKEN TRANSFER|WALLET CREDIT BALANCE|completion-points|completion-token-reward/);
-    assert.match(html, /LEVEL COMPLETED[\s\S]*ENTRY FEE[\s\S]*STAR RATING[\s\S]*ESTIMATED CREDIT REWARD[\s\S]*SOLVE TIME[\s\S]*AVAILABLE BALANCE/);
+    assert.match(html, /LEVEL COMPLETED[\s\S]*ENTRY FEE[\s\S]*STAR RATING[\s\S]*LOCAL GAME REWARD[\s\S]*SOLVE TIME[\s\S]*LOCAL GAME REWARD BALANCE/);
 
     const scene = readFileSync(new URL("../script.js", import.meta.url), "utf8");
     const activationFinish = scene.indexOf("if (activationProgress >= 1 && pendingLevelCompletion)");
@@ -1127,14 +1178,14 @@ test("campaign levels use authenticated wallet credits for entry", () => {
     assert.match(app, /function refreshServerGamePoints\(\)/);
     assert.doesNotMatch(app, /legacyGameAccessPoints|relicgrid\.game-access\./);
     assert.doesNotMatch(app, /verifyCyfurGamePointsDeposit|getSolscanSignature|game-access-form/);
-    assert.match(app, /Practice complete\. No credits, leaderboard points, or saved progress were awarded/);
+    assert.match(app, /Practice complete\. No wallet credits, local reward, or campaign progress was awarded/);
 
     const scene = readFileSync(new URL("../script.js", import.meta.url), "utf8");
-    assert.match(scene, /ESTIMATED CREDIT REWARD/);
+    assert.match(scene, /LOCAL GAME REWARD/);
     assert.match(scene, /PRACTICE REWARD/);
     assert.match(scene, /Practice clears do not earn rewards/);
     assert.doesNotMatch(scene, /Pending server confirmation; not yet credited/);
-    assert.match(scene, /ESTIMATED POINT REWARD/);
+    assert.match(scene, /LOCAL GAME REWARD/);
     assert.match(scene, /No reward is credited for a failed attempt/);
     assert.match(scene, /traceLaserRoute\(activeLevel, mirrorOrientations, launchDirection\)/);
     const levelsModule = readFileSync(new URL("../levels.js", import.meta.url), "utf8");
@@ -1332,8 +1383,7 @@ test("deposit UI shows only the treasury wallet and accepts a transaction ID wit
     const walletApi = readFileSync(new URL("../api/wallet.js", import.meta.url), "utf8");
     assert.match(walletApi, /transaction_signature,amount_raw,token_decimals,status,credit_amount_credits/);
     assert.doesNotMatch(walletApi, /account-bound amount and memo|submit the transaction link/i);
-    assert.match(app, /serverGamePoints = String\(balanceAmount\)/);
-    assert.match(app, /result\.duplicate \? "0" : rewardAmount/);
+    assert.doesNotMatch(app, /apiUrl\("level-completion"\)|serverGamePoints = String\(balanceAmount\)/);
     assert.doesNotMatch(app, /saveGameAccessState|relicgrid\.game-access\.[^`]*setItem/);
     const gamePointsMigration = readFileSync(new URL("../supabase-game-points.sql", import.meta.url), "utf8");
     assert.match(gamePointsMigration, /when 3 then floor\(v_session\.entry_cost_points \* 1\.6\)/i);
@@ -1575,7 +1625,7 @@ test("campaign levels use authenticated wallet credits and remain globally locka
     assert.match(html, /id="game-guide"/);
     assert.match(html, /Charge crystals in order/);
     assert.match(html, /Choose a sector to enter using verified wallet credits/);
-    assert.match(html, /AVAILABLE BALANCE/);
+    assert.match(html, /VERIFIED WALLET BALANCE/);
     assert.doesNotMatch(html, /GAME POINT BALANCE/);
     assert.match(html, /LIVE TUTORIAL/);
     assert.match(app, /game-guide-close/);
@@ -1909,6 +1959,27 @@ test("server proof validator accepts every generated solution and rejects fabric
     assert.equal((await verifyLevelProof(levels[0], [], 0)).connected, false);
 });
 
+test("server proof rejects mirrors placed on pillar blocks", async () => {
+    const level = levels[10];
+    const mirrors = level.solutionMirrors.map(({ row, col, orientation }) => ({
+        row,
+        col,
+        slash: orientation === "/"
+    }));
+    const pillarLevel = {
+        ...level,
+        obstacles: [
+            ...level.obstacles,
+            { row: mirrors[0].row, col: mirrors[0].col }
+        ]
+    };
+
+    assert.deepEqual(await verifyLevelProof(pillarLevel, mirrors, level.start.direction), {
+        connected: false,
+        reason: "invalid_mirror_position"
+    });
+});
+
 test("server proof requires every crystal to be hit in the correct color sequence", async () => {
     const level = levels[0];
     const mirrors = level.solutionMirrors.map(({ row, col, orientation }) => ({
@@ -2104,6 +2175,48 @@ test("level completion API derives the reward from server time and returns dupli
         assert.equal(duplicateResponse.statusCode, 200);
         assert.equal(duplicateResponse.payload.duplicate, true);
         assert.equal(duplicateResponse.payload.rewardCredits, "160");
+
+        completedAt = null;
+        globalThis.fetch = async (url) => {
+            const target = String(url);
+            if (target.includes("/auth/v1/user")) {
+                return new Response(JSON.stringify({ id: "test-player" }), { status: 200 });
+            }
+            if (target.includes("/wallet_level_sessions?")) {
+                return new Response(JSON.stringify([{
+                    id: "123e4567-e89b-42d3-a456-426614174000",
+                    player_id: "test-player",
+                    level_number: 1,
+                    timer_started_at: new Date(Date.now() - 1000).toISOString(),
+                    expires_at: new Date(Date.now() + 60000).toISOString(),
+                    completed_at: null
+                }]), { status: 200 });
+            }
+            if (target.includes("/rpc/complete_wallet_level")) {
+                return new Response(JSON.stringify({
+                    code: "22023",
+                    message: "Invalid level completion."
+                }), { status: 400 });
+            }
+            throw new Error(`Unexpected failed-completion test request: ${target}`);
+        };
+        const failedResponse = makeResponse();
+        await completionEndpoint({
+            method: "POST",
+            headers: { authorization: "Bearer test-access-token" },
+            body: {
+                sessionId: "123e4567-e89b-42d3-a456-426614174000",
+                mirrors,
+                launchDirection: level.start.direction
+            }
+        }, failedResponse);
+        assert.equal(failedResponse.statusCode, 422);
+        assert.deepEqual(failedResponse.payload, {
+            error: "invalid_level_completion",
+            reason: "invalid_completion_parameters",
+            diagnosticCode: "22023",
+            stage: "completion_rpc"
+        });
     } finally {
         globalThis.fetch = originalFetch;
         for (const name of envNames) {

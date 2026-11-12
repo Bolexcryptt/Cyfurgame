@@ -357,3 +357,22 @@ test("the SQL accounting functions serialize entry and award rewards once per se
     assert.doesNotMatch(depositAttributionMigration, /player's verified wallet/);
     assert.match(depositAttributionMigration, /p_source_wallet_address text/);
 });
+
+test("local-only completion allows a new paid entry without changing charging safeguards", () => {
+    const migration = readFileSync(
+        new URL("../supabase-wallet-local-completions.sql", import.meta.url),
+        "utf8"
+    );
+    const start = migration.slice(
+        migration.indexOf("create or replace function public.start_wallet_level("),
+        migration.indexOf("revoke all on function public.start_wallet_level(")
+    );
+    assert.doesNotMatch(start, /v_active_session|completed_at is null\s+and expires_at > now\(\)|another level session is already active/i);
+    assert.match(start, /entry_request_id = p_request_id/);
+    assert.match(start, /v_existing_session\.completed_at is not null/);
+    assert.match(start, /v_cost := floor\(100 \* power\(1\.08::numeric, p_level_number - 1\)\)::bigint/);
+    assert.match(start, /if v_balance < v_cost then/);
+    assert.match(start, /'game_entry', -v_cost/);
+    assert.match(start, /level-entry:' \|\| v_level_session::text/);
+    assert.doesNotMatch(migration, /complete_wallet_level|complete_game_point_level/);
+});

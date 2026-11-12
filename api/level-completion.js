@@ -184,7 +184,17 @@ module.exports = async function levelCompletion(request, response) {
             if (/reward does not match/i.test(error.databaseMessage ?? "")) {
                 return sendJson(response, 503, { error: "wallet_migration_required" });
             }
-            return sendJson(response, 422, { error: "invalid_level_completion" });
+            const reasonByMessage = new Map([
+                ["Invalid level completion.", "invalid_completion_parameters"],
+                ["Invalid wallet ledger entry.", "invalid_reward_ledger_entry"],
+                ["Insufficient credits.", "wallet_balance_rejected"]
+            ]);
+            return sendJson(response, 422, {
+                error: "invalid_level_completion",
+                reason: reasonByMessage.get(error.databaseMessage) ?? "database_rejected_completion",
+                diagnosticCode: error.code,
+                stage: failureStage
+            });
         }
         const diagnosticCode = /^[A-Z0-9]{4,8}$/.test(error.code ?? "")
             ? error.code

@@ -1649,11 +1649,6 @@ function startScene() {
     function startSolveTimer() {
         if (levelStartedAt === null) {
             levelStartedAt = performance.now();
-            if (walletLevelSessionId) {
-                window.dispatchEvent(new CustomEvent("fluxgrid:level-timer-start", {
-                    detail: { walletSessionId: walletLevelSessionId, gamePointsSession }
-                }));
-            }
         }
     }
 
@@ -1673,20 +1668,24 @@ function startScene() {
         const reward = document.getElementById("completion-reward");
         const rewardNote = document.getElementById("completion-reward-note");
         rewardLabel.textContent = walletLevelSessionId
-            ? gamePointsSession ? "ESTIMATED POINT REWARD" : "ESTIMATED CREDIT REWARD"
+            ? "LOCAL GAME REWARD"
             : "PRACTICE REWARD";
         reward.textContent = walletLevelSessionId
-            ? `${result.rewardCredits.toLocaleString("en-US")} ${gamePointsSession ? "points" : "credits"}`
+            ? `+${result.rewardCredits.toLocaleString("en-US")} credits`
             : "0 credits";
         rewardNote.textContent = walletLevelSessionId
-            ? ""
+            ? "Saved on this device only · not withdrawable"
             : "Practice clears do not earn rewards";
         const availableBalance = document.getElementById("completion-balance");
         document.getElementById("completion-balance-note").textContent =
             walletLevelSessionId
-                ? ""
+                ? "Device-only gameplay balance · not withdrawable"
                 : "Practice only";
-        if (!walletLevelSessionId) availableBalance.textContent = "Practice only";
+        if (walletLevelSessionId) {
+            availableBalance.textContent = "Saved locally";
+        } else {
+            availableBalance.textContent = "Practice only";
+        }
         const nextLevelButton = document.getElementById("next-level");
         nextLevelButton.hidden = false;
         nextLevelButton.disabled = level.number >= levels.length;
@@ -1737,6 +1736,10 @@ function startScene() {
         if ((row === GRID.start.row && col === GRID.start.col) ||
             (row === GRID.target.row && col === GRID.target.col)) {
             setFeedback("The source and battery occupy those tiles.");
+            return;
+        }
+        if (activeLevel.obstacles.some((obstacle) => obstacle.row === row && obstacle.col === col)) {
+            setFeedback("A block occupies this tile. Mirrors cannot be placed on blocks.", "miss");
             return;
         }
         if (levelCrystals.has(gridKey(row, col))) {
@@ -1919,6 +1922,7 @@ function startScene() {
                 `The preview shows the beam leaving the source. Place a mirror at row ${tutorialMirror.row + 1}, column ${tutorialMirror.col + 1}.`
             );
         }
+        window.dispatchEvent(new CustomEvent("fluxgrid:game-reset"));
     }
 
     function pickTile(event) {
@@ -1949,7 +1953,7 @@ function startScene() {
                 ? 0.27
                 : 0.19 + 0.52 + (obstacleIndex % 2) * 0.16 + 0.08;
             hoverRing.position.set(gridX(cell.col), hoverHeight, gridZ(cell.row));
-            hoverRing.visible = !corePowered && !tracing;
+            hoverRing.visible = !corePowered && !tracing && obstacleIndex < 0;
         });
 
         canvas.addEventListener("pointerup", (event) => {
