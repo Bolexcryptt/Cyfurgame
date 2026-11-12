@@ -724,6 +724,28 @@ test("NEXT LEVEL remains available during reward confirmation and shares the pen
     assert.match(app, /function renderHome\(\)[\s\S]*?void refreshOwnProgress\(\)\.catch/);
 });
 
+test("level completion retries the idempotent server timer start and bounds stalled requests", () => {
+    const app = readFileSync(new URL("../app.js", import.meta.url), "utf8");
+    const timerRequest = app.slice(
+        app.indexOf("async function requestWalletLevelTimer"),
+        app.indexOf("\nasync function saveWalletLevelCompletion")
+    );
+    const completionSave = app.slice(
+        app.indexOf("async function saveWalletLevelCompletion(detail)"),
+        app.indexOf("\nasync function saveWalletLevelCompletionAutomatically")
+    );
+    const timerSql = readFileSync(
+        new URL("../supabase-wallet-deposit-processing.sql", import.meta.url),
+        "utf8"
+    );
+    assert.match(app, /async function waitForLevelRequest\(promise[\s\S]*?Promise\.race\([\s\S]*?timeoutMessage/);
+    assert.match(app, /async function fetchLevelRequest\([\s\S]*?new AbortController\(\)[\s\S]*?controller\.abort\(\)/);
+    assert.match(timerRequest, /async function ensureWalletLevelTimerStarted\(detail\)[\s\S]*?catch \(error\)[\s\S]*?requestWalletLevelTimer/);
+    assert.match(completionSave, /await ensureWalletLevelTimerStarted\(detail\)/);
+    assert.match(completionSave, /fetchLevelRequest\([\s\S]*?LEVEL_COMPLETION_TIMEOUT_MS/);
+    assert.match(timerSql, /timer_started_at = coalesce\(timer_started_at, now\(\)\)/);
+});
+
 test("mirror undo restores only the last two board states", () => {
     const scene = readFileSync(new URL("../script.js", import.meta.url), "utf8");
     const html = readFileSync(new URL("../index.html", import.meta.url), "utf8");

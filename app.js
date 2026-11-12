@@ -51,6 +51,9 @@ import {
 } from "./wallet-provider.mjs";
 
 const storageKey = "fluxgrid.player.v1";
+const LEVEL_AUTH_TIMEOUT_MS = 10000;
+const LEVEL_TIMER_START_TIMEOUT_MS = 10000;
+const LEVEL_COMPLETION_TIMEOUT_MS = 20000;
 const accountEmailConfirmationCallback = isAccountEmailConfirmationCallback(window.location);
 const ImmersiveMode = registerPlugin("ImmersiveMode");
 const screens = [
@@ -1025,6 +1028,38 @@ function setLevelEntryMessage(message, state = "disabled") {
     const status = document.getElementById("level-entry-status");
     status.textContent = message;
     status.dataset.state = state;
+}
+
+async function waitForLevelRequest(promise, timeoutMilliseconds, timeoutMessage) {
+    let timeoutId;
+    try {
+        return await Promise.race([
+            promise,
+            new Promise((resolve, reject) => {
+                timeoutId = window.setTimeout(
+                    () => reject(new Error(timeoutMessage)),
+                    timeoutMilliseconds
+                );
+            })
+        ]);
+    } finally {
+        window.clearTimeout(timeoutId);
+    }
+}
+
+async function fetchLevelRequest(url, options, timeoutMilliseconds, timeoutMessage) {
+    const controller = new AbortController();
+    const timeoutId = window.setTimeout(() => controller.abort(), timeoutMilliseconds);
+    try {
+        const response = await fetch(url, { ...options, signal: controller.signal });
+        const result = await response.json().catch(() => ({}));
+        return { response, result };
+    } catch (error) {
+        if (controller.signal.aborted) throw new Error(timeoutMessage);
+        throw error;
+    } finally {
+        window.clearTimeout(timeoutId);
+    }
 }
 
 async function requestLevelEntry(levelNumber) {
@@ -2871,27 +2906,77 @@ document.getElementById("game-guide-close").addEventListener("click", () => {
 });
 document.querySelectorAll("[data-home]").forEach((button) => button.addEventListener("click", renderHome));
 
+async function requestWalletLevelTimer(sessionId, gamePoints) {
+    const { data, error } = await waitForLevelRequest(
+        supabase.auth.getSession(),
+        LEVEL_AUTH_TIMEOUT_MS,
+        "Player session check timed out before the timer started."
+    );
+    if (error) throw error;
+    const accessToken = data.session?.access_token;
+    if (!accessToken) throw new Error("Player authentication expired before the timer started.");
+    const { response, result } = await fetchLevelRequest(
+        apiUrl("level-session"),
+        {
+            method: "POST",
+            headers: {
+                Authorization: `Bearer ${accessToken}`,
+                "Content-Type": "application/json"
+            },
+            body: JSON.stringify({ sessionId, gamePoints }),
+            cache: "no-store"
+        },
+        LEVEL_TIMER_START_TIMEOUT_MS,
+        "Server level timer request timed out."
+    );
+    if (!response.ok || !result.startedAt) {
+        throw new Error(result.error || `Server timer could not start (${response.status}).`);
+    }
+    return true;
+}
+
+async function ensureWalletLevelTimerStarted(detail) {
+    try {
+        if (await walletTimerStartPromise) return;
+    } catch (error) {
+        console.warn("The original server timer request did not finish; retrying its idempotent start.", error);
+    }
+    walletTimerStartPromise = requestWalletLevelTimer(
+        detail.walletSessionId,
+        detail.gamePointsSession === true
+    );
+    await walletTimerStartPromise;
+}
+
 async function saveWalletLevelCompletion(detail) {
-    const { data, error } = await supabase.auth.getSession();
+    const { data, error } = await waitForLevelRequest(
+        supabase.auth.getSession(),
+        LEVEL_AUTH_TIMEOUT_MS,
+        "Player session check timed out before completion was saved."
+    );
     if (error) throw error;
     const accessToken = data.session?.access_token;
     if (!accessToken) throw new Error("Player authentication expired before completion was saved.");
-    await walletTimerStartPromise;
-    const response = await fetch(apiUrl("level-completion"), {
-        method: "POST",
-        headers: {
-            Authorization: `Bearer ${accessToken}`,
-            "Content-Type": "application/json"
+    await ensureWalletLevelTimerStarted(detail);
+    const { response, result } = await fetchLevelRequest(
+        apiUrl("level-completion"),
+        {
+            method: "POST",
+            headers: {
+                Authorization: `Bearer ${accessToken}`,
+                "Content-Type": "application/json"
+            },
+            body: JSON.stringify({
+                sessionId: detail.walletSessionId,
+                mirrors: detail.mirrors,
+                launchDirection: detail.launchDirection,
+                gamePoints: detail.gamePointsSession === true
+            }),
+            cache: "no-store"
         },
-        body: JSON.stringify({
-            sessionId: detail.walletSessionId,
-            mirrors: detail.mirrors,
-            launchDirection: detail.launchDirection,
-            gamePoints: detail.gamePointsSession === true
-        }),
-        cache: "no-store"
-    });
-    const result = await response.json().catch(() => ({}));
+        LEVEL_COMPLETION_TIMEOUT_MS,
+        "Level completion request timed out. Tap NEXT LEVEL to retry safely."
+    );
     const gamePointsSession = detail.gamePointsSession === true;
     const rewardAmount = gamePointsSession ? result.rewardPoints : result.rewardCredits;
     const balanceAmount = gamePointsSession ? result.balancePoints : result.balanceCredits;
@@ -2952,7 +3037,7 @@ async function saveWalletLevelCompletionAutomatically(detail) {
         try {
             return await saveWalletLevelCompletion(detail);
         } catch (error) {
-            const retryable = /level_completion_unavailable|Secure completion failed \(5\d\d\)|Failed to fetch|NetworkError/i
+            const retryable = /level_completion_unavailable|level_timer_unavailable|Secure completion failed \(5\d\d\)|timed out|Failed to fetch|NetworkError/i
                 .test(error.message);
             if (!retryable || attempt === 2) throw error;
             await new Promise((resolve) => setTimeout(resolve, 750 * (attempt + 1)));
@@ -3006,26 +3091,7 @@ window.addEventListener("fluxgrid:level-timer-start", (event) => {
     const sessionId = event.detail?.walletSessionId;
     const gamePoints = event.detail?.gamePointsSession === true;
     if (!sessionId || sessionId !== activeWalletLevelSessionId) return;
-    walletTimerStartPromise = (async () => {
-        const { data, error } = await supabase.auth.getSession();
-        if (error) throw error;
-        const accessToken = data.session?.access_token;
-        if (!accessToken) throw new Error("Player authentication expired before the timer started.");
-        const response = await fetch(apiUrl("level-session"), {
-            method: "POST",
-            headers: {
-                Authorization: `Bearer ${accessToken}`,
-                "Content-Type": "application/json"
-            },
-            body: JSON.stringify({ sessionId, gamePoints }),
-            cache: "no-store"
-        });
-        const result = await response.json().catch(() => ({}));
-        if (!response.ok || !result.startedAt) {
-            throw new Error(result.error || `Server timer could not start (${response.status}).`);
-        }
-        return true;
-    })();
+    walletTimerStartPromise = requestWalletLevelTimer(sessionId, gamePoints);
     void walletTimerStartPromise.catch((error) => {
         console.error("Server-authoritative level timer did not start.", error);
         document.getElementById("game-status").textContent =
