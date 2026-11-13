@@ -410,20 +410,31 @@ videoOrientationQuery.addEventListener("change", updateVideoOrientation);
 window.addEventListener("resize", updateVideoOrientation);
 window.screen.orientation?.addEventListener("change", updateVideoOrientation);
 document.addEventListener("visibilitychange", () => {
-    if (document.visibilityState === "hidden" && activeVideoPlayback) {
-        void failActiveVideoPlayback(
-            activeVideoPlayback.video,
-            new Error("Video playback was interrupted when the app was backgrounded.")
-        );
-    }
-});
-if (Capacitor.isNativePlatform()) {
-    void App.addListener("appStateChange", ({ isActive }) => {
-        if (!isActive && activeVideoPlayback) {
+    if (document.visibilityState === "hidden") {
+        pauseMusic();
+        if (activeVideoPlayback) {
             void failActiveVideoPlayback(
                 activeVideoPlayback.video,
                 new Error("Video playback was interrupted when the app was backgrounded.")
             );
+        }
+    } else if (!activeVideoPlayback && !document.getElementById("play-screen").hidden) {
+        startMusic();
+    }
+});
+window.addEventListener("pagehide", pauseMusic);
+if (Capacitor.isNativePlatform()) {
+    void App.addListener("appStateChange", ({ isActive }) => {
+        if (!isActive) {
+            pauseMusic();
+            if (activeVideoPlayback) {
+                void failActiveVideoPlayback(
+                    activeVideoPlayback.video,
+                    new Error("Video playback was interrupted when the app was backgrounded.")
+                );
+            }
+        } else if (!activeVideoPlayback && !document.getElementById("play-screen").hidden) {
+            startMusic();
         }
     }).catch((error) => console.error("Native video interruption listener could not be registered.", error));
     void App.addListener("backButton", ({ canGoBack }) => {
@@ -2652,6 +2663,7 @@ function playOpeningVideo(source, caption, onEnded, allowSkip = false) {
     videoSkip.hidden = !allowSkip;
     videoSkip.onclick = allowSkip ? () => void finishOpeningFlow() : null;
     const showPlayNow = source === "intro.mp4";
+    videoAction.classList.toggle("video-action-play-now", showPlayNow);
     videoAction.textContent = "PLAY NOW →";
     videoAction.hidden = !showPlayNow;
     videoAction.onclick = showPlayNow ? playGameVideo : null;
@@ -2776,7 +2788,7 @@ async function startLevel(number, resumeMusic = false, requirePaidEntry = false)
         const showTutorial = number === 1 && !player.tutorialSeen;
         gameGuide.hidden = !showTutorial;
         document.getElementById("first-level-tutorial").hidden = !showTutorial;
-        document.getElementById("game-guide-toggle").setAttribute("aria-expanded", String(showTutorial));
+        setPuzzleHintVisible(false);
         activeWalletLevelSessionId = entry.sessionId;
         activeLevelEntryCostCredits = entry.practice ? null : Number(entry.entryCostCredits);
         const skipButton = document.getElementById("skip-level");
@@ -2826,6 +2838,7 @@ async function startLevel(number, resumeMusic = false, requirePaidEntry = false)
 }
 
 function leaveGameplay(toHome = true) {
+    setPuzzleHintVisible(false);
     stopMusic();
     if (toHome) renderHome();
 }
@@ -3016,12 +3029,28 @@ document.getElementById("profile-open").addEventListener("click", () => {
 });
 document.getElementById("levels-open").addEventListener("click", () => leaveGameplay());
 document.getElementById("play-home").addEventListener("click", () => leaveGameplay());
-document.getElementById("game-guide-toggle").addEventListener("click", (event) => {
-    const button = event.currentTarget;
-    const guide = document.getElementById("game-guide");
-    const expanded = button.getAttribute("aria-expanded") === "true";
-    guide.hidden = expanded;
-    button.setAttribute("aria-expanded", String(!expanded));
+function renderPuzzleHint(level) {
+    const list = document.getElementById("hint-crystal-order");
+    list.replaceChildren();
+    for (const [index, crystal] of level.crystals.entries()) {
+        const item = document.createElement("li");
+        const order = document.createElement("strong");
+        order.textContent = `${String(index + 1).padStart(2, "0")} · CRYSTAL`;
+        const location = document.createElement("small");
+        location.textContent = `ROW ${crystal.row + 1} · COLUMN ${crystal.col + 1}`;
+        item.append(order, location);
+        list.append(item);
+    }
+}
+function setPuzzleHintVisible(visible) {
+    const panel = document.getElementById("puzzle-hint");
+    panel.hidden = !visible;
+    document.getElementById("hint-toggle").setAttribute("aria-expanded", String(visible));
+    if (visible && pendingLevel) renderPuzzleHint(pendingLevel);
+    window.dispatchEvent(new CustomEvent("fluxgrid:hint-visibility", { detail: { visible } }));
+}
+document.getElementById("hint-toggle").addEventListener("click", () => {
+    setPuzzleHintVisible(document.getElementById("puzzle-hint").hidden);
 });
 document.getElementById("game-guide-close").addEventListener("click", () => {
     document.getElementById("game-guide").hidden = true;
@@ -3030,9 +3059,12 @@ document.getElementById("game-guide-close").addEventListener("click", () => {
         player.tutorialSeen = true;
         savePlayer();
     }
-    const button = document.getElementById("game-guide-toggle");
-    button.setAttribute("aria-expanded", "false");
+    const button = document.getElementById("hint-toggle");
     button.focus();
+});
+document.getElementById("hint-close").addEventListener("click", () => {
+    setPuzzleHintVisible(false);
+    document.getElementById("hint-toggle").focus();
 });
 document.querySelectorAll("[data-home]").forEach((button) => button.addEventListener("click", renderHome));
 

@@ -5500,6 +5500,495 @@ body {
     .campaign-thank-you img { width: min(74vw, 560px); }
 }
 
+.hero-action-panel #continue-game {
+    min-height: 64px;
+    padding: 11px 16px;
+    border: 1px solid rgba(151, 244, 234, .72);
+    border-radius: 8px;
+    background:
+        radial-gradient(circle at 88% 50%, rgba(201, 255, 242, .24), transparent 30%),
+        linear-gradient(112deg, #155b68, #167d7d 62%, #996941);
+    color: #f3fffc;
+    box-shadow:
+        0 12px 30px rgba(37, 197, 205, .2),
+        inset 0 1px rgba(255, 255, 255, .46),
+        inset 0 -2px rgba(4, 33, 40, .25);
+    font-size: 11px;
+    letter-spacing: .14em;
+    transition: transform .18s ease, box-shadow .18s ease, filter .18s ease;
+}
+
+.hero-action-panel #continue-game:hover:not(:disabled) {
+    filter: brightness(1.09);
+    transform: translateY(-2px);
+    box-shadow:
+        0 16px 36px rgba(37, 197, 205, .3),
+        inset 0 1px rgba(255, 255, 255, .56),
+        inset 0 -2px rgba(4, 33, 40, .2);
+}
+
+.hero-action-panel #continue-game:focus-visible {
+    outline: 2px solid #e1fffb;
+    outline-offset: 3px;
+}
+
+.hero-action-panel #continue-game .mission-button-label {
+    gap: 5px;
+    font-size: 12px !important;
+    letter-spacing: .15em;
+}
+
+.hero-action-panel #continue-game .mission-button-label small {
+    color: #d7fff5;
+    font-size: 8px;
+    letter-spacing: .14em;
+}
+
+.hero-action-panel #continue-game > span[aria-hidden="true"] {
+    display: grid;
+    width: 30px;
+    height: 30px;
+    place-items: center;
+    border: 1px solid rgba(231, 255, 250, .4);
+    border-radius: 50%;
+    background: rgba(3, 32, 38, .2);
+    font-size: 17px;
+}
+
+.play-topbar .hint-toggle {
+    display: grid;
+    min-width: 54px;
+    min-height: 40px;
+    place-items: center;
+    padding: 0 10px;
+    border: 1px solid rgba(108, 225, 233, .52);
+    border-radius: 6px;
+    background: linear-gradient(145deg, rgba(13, 43, 53, .95), rgba(8, 24, 34, .94));
+    color: #a9f5ef;
+    font: 700 9px "Consolas", monospace;
+    letter-spacing: .12em;
+    cursor: pointer;
+}
+
+.play-topbar .hint-toggle[aria-expanded="true"] {
+    border-color: #b4fff2;
+    background: linear-gradient(145deg, #174b51, #123039);
+    color: #effffb;
+}
+
+.puzzle-hint[hidden] { display: none !important; }
+.puzzle-hint:not([hidden]) ~ .game-guide { display: none !important; }
+.puzzle-hint {
+    position: absolute;
+    z-index: 8;
+    top: max(96px, calc(env(safe-area-inset-top) + 92px));
+    right: max(10px, env(safe-area-inset-right));
+    width: min(330px, calc(100vw - 20px));
+    max-height: min(68svh, 560px);
+    overflow-y: auto;
+    padding: 14px;
+    border: 1px solid rgba(102, 230, 235, .62);
+    border-radius: 10px;
+    background: linear-gradient(150deg, rgba(7, 25, 34, .97), rgba(7, 15, 24, .97));
+    box-shadow: 0 18px 46px rgba(0, 0, 0, .48), inset 0 1px rgba(223, 255, 255, .09);
+    backdrop-filter: blur(14px);
+}
+
+.puzzle-hint > header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding-bottom: 9px;
+    border-bottom: 1px solid rgba(113, 224, 232, .24);
+}
+
+.puzzle-hint > header .hud-kicker { color: #a3f2ed; }
+.puzzle-hint > header button,
+.game-guide-heading button {
+    display: grid;
+    width: 32px;
+    height: 32px;
+    place-items: center;
+    border: 1px solid rgba(139, 218, 227, .32);
+    border-radius: 5px;
+    background: rgba(13, 36, 45, .8);
+    color: #e7ffff;
+    font-size: 19px;
+    cursor: pointer;
+}
+
+.puzzle-hint > p {
+    margin: 11px 0 8px;
+    color: #b7cbd0;
+    font-size: 11px;
+    line-height: 1.5;
+}
+
+.hint-crystal-order {
+    display: grid;
+    gap: 5px;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+}
+
+.hint-crystal-order li {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 8px 9px;
+    border: 1px solid rgba(113, 224, 232, .18);
+    border-radius: 5px;
+    background: rgba(14, 44, 52, .48);
+}
+
+.hint-crystal-order li strong {
+    color: #a5f5ee;
+    font: 700 9px "Consolas", monospace;
+    letter-spacing: .08em;
+}
+
+.hint-crystal-order li small {
+    color: #c1cbd0;
+    font: 8px "Consolas", monospace;
+    letter-spacing: .05em;
+}
+
+.puzzle-hint .hint-path-note {
+    margin-bottom: 0;
+    padding-top: 9px;
+    border-top: 1px solid rgba(113, 224, 232, .18);
+    color: #8edddf;
+    font-size: 9px;
+}
+
+.game-hud:not([data-completed="true"]) {
+    right: max(14px, env(safe-area-inset-right));
+    bottom: max(14px, env(safe-area-inset-bottom));
+    left: auto;
+    display: grid;
+    width: min(318px, calc(100vw - 28px));
+    max-height: min(78svh, 690px);
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    gap: 9px;
+    padding: 12px;
+    clip-path: none;
+    border: 1px solid rgba(93, 210, 223, .42);
+    border-radius: 10px;
+    background: linear-gradient(145deg, rgba(5, 17, 26, .94), rgba(6, 14, 22, .9));
+    box-shadow: 0 14px 36px rgba(0, 0, 0, .4), inset 0 1px rgba(224, 255, 255, .07);
+}
+
+.game-hud > .hud-mission-panel {
+    position: relative;
+    top: auto;
+    right: auto;
+    bottom: auto;
+    left: auto;
+    display: grid;
+    width: auto;
+    max-height: none;
+    gap: 6px;
+    overflow: visible;
+    padding: 0 0 8px;
+    clip-path: none;
+    border: 0;
+    border-bottom: 1px solid rgba(108, 220, 229, .2);
+    border-left: 0;
+    background: transparent;
+    box-shadow: none;
+}
+
+.game-hud > .hud-mission-panel > header {
+    display: grid;
+    gap: 4px;
+}
+
+.game-hud > .hud-mission-panel > header strong {
+    color: #effafa;
+    font-size: 12px;
+}
+
+.game-hud .crystal-status {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    color: #a8c0c6;
+    font: 700 8px "Consolas", monospace;
+    letter-spacing: .1em;
+}
+
+.game-hud .crystal-status strong {
+    color: #a6f1e7;
+    font-size: 10px;
+}
+
+.game-hud .mirror-deployment-status {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    padding-bottom: 6px;
+    border-bottom: 1px solid rgba(179, 150, 103, .22);
+    color: #c4b89f;
+    font: 700 8px "Consolas", monospace;
+    letter-spacing: .1em;
+}
+
+.game-hud .mirror-deployment-status strong {
+    color: #f0d7a5;
+    font-size: 10px;
+}
+
+.game-hud > .hud-mission-panel > p {
+    display: -webkit-box;
+    margin: 0;
+    overflow: hidden;
+    color: #a8bdc5;
+    font-size: 9px;
+    line-height: 1.45;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+}
+
+.game-hud .hud-system-status { padding-bottom: 6px; }
+.game-hud .game-actions { gap: 6px; }
+.game-hud .game-actions .game-button { min-height: 38px; }
+
+.puzzle-details {
+    min-width: 0;
+    border: 1px solid rgba(109, 202, 213, .22);
+    border-radius: 5px;
+    background: rgba(8, 24, 32, .5);
+}
+
+.puzzle-details > summary {
+    padding: 7px 9px;
+    color: #a9d8db;
+    font: 700 8px "Consolas", monospace;
+    letter-spacing: .13em;
+    cursor: pointer;
+    list-style: none;
+}
+
+.puzzle-details > summary::-webkit-details-marker { display: none; }
+.puzzle-details > summary::after { float: right; content: "+"; color: #9af4ed; font-size: 12px; }
+.puzzle-details[open] > summary::after { content: "−"; }
+
+.puzzle-details-content {
+    display: grid;
+    max-height: min(42svh, 330px);
+    gap: 8px;
+    overflow: auto;
+    padding: 0 8px 8px;
+}
+
+.puzzle-details-content > .hud-telemetry-panel,
+.puzzle-details-content > .hud-side-meters,
+.puzzle-details-content > .hud-map-panel,
+.puzzle-details-content > .hud-core-readout {
+    position: relative;
+    top: auto;
+    right: auto;
+    bottom: auto;
+    left: auto;
+    width: auto;
+    min-width: 0;
+    max-height: none;
+    margin: 0;
+    transform: none;
+    clip-path: none;
+    box-shadow: none;
+}
+
+.puzzle-details-content > .hud-telemetry-panel,
+.puzzle-details-content > .hud-map-panel {
+    display: block;
+    padding: 8px;
+    border: 1px solid rgba(97, 190, 201, .2);
+    border-radius: 4px;
+    background: rgba(5, 16, 23, .62);
+}
+
+.puzzle-details-content > .hud-side-meters {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 7px;
+    transform: none;
+    pointer-events: auto;
+}
+
+.puzzle-details-content .hud-meter {
+    width: auto;
+    min-height: 0;
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-rows: auto 4px;
+    align-items: center;
+    gap: 5px;
+    padding: 7px;
+    clip-path: none;
+    border-radius: 4px;
+}
+
+.puzzle-details-content .hud-meter > span,
+.puzzle-details-content .hud-meter > strong {
+    writing-mode: horizontal-tb;
+    transform: none;
+}
+
+.puzzle-details-content .hud-meter > span {
+    justify-self: start;
+    font-size: 7px;
+}
+
+.puzzle-details-content .hud-meter > strong {
+    justify-self: end;
+    font-size: 8px;
+}
+
+.puzzle-details-content .hud-meter-track {
+    width: 100%;
+    height: 4px;
+    grid-column: 1 / -1;
+    align-self: stretch;
+    align-items: stretch;
+}
+
+.puzzle-details-content .hud-meter-track > i {
+    width: var(--meter-fill, 0%);
+    height: 100%;
+}
+
+.puzzle-details-content > .hud-map-panel {
+    clip-path: none;
+}
+
+.puzzle-details-content > .hud-map-panel[hidden] { display: none !important; }
+.puzzle-details-content .hud-map-grid { gap: 2px; }
+.puzzle-details-content .hud-map-cell { aspect-ratio: 2; }
+
+.puzzle-details-content > .hud-core-readout {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    align-content: center;
+    justify-items: center;
+    gap: 0;
+    background: transparent;
+}
+
+.puzzle-details-content .hud-hex-cell { width: 88px; height: 76px; }
+.puzzle-details-content .hud-hex-laser { width: 100px; height: 84px; }
+
+.game-guide[hidden] { display: none !important; }
+.game-guide {
+    top: max(96px, calc(env(safe-area-inset-top) + 92px));
+    right: auto;
+    left: max(10px, env(safe-area-inset-left));
+    width: min(320px, calc(100vw - 20px));
+    padding: 12px;
+    border: 1px solid rgba(108, 220, 229, .45);
+    border-radius: 9px;
+    background: rgba(5, 17, 26, .96);
+    box-shadow: 0 12px 30px rgba(0, 0, 0, .38);
+}
+
+.game-guide-heading { margin-bottom: 8px; }
+.game-guide-heading button { width: 30px; height: 30px; }
+.first-level-tutorial { display: grid; gap: 5px; }
+.first-level-tutorial[hidden] { display: none !important; }
+
+@media (max-width: 680px) {
+    .play-topbar { width: calc(100% - 16px); }
+    .game-hud:not([data-completed="true"]) {
+        right: max(8px, env(safe-area-inset-right));
+        bottom: max(8px, env(safe-area-inset-bottom));
+        width: min(252px, calc(100vw - 16px));
+        max-height: min(72svh, 620px);
+        padding: 9px;
+        gap: 7px;
+    }
+
+    .game-hud > .hud-mission-panel { gap: 4px; padding-bottom: 6px; }
+    .game-hud > .hud-mission-panel > header strong { font-size: 11px; }
+    .game-hud > .hud-mission-panel > p { font-size: 8px; }
+    .game-hud .hud-system-status { padding-bottom: 4px; }
+    .game-hud .game-actions .game-button { min-height: 36px; }
+    .puzzle-hint { top: max(96px, calc(env(safe-area-inset-top) + 92px)); }
+    .game-guide { top: max(96px, calc(env(safe-area-inset-top) + 92px)); }
+}
+
+@media (max-width: 360px) {
+    .play-topbar { gap: 4px; }
+    .play-topbar > .button { padding-inline: 7px; }
+    .play-topbar .hint-toggle { min-width: 48px; padding-inline: 7px; }
+    .game-hud:not([data-completed="true"]) { width: min(228px, calc(100vw - 16px)); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .hero-action-panel #continue-game { transition: none; }
+}
+
+.video-action .button.video-action-play-now {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: min(240px, 100%);
+    min-height: 62px;
+    padding: 0 34px;
+    overflow: hidden;
+    border: 1px solid rgba(220, 187, 127, .88);
+    border-radius: 3px;
+    background:
+        linear-gradient(180deg, rgba(255, 255, 255, .12), transparent 38%),
+        linear-gradient(112deg, #54452e 0%, #3c3325 54%, #27251e 100%);
+    color: #fff3d4;
+    box-shadow:
+        0 12px 32px rgba(4, 8, 12, .56),
+        0 0 22px rgba(218, 174, 102, .16),
+        inset 0 1px rgba(255, 244, 211, .45),
+        inset 0 -2px rgba(15, 13, 9, .42);
+    font: 700 12px "Consolas", monospace;
+    letter-spacing: .18em;
+    text-shadow: 0 1px 8px rgba(16, 11, 4, .58);
+    transition: transform .18s ease, box-shadow .18s ease, filter .18s ease;
+}
+
+.video-action .button.video-action-play-now::after {
+    position: absolute;
+    inset: 4px;
+    border: 1px solid rgba(255, 231, 184, .24);
+    border-radius: 1px;
+    content: "";
+    pointer-events: none;
+}
+
+.video-action .button.video-action-play-now:focus-visible {
+    outline: 2px solid #ffe6ae;
+    outline-offset: 4px;
+}
+
+@media (hover: hover) and (pointer: fine) {
+    .video-action .button.video-action-play-now:hover:not(:disabled) {
+        filter: brightness(1.1);
+        transform: translateY(-2px);
+        box-shadow:
+            0 16px 38px rgba(4, 8, 12, .58),
+            0 0 28px rgba(226, 184, 112, .28),
+            inset 0 1px rgba(255, 247, 224, .52),
+            inset 0 -2px rgba(15, 13, 9, .32);
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .video-action .button.video-action-play-now { transition: none; }
+}
+
 .game-actions {
     display: grid;
     width: 100%;

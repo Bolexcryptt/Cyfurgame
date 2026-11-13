@@ -659,6 +659,51 @@ test("mobile browser detection recognizes phones and touch-enabled iPads", () =>
     assert.equal(isMobileBrowser({ userAgent: "Mozilla/5.0 (Windows NT 10.0)", platform: "Win32", maxTouchPoints: 0 }), false);
 });
 
+test("gameplay hints reveal the ordered route without changing the puzzle board", () => {
+    const app = readFileSync(new URL("../app.js", import.meta.url), "utf8");
+    const scene = readFileSync(new URL("../script.js", import.meta.url), "utf8");
+    const html = readFileSync(new URL("../index.html", import.meta.url), "utf8");
+
+    assert.match(html, /id="hint-toggle"[^>]*>HINT/);
+    assert.match(html, /<span class="mission-button-label">START GAME<small id="hero-next-level"/);
+    assert.match(html, /id="puzzle-hint"[^>]*hidden/);
+    assert.match(html, /id="hint-crystal-order"/);
+    assert.match(html, /id="hint-close"/);
+    assert.match(html, /id="play-home"/);
+    assert.match(html, /id="trace-beam"[^>]*>[\s\S]*?ACTIVATE/);
+    assert.match(html, /<details id="puzzle-details"/);
+    assert.match(html, /id="hud-objective-crystals"/);
+    assert.match(html, /class="mirror-deployment-status"[\s\S]*?MIRROR DEPLOYMENT[\s\S]*?id="hud-visible-mirror-count"/);
+    assert.doesNotMatch(html, /class="camera-tools"|id="camera-reset"/);
+    assert.match(scene, /const objectiveMirrors = document\.getElementById\("hud-visible-mirror-count"\)/);
+    assert.match(scene, /objectiveMirrors\.textContent = `\$\{mirrorCount\} \/ \$\{mirrorTarget\}`/);
+    assert.match(app, /function renderPuzzleHint\(level\)[\s\S]*?level\.crystals\.entries\(\)/);
+    assert.match(app, /fluxgrid:hint-visibility/);
+    assert.match(scene, /window\.addEventListener\("fluxgrid:hint-visibility"/);
+    const crystalCreation = scene.slice(
+        scene.indexOf("function createLevelObstacles"),
+        scene.indexOf("function resetCrystalStates")
+    );
+    assert.match(crystalCreation, /label\.visible = false;[\s\S]*?levelCrystals\.set\(cellKey,[\s\S]*?label,/);
+    assert.match(scene, /traceLaserRoute\(activeLevel, solutionMirrors, activeLevel\.start\.direction\)/);
+    assert.match(scene, /hintPathGroup\.add\(halo, core\)/);
+    assert.match(scene, /mirrorGuide\.rotation\.y = mirror\.orientation === "\/" \? -Math\.PI \/ 4 : Math\.PI \/ 4/);
+    const hintVisibility = scene.slice(
+        scene.indexOf("function setHintPathVisible"),
+        scene.indexOf("\n    function placeLevelTarget")
+    );
+    assert.match(hintVisibility, /hintPathGroup\.visible = visible;[\s\S]*?crystal\.label\.visible = false;/);
+    assert.match(hintVisibility, /crystal\.label\.visible = true;[\s\S]*?scheduleRender\(\)/);
+    assert.doesNotMatch(scene.slice(
+        scene.indexOf("function setHintPathVisible"),
+        scene.indexOf("\n    function placeLevelTarget")
+    ), /placedMirrors\.set|createPlayerMirror|setCorePowered/);
+    assert.match(app, /visibilitychange[\s\S]*?pauseMusic\(\)/);
+    assert.match(app, /window\.addEventListener\("pagehide", pauseMusic\)/);
+    assert.match(app, /appStateChange[\s\S]*?pauseMusic\(\)/);
+    assert.match(scene, /crystal\.activated = true;[\s\S]*?updateTacticalHud\(\);/);
+});
+
 test("Phantom mobile browse link opens the secure current page and rejects insecure URLs", () => {
     const browseUrl = new URL(createPhantomBrowseUrl("https://cyfur-game-mu.vercel.app/?ignored=1"));
     assert.equal(browseUrl.origin, "https://phantom.com");
@@ -980,6 +1025,10 @@ test("startup plays company and player introductions, then game video, then open
     assert.match(readFileSync(new URL("../style.css", import.meta.url), "utf8"), /\.video-screen\[data-opening-sequence="true"\]:not\(\[data-company-intro="true"\]\) #intro-video/);
     assert.match(readFileSync(new URL("../style.css", import.meta.url), "utf8"), /\.video-screen\[data-company-intro="true"\] #intro-video \{[\s\S]*?inset: 0;[\s\S]*?width: 100%;[\s\S]*?height: 100%;[\s\S]*?transform: none;[\s\S]*?object-fit: contain;[\s\S]*?border-radius: 0/);
     assert.match(openingFlow, /const showPlayNow = source === "intro\.mp4"[\s\S]*?videoAction\.textContent = "PLAY NOW →"[\s\S]*?videoAction\.onclick = showPlayNow \? playGameVideo : null/);
+    assert.match(openingFlow, /videoAction\.classList\.toggle\("video-action-play-now", showPlayNow\)/);
+    const updatedStyles = readFileSync(new URL("../style.css", import.meta.url), "utf8");
+    assert.match(updatedStyles, /\.puzzle-details-content \.hud-meter > span,[\s\S]*?writing-mode: horizontal-tb;[\s\S]*?transform: none;/);
+    assert.match(updatedStyles, /\.video-action \.button\.video-action-play-now/);
     assert.match(app, /videoScreen\.dataset\.openingVideoSize =\s*source === "gamevideo\.mp4" \|\| source === "companyintro\.mp4" \? "fullscreen" : "fit"/);
     assert.match(app, /videoScreen\.dataset\.openingVideoSize === "fullscreen"/);
     assert.match(openingFlow, /void playVideoInOrientation\(\s*introVideo,\s*offerNext,[\s\S]*?orientation\s*\)/);
@@ -1745,9 +1794,9 @@ test("campaign levels use authenticated wallet credits and remain globally locka
 
     const html = readFileSync(new URL("../index.html", import.meta.url), "utf8");
     assert.doesNotMatch(html, /id="continue-game"[^>]+disabled/);
-    assert.match(html, /id="game-guide-toggle"/);
+    assert.match(html, /id="hint-toggle"[^>]*>HINT/);
     assert.match(html, /id="game-guide"/);
-    assert.match(html, /Charge crystals in order/);
+    assert.match(html, /Charge the crystals in this order/);
     assert.match(html, /Choose a sector to enter using verified wallet credits/);
     assert.match(html, /VERIFIED WALLET BALANCE/);
     assert.doesNotMatch(html, /GAME POINT BALANCE/);

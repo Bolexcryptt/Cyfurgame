@@ -147,7 +147,7 @@
                         <span class="hud-kicker">PILOT CONSOLE</span>
                         <div class="hero-mission-actions">
                             <button id="continue-game" class="button button-primary" type="button">
-                                <span class="mission-button-label">START MISSION<small id="hero-next-level">LEVEL 01 / 99</small></span>
+                                <span class="mission-button-label">START GAME<small id="hero-next-level">LEVEL 01 / 99</small></span>
                                 <span aria-hidden="true">→</span>
                             </button>
                         </div>
@@ -361,89 +361,75 @@
             <div class="play-topbar">
                 <button id="levels-open" class="button button-quiet" type="button">← LEVELS</button>
                 <div class="play-level-label"><span id="play-level">LEVEL 01</span><small id="play-level-title">SECTOR 01</small></div>
-                <button id="game-guide-toggle" class="icon-button" type="button" aria-label="How to play" aria-controls="game-guide" aria-expanded="false" title="How to play">?</button>
+                <button id="hint-toggle" class="hint-toggle" type="button" aria-controls="puzzle-hint" aria-expanded="false" title="Show the correct crystal order and light path">HINT</button>
                 <button id="play-home" class="icon-button" type="button" aria-label="Return home">⌂</button>
             </div>
-            <section class="hud-telemetry-panel" aria-label="Live puzzle telemetry">
-                <header><span>LEVEL TELEMETRY</span><strong id="hud-telemetry-level">01 / 99</strong></header>
-                <div class="hud-telemetry-row"><span>CRYSTAL CHARGE</span><b id="hud-telemetry-crystals">0 / 0</b></div>
-                <div class="hud-telemetry-track" role="progressbar" aria-label="Crystal charge progress" aria-valuemin="0" aria-valuemax="0" aria-valuenow="0"><i id="hud-telemetry-crystal-fill"></i></div>
-                <div class="hud-telemetry-row hud-telemetry-row-amber"><span>MIRROR DEPLOYMENT</span><b id="hud-telemetry-mirrors">0 / 0</b></div>
-                <div class="hud-telemetry-track hud-telemetry-track-amber" role="progressbar" aria-label="Mirror placement progress" aria-valuemin="0" aria-valuemax="0" aria-valuenow="0"><i id="hud-telemetry-mirror-fill"></i></div>
-                <svg class="hud-signal-wave" viewBox="0 0 180 28" aria-hidden="true">
-                    <path d="M1 15h8l4-3 3 8 5-18 5 22 5-13 4 5h7l4-2 4 4 4-9 5 14 5-19 4 14 4-5h7l4 4 5-8 5 12 4-15 5 12 5-4h8l4 3 4-8 5 14 5-17 5 12 5-4h9l4 3 4-8 5 12 5-12h11"/>
-                </svg>
-            </section>
-            <section class="hud-side-meters" aria-label="Puzzle progress">
-                <div class="hud-meter">
-                    <span>CRYSTALS</span>
-                    <strong id="hud-crystal-count">0 / 0</strong>
-                    <div class="hud-meter-track" role="progressbar" aria-label="Charged crystals"><i id="hud-crystal-fill"></i></div>
-                </div>
-                <div class="hud-meter hud-meter-amber">
-                    <span>MIRRORS</span>
-                    <strong id="hud-mirror-count">0 / 0</strong>
-                    <div class="hud-meter-track" role="progressbar" aria-label="Mirrors placed"><i id="hud-mirror-fill"></i></div>
-                </div>
-            </section>
-            <section class="hud-radar" aria-hidden="true">
-                <span class="hud-radar-sweep"></span>
-                <i class="hud-radar-crosshair"></i>
-                <span class="hud-radar-label">ROUTE SCAN</span>
-            </section>
-            <section class="hud-map-panel" aria-label="Level layout map">
-                <header><span>SECTOR MAP</span><strong id="hud-map-level">01</strong></header>
-                <div id="hud-map-grid" class="hud-map-grid" role="img" aria-label="Puzzle layout"></div>
-                <footer><span><i class="map-key-crystal"></i>CRYSTAL</span><span><i class="map-key-mirror"></i>MIRROR</span><span><i class="map-key-target"></i>BATTERY</span></footer>
-            </section>
-            <section class="hud-mission-panel game-instructions" aria-label="Current mission">
-                <header><span class="hud-kicker">MISSION OBJECTIVE</span><strong id="game-status-title">Route the beam to the battery</strong></header>
-                <ol class="hud-objectives">
-                    <li><span>01</span><strong>Charge crystals in order</strong><b id="hud-objective-crystals">0 / 0</b></li>
-                    <li><span>02</span><strong>Reach the battery</strong><b id="hud-objective-battery">STANDBY</b></li>
-                </ol>
-                <p id="game-status" role="status" aria-live="polite">Tap the source to choose a side. Set mirrors, then launch.</p>
-            </section>
-            <section class="hud-core-readout" aria-label="Laser and battery status">
-                <div class="hud-hex-cell hud-hex-laser">
-                    <span>LASER ROUTE</span>
-                    <strong id="hud-laser-state">PREVIEW</strong>
-                    <i id="hud-core-indicator" aria-hidden="true"></i>
-                </div>
-                <div class="hud-hex-cell">
-                    <span>BATTERY</span>
-                    <strong id="hud-battery-state">TARGET</strong>
-                </div>
-                <div class="hud-hex-cell">
-                    <span>MIRRORS</span>
-                    <strong id="hud-core-mirror-count">0 / 0</strong>
-                </div>
-            </section>
-            <aside id="game-guide" class="game-guide" aria-label="How to play" hidden>
-                <div class="game-guide-heading"><span class="hud-kicker">FIELD GUIDE</span><button id="game-guide-close" type="button" aria-label="Close field guide">×</button></div>
+            <aside id="puzzle-hint" class="puzzle-hint" aria-label="Puzzle hint" hidden>
+                <header><span class="hud-kicker">ROUTE HINT</span><button id="hint-close" type="button" aria-label="Close hint">×</button></header>
+                <p>Charge the crystals in this order:</p>
+                <ol id="hint-crystal-order" class="hint-crystal-order"></ol>
+                <p class="hint-path-note">The glow marks the route and correct mirror positions and angles. Nothing is placed for you.</p>
+            </aside>
+            <aside id="game-guide" class="game-guide" aria-label="First-level tutorial" hidden>
+                <div class="game-guide-heading"><span class="hud-kicker">FIRST MISSION</span><button id="game-guide-close" type="button" aria-label="Close tutorial">×</button></div>
                 <section id="first-level-tutorial" class="first-level-tutorial" aria-live="polite" hidden>
                     <span id="tutorial-step" class="tutorial-step">LIVE TUTORIAL · 01 / 03</span>
                     <strong id="tutorial-title">Redirect the beam</strong>
                     <p id="tutorial-instruction">Watch the beam leave the source, then place a mirror on the marked tile.</p>
                 </section>
-                <ol>
-                    <li><b>01</b><span><strong>Choose the source direction</strong><small>Tap the source marker to aim the beam.</small></span></li>
-                    <li><b>02</b><span><strong>Place and rotate mirrors</strong><small>Tap a floor tile to place a mirror. Tap that tile again to rotate it and preview the new beam path.</small></span></li>
-                    <li><b>03</b><span><strong>Charge crystals in order</strong><small>Mirror reflections change beam color. Match every numbered crystal before reaching the battery.</small></span></li>
-                    <li><b>04</b><span><strong>Launch and refine</strong><small>Power the source to test your route. Reset or adjust mirrors and try again.</small></span></li>
-                </ol>
-                <p>Drag to orbit the board. Pinch or scroll to zoom.</p>
             </aside>
-            <nav class="camera-tools" aria-label="Camera controls">
-                <span>CAMERA</span>
-                <button id="camera-left" type="button" aria-label="Rotate camera left" title="Rotate left">↶</button>
-                <button id="camera-right" type="button" aria-label="Rotate camera right" title="Rotate right">↷</button>
-                <button id="camera-up" type="button" aria-label="Tilt camera up" title="Tilt up">↑</button>
-                <button id="camera-down" type="button" aria-label="Tilt camera down" title="Tilt down">↓</button>
-                <button id="camera-reset" class="reset-camera" type="button">RESET VIEW</button>
-            </nav>
-            <p class="gesture-hint">DRAG TO ORBIT <span>·</span> SCROLL / PINCH TO ZOOM</p>
             <section class="game-hud" aria-label="Puzzle controls">
+                <section class="hud-mission-panel game-instructions" aria-label="Current mission">
+                    <header><span class="hud-kicker">LEVEL OBJECTIVE</span><strong id="game-status-title">Route the beam to the battery</strong></header>
+                    <div class="crystal-status"><span>CRYSTALS CHARGED</span><strong id="hud-objective-crystals">0 / 0</strong></div>
+                    <div class="mirror-deployment-status"><span>MIRROR DEPLOYMENT</span><strong id="hud-visible-mirror-count">0 / 0</strong></div>
+                    <p id="game-status" role="status" aria-live="polite">Tap tiles to place mirrors and route the beam to the battery.</p>
+                    <span id="hud-objective-battery" hidden>STANDBY</span>
+                </section>
+                <details id="puzzle-details" class="puzzle-details">
+                    <summary>LEVEL DETAILS</summary>
+                    <div class="puzzle-details-content">
+                        <section class="hud-telemetry-panel" aria-label="Live puzzle telemetry">
+                            <header><span>LEVEL TELEMETRY</span><strong id="hud-telemetry-level">01 / 99</strong></header>
+                            <div class="hud-telemetry-row"><span>CRYSTAL CHARGE</span><b id="hud-telemetry-crystals">0 / 0</b></div>
+                            <div class="hud-telemetry-track" role="progressbar" aria-label="Crystal charge progress" aria-valuemin="0" aria-valuemax="0" aria-valuenow="0"><i id="hud-telemetry-crystal-fill"></i></div>
+                            <div class="hud-telemetry-row hud-telemetry-row-amber"><span>MIRROR DEPLOYMENT</span><b id="hud-telemetry-mirrors">0 / 0</b></div>
+                            <div class="hud-telemetry-track hud-telemetry-track-amber" role="progressbar" aria-label="Mirror placement progress" aria-valuemin="0" aria-valuemax="0" aria-valuenow="0"><i id="hud-telemetry-mirror-fill"></i></div>
+                        </section>
+                        <section class="hud-side-meters" aria-label="Puzzle progress">
+                            <div class="hud-meter">
+                                <span>CRYSTALS</span>
+                                <strong id="hud-crystal-count">0 / 0</strong>
+                                <div class="hud-meter-track" role="progressbar" aria-label="Charged crystals"><i id="hud-crystal-fill"></i></div>
+                            </div>
+                            <div class="hud-meter hud-meter-amber">
+                                <span>MIRRORS</span>
+                                <strong id="hud-mirror-count">0 / 0</strong>
+                                <div class="hud-meter-track" role="progressbar" aria-label="Mirrors placed"><i id="hud-mirror-fill"></i></div>
+                            </div>
+                        </section>
+                        <section class="hud-map-panel" aria-label="Level layout map">
+                            <header><span>SECTOR MAP</span><strong id="hud-map-level">01</strong></header>
+                            <div id="hud-map-grid" class="hud-map-grid" role="img" aria-label="Puzzle layout"></div>
+                            <footer><span><i class="map-key-crystal"></i>CRYSTAL</span><span><i class="map-key-mirror"></i>MIRROR</span><span><i class="map-key-target"></i>BATTERY</span></footer>
+                        </section>
+                        <section class="hud-core-readout" aria-label="Laser and battery status">
+                            <div class="hud-hex-cell hud-hex-laser">
+                                <span>LASER ROUTE</span>
+                                <strong id="hud-laser-state">PREVIEW</strong>
+                                <i id="hud-core-indicator" aria-hidden="true"></i>
+                            </div>
+                            <div class="hud-hex-cell">
+                                <span>BATTERY</span>
+                                <strong id="hud-battery-state">TARGET</strong>
+                            </div>
+                            <div class="hud-hex-cell">
+                                <span>MIRRORS</span>
+                                <strong id="hud-core-mirror-count">0 / 0</strong>
+                            </div>
+                        </section>
+                    </div>
+                </details>
                 <div class="hud-system-status" aria-live="polite">
                     <span class="hud-kicker">POWER SYSTEM</span>
                     <strong id="hud-system-state" data-state="standby">STANDBY</strong>
@@ -452,7 +438,7 @@
                     <button id="undo-mirror" class="game-button secondary" type="button" disabled>UNDO</button>
                     <button id="skip-level" class="game-button skip-level-button" type="button" title="The current entry fee is not refunded. Opening the next level charges its normal entry fee." hidden>SKIP LEVEL →</button>
                     <button id="reset-game" class="game-button secondary" type="button">RESET</button>
-                    <button id="trace-beam" class="game-button primary" type="button"><span>▶</span> POWER SOURCE</button>
+                    <button id="trace-beam" class="game-button primary" type="button"><span>▶</span> ACTIVATE</button>
                 </div>
                 <section id="completion-summary" class="completion-summary" aria-label="Level completion summary" aria-live="polite" hidden>
                     <div class="completion-heading">

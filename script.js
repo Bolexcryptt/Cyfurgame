@@ -133,6 +133,9 @@ function startScene() {
     platform.add(mirrorGroup);
     const activeBeamGroup = new THREE.Group();
     platform.add(activeBeamGroup);
+    const hintPathGroup = new THREE.Group();
+    hintPathGroup.visible = false;
+    platform.add(hintPathGroup);
     const tutorialTargetMarker = new THREE.Mesh(
         new THREE.TorusGeometry(0.48, 0.035, 6, 28),
         new THREE.MeshBasicMaterial({
@@ -1295,6 +1298,119 @@ function startScene() {
         route.segments.forEach((segment, index) => addActiveSegment(segment, index, visibleCount, preview));
     }
 
+    function setHintPathVisible(visible) {
+        clearObjectGroup(hintPathGroup);
+        hintPathGroup.visible = visible;
+        for (const crystal of levelCrystals.values()) {
+            crystal.label.visible = false;
+        }
+        if (!visible) {
+            scheduleRender();
+            return;
+        }
+
+        const solutionMirrors = new Map(activeLevel.solutionMirrors.map((mirror) => [
+            gridKey(mirror.row, mirror.col),
+            mirror.orientation
+        ]));
+        const solutionRoute = traceLaserRoute(activeLevel, solutionMirrors, activeLevel.start.direction);
+        if (solutionRoute.outcome !== "powered") {
+            console.error("The generated solution route is not valid for its level.", {
+                level: activeLevel.number,
+                outcome: solutionRoute.outcome
+            });
+            hintPathGroup.visible = false;
+            return;
+        }
+
+        for (const segment of solutionRoute.segments) {
+            const from = segment.from.col < 0 || segment.from.col >= GRID.cols
+                ? new THREE.Vector3(
+                    gridX(segment.from.col) + (activeLevel.start.direction === 1 ? 0.37 : -0.37),
+                    0.82,
+                    gridZ(segment.from.row)
+                )
+                : new THREE.Vector3(gridX(segment.from.col), 0.82, gridZ(segment.from.row));
+            const directionRow = segment.to.row - segment.from.row;
+            const directionCol = segment.to.col - segment.from.col;
+            const to = segment.exitsBoard
+                ? from.clone().add(new THREE.Vector3(directionCol, 0, directionRow).multiplyScalar(GRID.step * 0.68))
+                : new THREE.Vector3(
+                    gridX(segment.to.col),
+                    segment.to.row === GRID.target.row && segment.to.col === GRID.target.col
+                        ? CORE_CONTACT_HEIGHT
+                        : 0.82,
+                    gridZ(segment.to.row)
+                );
+            const curve = new THREE.LineCurve3(from, to);
+            const halo = new THREE.Mesh(
+                new THREE.TubeGeometry(curve, 1, 0.14, 8, false),
+                new THREE.MeshBasicMaterial({
+                    color: 0x39e9f2,
+                    transparent: true,
+                    opacity: 0.52,
+                    depthTest: false,
+                    depthWrite: false,
+                    toneMapped: false,
+                    blending: THREE.AdditiveBlending
+                })
+            );
+            const core = new THREE.Mesh(
+                new THREE.TubeGeometry(curve, 1, 0.035, 6, false),
+                new THREE.MeshBasicMaterial({
+                    color: 0xd8ffff,
+                    transparent: true,
+                    opacity: 0.96,
+                    depthTest: false,
+                    depthWrite: false,
+                    toneMapped: false,
+                    blending: THREE.AdditiveBlending
+                })
+            );
+            halo.renderOrder = 10;
+            core.renderOrder = 11;
+            hintPathGroup.add(halo, core);
+        }
+
+        for (const mirror of activeLevel.solutionMirrors) {
+            const marker = new THREE.Mesh(
+                new THREE.TorusGeometry(0.42, 0.035, 6, 32),
+                new THREE.MeshBasicMaterial({
+                    color: 0xffc777,
+                    transparent: true,
+                    opacity: 0.92,
+                    depthTest: false,
+                    depthWrite: false,
+                    toneMapped: false,
+                    blending: THREE.AdditiveBlending
+                })
+            );
+            marker.rotation.x = Math.PI / 2;
+            marker.position.set(gridX(mirror.col), 0.28, gridZ(mirror.row));
+            marker.renderOrder = 12;
+            const mirrorGuide = new THREE.Mesh(
+                new THREE.BoxGeometry(0.72, 0.045, 0.11),
+                new THREE.MeshBasicMaterial({
+                    color: 0xffe1a6,
+                    transparent: true,
+                    opacity: 0.9,
+                    depthTest: false,
+                    depthWrite: false,
+                    toneMapped: false,
+                    blending: THREE.AdditiveBlending
+                })
+            );
+            mirrorGuide.rotation.y = mirror.orientation === "/" ? -Math.PI / 4 : Math.PI / 4;
+            mirrorGuide.position.set(gridX(mirror.col), 0.76, gridZ(mirror.row));
+            mirrorGuide.renderOrder = 13;
+            hintPathGroup.add(marker, mirrorGuide);
+        }
+        for (const crystal of levelCrystals.values()) {
+            crystal.label.visible = true;
+        }
+        scheduleRender();
+    }
+
     function placeLevelTarget() {
         coreSystem.scale.setScalar(CORE_SCALE);
         coreSystem.position.set(
@@ -1415,6 +1531,7 @@ function startScene() {
                 transparent: true,
                 depthWrite: false
             }));
+            label.visible = false;
             label.position.y = 1.02;
             label.scale.set(0.62, 0.27, 1);
             crystalGroup.add(label);
@@ -1424,6 +1541,7 @@ function startScene() {
                 ringMaterial: ring.material,
                 light: crystalLight,
                 prism,
+                label,
                 activated: false
             });
         });
@@ -1448,6 +1566,7 @@ function startScene() {
         }
         activeLevel = level;
         sectorMapPanel.hidden = false;
+        setHintPathVisible(false);
         if (decorativeTerminalGroup) decorativeTerminalGroup.visible = false;
         firstLevelTutorial = level.number === 1 && levelDetails?.tutorial === true;
         firstLevelTutorialStage = "observe";
@@ -1542,16 +1661,18 @@ function startScene() {
         const mapLevel = document.getElementById("hud-map-level");
         const mapGrid = document.getElementById("hud-map-grid");
         const objectiveCrystals = document.getElementById("hud-objective-crystals");
+        const objectiveMirrors = document.getElementById("hud-visible-mirror-count");
         const objectiveBattery = document.getElementById("hud-objective-battery");
         if (undoButton) undoButton.disabled = mirrorActionHistory.length === 0 || tracing || corePowered;
         if (!crystalCount || !mirrorCountLabel || !crystalFill || !mirrorFill ||
             !laserState || !batteryState || !coreIndicator || !telemetryLevel ||
             !telemetryCrystals || !telemetryCrystalFill || !telemetryMirrors ||
             !telemetryMirrorFill || !coreMirrorCount || !systemState ||
-            !mapLevel || !mapGrid || !objectiveCrystals || !objectiveBattery) return;
+            !mapLevel || !mapGrid || !objectiveCrystals || !objectiveMirrors || !objectiveBattery) return;
 
         crystalCount.textContent = `${charged} / ${totalCrystals}`;
         mirrorCountLabel.textContent = `${mirrorCount} / ${mirrorTarget}`;
+        objectiveMirrors.textContent = `${mirrorCount} / ${mirrorTarget}`;
         coreMirrorCount.textContent = `${mirrorCount} / ${mirrorTarget}`;
         telemetryLevel.textContent = `${String(activeLevel.number).padStart(2, "0")} / 99`;
         telemetryCrystals.textContent = `${charged} / ${totalCrystals}`;
@@ -1798,7 +1919,7 @@ function startScene() {
                 updateFirstLevelTutorial(
                     "03 / 03",
                     "Crystal and battery aligned",
-                    "The preview now crosses the crystal and reaches the battery. Press POWER SOURCE to watch the full route."
+                    "The preview now crosses the crystal and reaches the battery. Press ACTIVATE to watch the full route."
                 );
             } else {
                 firstLevelTutorialStage = "rotate";
@@ -1811,7 +1932,7 @@ function startScene() {
             }
         }
         if (previewRoute.outcome === "powered") {
-            setFeedback(`All ${activeLevel.crystals.length} crystals aligned. Press POWER SOURCE to launch.`, "ready");
+            setFeedback(`All ${activeLevel.crystals.length} crystals aligned. Press ACTIVATE to launch.`, "ready");
         } else if (previewRoute.outcome === "underpowered") {
             const needed = activeLevel.par - previewRoute.reflections;
             setFeedback(
@@ -1852,7 +1973,7 @@ function startScene() {
         resetCrystalStates();
         if (previewRoute) drawActiveRoute(previewRoute, previewRoute.segments.length, true);
         setFeedback(
-            `Source points ${launchDirection === 1 ? "right" : "left"}. Place mirrors, then press POWER SOURCE to launch.`
+            `Source points ${launchDirection === 1 ? "right" : "left"}. Place mirrors, then press ACTIVATE to launch.`
         );
     }
 
@@ -1910,13 +2031,13 @@ function startScene() {
         coreLight.intensity = 14;
         if (sourcePylon?.userData.beaconLight) sourcePylon.userData.beaconLight.intensity = 7;
         traceButton.disabled = false;
-        traceButton.innerHTML = "<span>▶</span> POWER SOURCE";
+        traceButton.innerHTML = "<span>▶</span> ACTIVATE";
         const crystalObjective = activeLevel.crystals.length === 1
             ? "the numbered crystal"
             : `all ${activeLevel.crystals.length} numbered crystals`;
         setStatus(
             `Level ${String(activeLevel.number).padStart(2, "0")} — ${activeLevel.title}`,
-            `Objective: aim through ${crystalObjective} in order, then reach the battery. Tap tiles to place or rotate mirrors; every reflection shifts beam color. Follow the live preview and press POWER SOURCE to launch.`
+            `Objective: aim through ${crystalObjective} in order, then reach the battery. Tap tiles to place or rotate mirrors; every reflection shifts beam color. Follow the live preview and press ACTIVATE to launch.`
         );
         previewRoute = traceLight();
         drawActiveRoute(previewRoute, previewRoute.segments.length, true);
@@ -2589,25 +2710,13 @@ function startScene() {
     }
     window.fluxGridSceneResize = resize;
 
-    function orbitBy(horizontal, vertical) {
-        cameraState.azimuth += horizontal;
-        cameraState.elevation = THREE.MathUtils.clamp(cameraState.elevation + vertical, 0.12, 1.42);
-        setupCamera();
-    }
-
     function pointerDistance() {
         const points = [...cameraState.pointers.values()];
         if (points.length < 2) return 0;
         return Math.hypot(points[0].x - points[1].x, points[0].y - points[1].y);
     }
 
-    function bindCameraControls() {
-        document.getElementById("camera-left").addEventListener("click", () => orbitBy(-Math.PI / 10, 0));
-        document.getElementById("camera-right").addEventListener("click", () => orbitBy(Math.PI / 10, 0));
-        document.getElementById("camera-up").addEventListener("click", () => orbitBy(0, -0.1));
-        document.getElementById("camera-down").addEventListener("click", () => orbitBy(0, 0.1));
-        document.getElementById("camera-reset").addEventListener("click", resetCamera);
-
+    function bindCameraGestures() {
         canvas.addEventListener("pointerdown", (event) => {
             cameraState.pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
             canvas.setPointerCapture(event.pointerId);
@@ -2675,11 +2784,14 @@ function startScene() {
     createCore();
     createTerminals();
     const hoverRing = createGameplaySurface();
-    bindCameraControls();
+    bindCameraGestures();
     bindGameplay(hoverRing);
     resize();
     window.addEventListener("fluxgrid:load-level", (event) => {
         loadLevel(event.detail);
+    });
+    window.addEventListener("fluxgrid:hint-visibility", (event) => {
+        setHintPathVisible(event.detail?.visible === true);
     });
     window.addEventListener("fluxgrid:skip-level-pending", () => {
         skipLevelPending = true;
@@ -2725,6 +2837,7 @@ function startScene() {
                 crystal.ringMaterial.color.setHex(outputColor);
                 crystal.light.color.setHex(outputColor);
                 crystal.prism.scale.setScalar(1.16);
+                updateTacticalHud();
                 setFeedback(
                     `Crystal ${String(crystal.definition.index + 1).padStart(2, "0")} / ${String(activeLevel.crystals.length).padStart(2, "0")} charged. Following the beam to the battery…`,
                     "success"
@@ -2734,7 +2847,7 @@ function startScene() {
             if (progress >= 1) {
                 tracing = false;
                 traceButton.disabled = false;
-                traceButton.innerHTML = "<span>▶</span> TRACE AGAIN";
+                traceButton.innerHTML = "<span>▶</span> ACTIVATE AGAIN";
                 if (traceResult.outcome === "powered") {
                     if (firstLevelTutorial) {
                         firstLevelTutorialStage = "complete";
