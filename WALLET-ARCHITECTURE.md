@@ -28,11 +28,17 @@ The configured conversion is 1,000 off-chain wallet credits per CYFUR. At 8 toke
 
 Changing the configured rate does not rewrite account balances, ledger rows, deposits, or withdrawals. Existing transaction amounts and statuses remain historical facts; any production rate change must wait until the balance, ledger, and withdrawal audit is complete and the corresponding database migration has been reviewed. Do not apply a rate change directly to production from the baseline schema files.
 
-## Server game points
+## Unified player balance
 
-Legacy server game-point records remain separate from wallet credits and are not used to pay campaign entry. The current client does not award server game points for level completions. It records gameplay rewards in a separate device-local ledger; those amounts are not wallet credits, cannot pay entry fees, and are non-withdrawable. The player interface has one CYFUR transaction-ID submission form, which credits the verified wallet balance; there is no game-point deposit form.
+`wallet_credit_accounts` and `wallet_credit_ledger` are the canonical withdrawable balance. Deposits, level-entry fees, verified level rewards, and confirmed withdrawals all change that account. The conversion remains 1 CYFUR = 1,000 credits; existing server game points convert 1:1 to credits, since their deposits used the same rate. Legacy point tables remain read-only history after migration.
 
-Campaign entry fees are paid from the authenticated wallet-credit balance. Entry cost is `floor(100 × 1.08^(level - 1))`; the server checks the available balance and deducts the fee once per entry request. After a successful paid level, the client calculates the star reward and saves it immediately in a device-local ledger keyed by the paid entry session, preventing duplicate awards for that session. Three stars award 160% of the entry cost, two stars award 40%, and one star awards 0. This local result does not change the verified wallet balance or wallet ledger, cannot pay entry fees, and is not withdrawable or synchronized across devices. The client makes no timer-start or level-completion request, so server completion verification cannot delay the result or NEXT LEVEL. Locally cleared levels are not added to server completion records or the leaderboard and do not satisfy the first-20-level withdrawal gate; that gate continues to use server-saved completions.
+Apply `supabase-unified-player-balance.sql` after the wallet, withdrawals, and game-point migrations. It runs transactionally, copies each old point-ledger event into the wallet ledger with source metadata, reconciles any account/ledger discrepancy with an explicit adjustment, adds the prior point balance to the wallet balance, preserves source rows, and writes an idempotency audit. It also brings existing verified point-level clears into the shared campaign-clear table. Stop if the migration raises an exception; do not edit balances manually. The migration disables legacy point-writing RPCs and routes. It does not import device-local reward values: those were not server verified and can be altered locally.
+
+Device-local legacy reward records are non-withdrawable and are intentionally excluded from the migration.
+
+Paid campaign entry costs `floor(100 × 1.08^(level - 1))` credits from the canonical account. The server issues a random layout seed and starts the timer in the atomic entry RPC. The client displays the same seeded board, submits its mirror proof on completion, and receives the reward automatically after server verification; there is no owner/admin approval step. Three stars award 160% of the entry cost, two stars award 40%, and one star awards 0. Rewards are idempotently recorded in the wallet ledger and the shared level-clear table. Until the server confirms the result, the UI shows it as pending and keeps NEXT LEVEL disabled.
+
+Withdrawal requests reserve availability without changing the displayed wallet balance or inserting a debit. The reserved amount is excluded from further spending while the request is pending. Only after Solana confirms the transfer does the confirmation RPC debit credits and add the withdrawal ledger row. A repeated request with the same idempotency key checks the recorded signature and exact finalized token transfer, then retries only the database confirmation; it never submits a second transfer. A verified finalized failure releases the reservation without a debit; legacy pending withdrawals that were already debited are refunded only after verified failure. Ambiguous signed transactions remain reserved until safely reconciled.
 
 ## One-time treasury test transfer
 
@@ -69,12 +75,13 @@ Apply these SQL files in order in the Supabase SQL Editor if not already applied
 15. `supabase-wallet-all-levels-access.sql`
 16. `supabase-wallet-output-ambiguity-fix.sql`
 17. `supabase-wallet-local-completions.sql`
-18. `supabase-relicgrid-treasury.sql` (only after the required production review and owner approval)
-19. `supabase-cyfur-treasury-test-transfer.sql` (only when preparing the separate, owner-authorized one-time test)
+18. `supabase-unified-player-balance.sql`
+19. `supabase-relicgrid-treasury.sql` (only after the required production review and owner approval)
+20. `supabase-cyfur-treasury-test-transfer.sql` (only when preparing the separate, owner-authorized one-time test)
 
 The direct-treasury migration adds the treasury address and service-only RPCs. Wallet-link tables remain for existing wallet features but are not required for deposits or withdrawals. Wallet payment-intent tables and RPCs are retained for compatibility; the current player-facing deposit flow does not use them. The shared-treasury attribution migration records the verified sender from Solana RPC. The game-point deposit migration and transaction-ID deposit migration make transaction signatures single-use across wallet credits and game points and preserve existing balances. The read-only deposit-readiness migration checks the required tables, RPCs, service-role permissions, unique transaction constraints, and ledger idempotency constraint; missing schema or access fails closed. It does not enable deposits or change player data. The treasury migration updates `wallet_system_config.treasury_address` to the code value and enables deposits while keeping paid gameplay disabled. Do not apply it until the owner approves enabling live deposits after all readiness checks and testing. The withdrawal migration adds `withdrawals_enabled=false`, a `withdrawal_rate_limit_per_hour=5` setting, and service-only reserve, submit, confirm, and release RPCs. It records negative reservation and positive release entries in the existing credit ledger; it does not change current balances, game scores, progress, or leaderboard rows during migration. A database insert trigger serializes and enforces the five-request rolling-hour limit. Production database state cannot be verified from this repository; apply and check migrations in the intended Supabase project before deployment. Reapplying `supabase-wallet-withdrawals.sql` is idempotent; editing this file alone does not update a live database. Existing pending/submitted withdrawal rows must be reconciled before new withdrawals; never clear them manually to free a reservation.
 
-The wallet-level-entry migrations define the wallet-credit entry RPC used by campaign entry. Apply `supabase-wallet-local-completions.sql` after `supabase-wallet-output-ambiguity-fix.sql` so an open session from a local-only completion cannot block a subsequent paid entry. This migration keeps the existing price formula, sufficient-balance check, and entry-request idempotency; it does not award completion rewards. `supabase-game-points.sql` continues to manage separate historical server game-point records, which do not fund campaign entry. Code changes alone do not update a live Supabase schema or API.
+The earlier wallet and game-point migrations are prerequisites for the unified migration. Code changes or an Android build do not apply SQL to Supabase or deploy API changes. Production balance unification is not complete until the migration is applied successfully and the corresponding API deployment is live.
 
 Configure these Vercel variables in the project that hosts the API:
 
@@ -100,7 +107,7 @@ The authenticated `GET /api/wallet` readiness response gives a user-facing reaso
 
 Never set a variable beginning with `NEXT_PUBLIC_` for private or server-only values. Deposits are player-signed transfers to the treasury and do not use the treasury private key. Withdrawals use that single key for server-side signing. No second treasury signer is needed by the current implementation.
 
-All 99 levels can be selected in any order when the global campaign pause is off. Paid gameplay remains server-gated: both `WALLET_PAID_GAMEPLAY_ENABLED=true` and `wallet_system_config.paid_gameplay_enabled=true` are required by the server. Every paid entry still requires an active server-issued session and sufficient verified credits.
+All 99 levels can be selected in any order when the global campaign pause is off. Paid gameplay remains server-gated: both `WALLET_PAID_GAMEPLAY_ENABLED=true` and `wallet_system_config.paid_gameplay_enabled=true` are required by the server. Every paid entry requires an active server-issued session and sufficient unreserved credits. These switches do not add manual approval; session creation, puzzle validation, and wallet crediting are automatic.
 
 ## Treasury deposit flow
 
@@ -133,7 +140,7 @@ Automated local tests cover deterministic conversion, wallet-signature verificat
 
 ## Economy and gameplay
 
-Wallet entry prices are unchanged. Completion time selects one of three local reward tiers:
+Wallet entry prices are unchanged. Server-measured completion time selects one of three reward tiers:
 
 - Entry cost: `floor(100 × 1.08^(level − 1))`
 - Three-star payout: `floor(entry cost × 1.6)`
@@ -143,10 +150,10 @@ Wallet entry prices are unchanged. Completion time selects one of three local re
 - Two stars: finish after the three-star threshold and at or below a threshold from 30 to 40 seconds.
 - One star: finish after the two-star threshold.
 
-Paid campaign entry still deducts its fee from the verified wallet through the server. A successful paid completion adds its star-rated reward to the device's separate local-game-reward balance once per entry session. The completion screen immediately shows the stars, exact reward, and timing cutoffs. That local reward is not a verified wallet credit, cannot fund another entry, and cannot be withdrawn. Local campaign progress is saved on the device and is not server-synced.
+Paid campaign entry deducts its fee from the verified wallet through the server. After server proof validation, the completion reward is added to that same wallet and campaign clear ledger once per paid session.
 
 Skipping an active paid level records that level locally as skipped and awards no stars or reward; its already charged entry fee is not refunded. The next level opens only after its normal entry fee is verified and charged through the existing wallet-entry ledger path. Insufficient balance or a free-practice session cannot record a skip. Skipped levels are shown separately from completed levels.
 
-Every time a level is entered, a seeded variant generator rearranges the source, battery, mirrors, crystals, and obstacles while retaining that level's mirror par, crystal count, obstacle count, entry fee, reward amounts, and time thresholds. The app stores each used layout per level and excludes all previous layouts on later replays. Each candidate is checked against its generated mirror solution and full crystal route before it can be loaded; generation fails explicitly rather than returning an invalid layout.
+Every paid level entry receives a server-generated seed. The client and server regenerate the same valid puzzle from that seed; the server verifies the submitted mirrors against that exact layout before crediting a reward. Practice can continue using its locally generated layouts.
 
-The current client does not call the level timer or completion endpoints. Completion rewards and campaign progress are local and immediate; the server does not verify puzzle proof or award a wallet reward for this client flow. Wallet entry fees, deposits, and withdrawals remain server-authoritative. The new entry migration removes only the stale active-session restriction needed to continue paying for later levels; it does not alter player balances or ledger history. Automated tests do not replace live database and production verification.
+Legacy device-local reward records are retained on the device for history but are not shown as a second balance or imported into the wallet because they are not server-verifiable. Automated tests do not replace applying the migration and verifying the live API/database deployment.

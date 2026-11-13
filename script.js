@@ -1792,29 +1792,28 @@ function startScene() {
         const rewardLabel = document.getElementById("completion-reward-label");
         const reward = document.getElementById("completion-reward");
         const rewardNote = document.getElementById("completion-reward-note");
-        const timeTargets = level.starTimeTargets;
         rewardLabel.textContent = walletLevelSessionId
-            ? "LOCAL GAME REWARD"
+            ? "WALLET REWARD"
             : "PRACTICE REWARD";
         reward.textContent = walletLevelSessionId
-            ? `+${result.rewardCredits.toLocaleString("en-US")} credits`
+            ? "Verifying…"
             : "0 credits";
         rewardNote.textContent = walletLevelSessionId
-            ? `${stars === 1 ? "1★: 0 reward · " : ""}3★ ≤ ${timeTargets.threeSeconds}s; 2★ ≤ ${timeTargets.twoSeconds}s · saved on device, not withdrawable`
+            ? "Server verification pending. Nothing is credited until confirmed."
             : "Practice clears do not earn rewards";
         const availableBalance = document.getElementById("completion-balance");
         document.getElementById("completion-balance-note").textContent =
             walletLevelSessionId
-                ? "Device-only gameplay balance · not withdrawable"
+                ? "Canonical wallet balance · awaiting server confirmation"
                 : "Practice only";
         if (walletLevelSessionId) {
-            availableBalance.textContent = "Saved locally";
+            availableBalance.textContent = "Verifying…";
         } else {
             availableBalance.textContent = "Practice only";
         }
         const nextLevelButton = document.getElementById("next-level");
         nextLevelButton.hidden = false;
-        nextLevelButton.disabled = level.number >= levels.length;
+        nextLevelButton.disabled = Boolean(walletLevelSessionId) || level.number >= levels.length;
         nextLevelButton.dataset.nextLevel = String(level.number + 1);
         nextLevelButton.textContent = level.number >= levels.length ? "CAMPAIGN COMPLETE" : "NEXT LEVEL →";
         completionSummary.hidden = false;

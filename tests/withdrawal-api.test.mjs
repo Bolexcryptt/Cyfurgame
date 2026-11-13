@@ -2,11 +2,15 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 import { createRequire } from "node:module";
-import { Keypair } from "@solana/web3.js";
+import { Keypair, PublicKey } from "@solana/web3.js";
+import { getAssociatedTokenAddress, TOKEN_PROGRAM_ID } from "@solana/spl-token";
 
 const require = createRequire(import.meta.url);
 const solanaConfig = require("../server/lib/solana-deposit.js");
 const withdrawalLibrary = require("../server/lib/withdrawals.js");
+const reconcileWithdrawal = withdrawalLibrary.reconcileFinalizedCyfurWithdrawal;
+const officialTreasuryAddress = solanaConfig.RELICGRID_TREASURY_ADDRESS;
+const officialMintAddress = solanaConfig.RELICGRID_CYFUR_MINT_ADDRESS;
 const originalFetch = globalThis.fetch;
 const originalEnv = { ...process.env };
 const testTreasury = Keypair.generate();
@@ -35,6 +39,9 @@ withdrawalLibrary.executeCyfurWithdrawal = async ({ onSubmitted, amountRaw, play
     }
     return { signature, status: "finalized" };
 };
+withdrawalLibrary.reconcileFinalizedCyfurWithdrawal = async () => ({
+    state: scenario.reconcileOutcome
+});
 const withdrawalsHandler = require("../api/withdrawals.js");
 
 let scenario;
@@ -56,6 +63,8 @@ function resetScenario({
         completedLevels,
         gamePointCompletions,
         transferOutcome,
+        reconcileOutcome: "pending",
+        confirmFailureCount: 0,
         rateLimited: false,
         records: new Map(),
         ledger: [],
@@ -118,8 +127,11 @@ function installFakeFetch() {
                 id: record.id,
                 status: record.status,
                 amount_credits: record.amount.toString(),
-                amount_raw: "50000000",
+                amount_raw: record.rawAmount.toString(),
+                wallet_address: record.walletAddress,
+                idempotency_key: record.idempotencyKey,
                 transaction_signature: record.signature,
+                balance_deducted: record.balanceDeducted,
                 created_at: "2026-01-01T00:00:00Z"
             })));
         }
@@ -159,8 +171,6 @@ function installFakeFetch() {
             if (scenario.actualBalance < amount) {
                 return dbResponse(400, { message: "Insufficient credits for withdrawal." });
             }
-            scenario.actualBalance -= amount;
-            scenario.ledger.push({ type: "withdrawal_reserve", amount: -amount });
             const record = {
                 id: `withdrawal-${scenario.records.size + 1}`,
                 idempotencyKey: body.p_idempotency_key,
@@ -169,7 +179,8 @@ function installFakeFetch() {
                 amount,
                 rawAmount: BigInt(body.p_amount_raw),
                 status: "pending",
-                signature: null
+                signature: null,
+                balanceDeducted: false
             };
             scenario.records.set(body.p_idempotency_key, record);
             return dbResponse(200, [{
@@ -193,6 +204,15 @@ function installFakeFetch() {
             if (record.status !== "submitted" || record.signature !== body.p_transaction_signature) {
                 return dbResponse(400, { message: "Only a matching submitted withdrawal can be confirmed." });
             }
+            if (scenario.confirmFailureCount > 0) {
+                scenario.confirmFailureCount -= 1;
+                return dbResponse(500, { message: "Temporary database confirmation failure." });
+            }
+            if (!record.balanceDeducted) {
+                scenario.actualBalance -= record.amount;
+                scenario.ledger.push({ type: "withdrawal", amount: -record.amount });
+                record.balanceDeducted = true;
+            }
             record.status = "confirmed";
             return dbResponse(200, [{
                 balance_credits: scenario.actualBalance.toString(),
@@ -206,8 +226,11 @@ function installFakeFetch() {
                 (!body.p_chain_failure_verified || record.signature !== body.p_transaction_signature)) {
                 return dbResponse(400, { message: "Submitted withdrawal funds can only be released after verifying the transaction failed." });
             }
-            scenario.actualBalance += record.amount;
-            scenario.ledger.push({ type: "withdrawal_release", amount: record.amount });
+            if (record.balanceDeducted) {
+                scenario.actualBalance += record.amount;
+                scenario.ledger.push({ type: "withdrawal_release", amount: record.amount });
+                record.balanceDeducted = false;
+            }
             record.status = "failed";
             return dbResponse(200, [{
                 balance_credits: scenario.actualBalance.toString(),
@@ -268,7 +291,7 @@ test.after(() => {
     Object.assign(process.env, originalEnv);
 });
 
-test("successful withdrawal reserves credits once and confirms without a second balance mutation", async () => {
+test("successful withdrawal deducts credits only after transfer confirmation", async () => {
     const response = await submitWithdrawal();
 
     assert.equal(response.statusCode, 200);
@@ -276,7 +299,7 @@ test("successful withdrawal reserves credits once and confirms without a second 
     assert.equal(response.payload.signature, signature);
     assert.equal(scenario.actualBalance, 5000n);
     assert.deepEqual(scenario.ledger.map((entry) => [entry.type, entry.amount]), [
-        ["withdrawal_reserve", -5000n]
+        ["withdrawal", -5000n]
     ]);
     assert.equal([...scenario.records.values()][0].status, "confirmed");
     assert.equal(scenario.sendCount, 1);
@@ -417,7 +440,7 @@ test("an invalid pasted Solana recipient is rejected before reservation", async 
     assert.equal(scenario.sendCount, 0);
 });
 
-test("confirmed on-chain failure releases the reservation and restores the exact balance", async () => {
+test("confirmed on-chain failure releases the reservation without deducting credits", async () => {
     scenario.transferOutcome = "failed";
 
     const response = await submitWithdrawal();
@@ -425,10 +448,7 @@ test("confirmed on-chain failure releases the reservation and restores the exact
     assert.equal(response.statusCode, 502);
     assert.equal(response.payload.status, "failed");
     assert.equal(scenario.actualBalance, 10000n);
-    assert.deepEqual(scenario.ledger.map((entry) => [entry.type, entry.amount]), [
-        ["withdrawal_reserve", -5000n],
-        ["withdrawal_release", 5000n]
-    ]);
+    assert.deepEqual(scenario.ledger, []);
     assert.equal([...scenario.records.values()][0].status, "failed");
 });
 
@@ -455,6 +475,8 @@ test("server-side withdrawal rate limit rejects the sixth request in a rolling h
 });
 
 test("replaying the same request idempotency key never submits or deducts twice", async () => {
+    resetScenario({ balance: 5000n });
+    installFakeFetch();
     const first = await submitWithdrawal();
     const second = await submitWithdrawal();
 
@@ -462,12 +484,12 @@ test("replaying the same request idempotency key never submits or deducts twice"
     assert.equal(second.statusCode, 200);
     assert.equal(second.payload.status, "confirmed");
     assert.equal(scenario.records.size, 1);
-    assert.equal(scenario.actualBalance, 5000n);
+    assert.equal(scenario.actualBalance, 0n);
     assert.equal(scenario.ledger.length, 1);
     assert.equal(scenario.sendCount, 1);
 });
 
-test("ambiguous submitted transfers keep the balance reserved and block a second request", async () => {
+test("ambiguous submitted transfers reserve availability without deducting the balance", async () => {
     scenario.transferOutcome = "ambiguous";
     const first = await submitWithdrawal();
     const status = await getWithdrawalStatus();
@@ -479,9 +501,108 @@ test("ambiguous submitted transfers keep the balance reserved and block a second
     assert.equal(first.payload.status, "submitted");
     assert.equal(status.payload.activeWithdrawal, true);
     assert.equal(second.statusCode, 409);
+    assert.equal(scenario.actualBalance, 10000n);
+    assert.equal(scenario.ledger.length, 0);
+    assert.equal([...scenario.records.values()][0].status, "submitted");
+});
+
+test("a retry reconciles the recorded finalized transfer and deducts without resending", async () => {
+    scenario.transferOutcome = "ambiguous";
+    const first = await submitWithdrawal();
+    scenario.reconcileOutcome = "finalized";
+    const retry = await submitWithdrawal();
+
+    assert.equal(first.statusCode, 202);
+    assert.equal(retry.statusCode, 200);
+    assert.equal(retry.payload.status, "confirmed");
     assert.equal(scenario.actualBalance, 5000n);
     assert.equal(scenario.ledger.length, 1);
-    assert.equal([...scenario.records.values()][0].status, "submitted");
+    assert.equal(scenario.sendCount, 1);
+});
+
+test("a finalized failed retry releases its reservation without a debit or resend", async () => {
+    scenario.transferOutcome = "ambiguous";
+    await submitWithdrawal();
+    scenario.reconcileOutcome = "failed";
+    const retry = await submitWithdrawal();
+
+    assert.equal(retry.statusCode, 502);
+    assert.equal(retry.payload.status, "failed");
+    assert.equal(scenario.actualBalance, 10000n);
+    assert.equal(scenario.ledger.length, 0);
+    assert.equal(scenario.sendCount, 1);
+});
+
+test("a finalized transfer is reconciled after its first database confirmation fails", async () => {
+    resetScenario({ balance: 5000n });
+    installFakeFetch();
+    scenario.confirmFailureCount = 1;
+    const first = await submitWithdrawal();
+    scenario.reconcileOutcome = "finalized";
+    const retry = await submitWithdrawal();
+
+    assert.equal(first.statusCode, 202);
+    assert.equal(retry.statusCode, 200);
+    assert.equal(scenario.actualBalance, 0n);
+    assert.equal(scenario.ledger.length, 1);
+    assert.equal(scenario.sendCount, 1);
+});
+
+test("withdrawal reconciliation verifies the exact finalized transfer before credit settlement", async () => {
+    const treasuryPublicKey = new PublicKey(officialTreasuryAddress);
+    const mintPublicKey = new PublicKey(officialMintAddress);
+    const playerPublicKey = new PublicKey(playerWallet);
+    const treasuryTokenAccount = await getAssociatedTokenAddress(mintPublicKey, treasuryPublicKey);
+    const playerTokenAccount = await getAssociatedTokenAddress(mintPublicKey, playerPublicKey);
+    let amount = "100000000";
+    const connectionFactory = () => ({
+        async getGenesisHash() {
+            return solanaConfig.GENESIS_HASHES["mainnet-beta"];
+        },
+        async getSignatureStatuses() {
+            return { value: [{ confirmationStatus: "finalized", slot: 42, err: null }] };
+        },
+        async getParsedTransaction() {
+            return {
+                slot: 42,
+                transaction: {
+                    signatures: [signature],
+                    message: {
+                        accountKeys: [{ pubkey: treasuryPublicKey, signer: true }],
+                        instructions: [{
+                            programId: TOKEN_PROGRAM_ID,
+                            parsed: {
+                                type: "transferChecked",
+                                info: {
+                                    authority: officialTreasuryAddress,
+                                    source: treasuryTokenAccount.toBase58(),
+                                    destination: playerTokenAccount.toBase58(),
+                                    mint: officialMintAddress,
+                                    tokenAmount: { amount, decimals: 8 }
+                                }
+                            }
+                        }]
+                    }
+                },
+                meta: { err: null, innerInstructions: [] }
+            };
+        }
+    });
+    const input = {
+        rpcUrl: "https://rpc.example.invalid",
+        signature,
+        playerWalletAddress: playerWallet,
+        treasuryAddress: officialTreasuryAddress,
+        mintAddress: officialMintAddress,
+        tokenProgramId: TOKEN_PROGRAM_ID.toBase58(),
+        tokenDecimals: 8,
+        amountRaw: "100000000",
+        connectionFactory
+    };
+
+    assert.deepEqual(await reconcileWithdrawal(input), { state: "finalized" });
+    amount = "99999999";
+    assert.deepEqual(await reconcileWithdrawal(input), { state: "invalid" });
 });
 
 test("withdrawal migration preserves existing data and enforces service-only atomic state transitions", () => {

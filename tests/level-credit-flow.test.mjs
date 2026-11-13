@@ -109,7 +109,8 @@ function installEntryDatabase({
                     session_id: `session-${sessions.size + 1}`,
                     balance_credits: balance.toString(),
                     entry_cost_credits: cost.toString(),
-                    level_number: body.p_level_number
+                    level_number: body.p_level_number,
+                    layout_seed: body.p_layout_seed
                 };
                 activeSession = session;
                 sessions.set(body.p_request_id, session);

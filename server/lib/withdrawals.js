@@ -111,6 +111,102 @@ function encodeBase58(bytes) {
     return encoded;
 }
 
+async function reconcileFinalizedCyfurWithdrawal({
+    rpcUrl,
+    signature,
+    playerWalletAddress,
+    treasuryAddress = RELICGRID_TREASURY_ADDRESS,
+    mintAddress = RELICGRID_CYFUR_MINT_ADDRESS,
+    tokenProgramId = TOKEN_PROGRAM_ID.toBase58(),
+    tokenDecimals = 8,
+    amountRaw,
+    connectionFactory = (url, options) => new Connection(url, options)
+}) {
+    const network = process.env.SOLANA_NETWORK;
+    if (!GENESIS_HASHES[network] || typeof rpcUrl !== "string" || !/^https:\/\//i.test(rpcUrl)) {
+        throw new TypeError("A trusted RPC URL and supported Solana network are required.");
+    }
+    if (!isBase58(signature, 64) || !isBase58(playerWalletAddress, 32) ||
+        treasuryAddress !== RELICGRID_TREASURY_ADDRESS ||
+        mintAddress !== RELICGRID_CYFUR_MINT_ADDRESS ||
+        tokenProgramId !== TOKEN_PROGRAM_ID.toBase58() ||
+        tokenDecimals !== 8 ||
+        typeof amountRaw !== "string" || !/^[1-9]\d*$/.test(amountRaw)) {
+        throw new TypeError("Invalid finalized withdrawal reconciliation parameters.");
+    }
+
+    const connection = connectionFactory(rpcUrl, {
+        commitment: "finalized",
+        confirmTransactionInitialTimeout: 60000
+    });
+    if (await connection.getGenesisHash() !== GENESIS_HASHES[network]) {
+        throw new Error("The Solana RPC endpoint does not match the configured treasury network.");
+    }
+
+    const statuses = await connection.getSignatureStatuses([signature], {
+        searchTransactionHistory: true
+    });
+    const status = statuses?.value?.[0];
+    if (!status || status.confirmationStatus !== "finalized") {
+        return { state: "pending" };
+    }
+    if (status.err) {
+        return { state: "failed" };
+    }
+    if (!Number.isSafeInteger(status.slot) || status.slot <= 0) {
+        return { state: "unavailable" };
+    }
+
+    const transaction = await connection.getParsedTransaction(signature, {
+        commitment: "finalized",
+        maxSupportedTransactionVersion: 0
+    });
+    if (!transaction || transaction.slot !== status.slot ||
+        !transaction.meta || transaction.meta.err ||
+        !transaction.transaction?.signatures?.includes(signature)) {
+        return { state: "unavailable" };
+    }
+
+    const treasuryPublicKey = new PublicKey(treasuryAddress);
+    const mintPublicKey = new PublicKey(mintAddress);
+    const tokenProgramKey = new PublicKey(tokenProgramId);
+    const playerPublicKey = new PublicKey(playerWalletAddress);
+    const [treasuryTokenAccount, playerTokenAccount] = await Promise.all([
+        getAssociatedTokenAddress(mintPublicKey, treasuryPublicKey, false, tokenProgramKey),
+        getAssociatedTokenAddress(mintPublicKey, playerPublicKey, false, tokenProgramKey)
+    ]);
+    const accountKeys = transaction.transaction.message.accountKeys ?? [];
+    if (!accountKeys.some((account) =>
+        account.signer === true &&
+        account.pubkey?.toBase58?.() === treasuryAddress)) {
+        return { state: "invalid" };
+    }
+
+    const instructions = [
+        ...(transaction.transaction.message.instructions ?? []),
+        ...(transaction.meta.innerInstructions ?? []).flatMap((group) => group.instructions ?? [])
+    ];
+    const transferInstructions = instructions.filter((instruction) =>
+        instruction.programId?.toBase58?.() === tokenProgramId &&
+        ["transfer", "transferChecked"].includes(instruction.parsed?.type));
+    if (transferInstructions.length !== 1) {
+        return { state: "invalid" };
+    }
+    const transfer = transferInstructions[0];
+    const info = transfer.parsed.info;
+    if (transfer.parsed.type !== "transferChecked" ||
+        info.authority !== treasuryAddress ||
+        info.source !== treasuryTokenAccount.toBase58() ||
+        info.destination !== playerTokenAccount.toBase58() ||
+        info.mint !== mintAddress ||
+        info.tokenAmount?.amount !== amountRaw ||
+        info.tokenAmount?.decimals !== tokenDecimals) {
+        return { state: "invalid" };
+    }
+
+    return { state: "finalized" };
+}
+
 async function executeCyfurWithdrawal({
     rpcUrl,
     playerWalletAddress,
@@ -320,5 +416,6 @@ module.exports = {
     encodeBase58,
     executeCyfurWithdrawal,
     getWithdrawalSignerFromEnvironment,
-    parseWithdrawalSecret
+    parseWithdrawalSecret,
+    reconcileFinalizedCyfurWithdrawal
 };

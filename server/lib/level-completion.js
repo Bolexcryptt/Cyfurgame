@@ -38,9 +38,17 @@ async function verifyLevelProof(level, mirrors, launchDirection) {
         : { connected: false, reason: route.outcome };
 }
 
-async function getLevelEconomyAndStars(levelNumber, elapsedMilliseconds) {
-    const { evaluateLevelStars, getLevelEconomy, levels } = await import("../../levels.js");
-    const level = levels[levelNumber - 1];
+async function getLevelEconomyAndStars(levelNumber, elapsedMilliseconds, layoutSeed) {
+    const { evaluateLevelStars, getLevelEconomy, generateLevelVariant } = await import("../../levels.js");
+    if (!Number.isSafeInteger(layoutSeed) || layoutSeed < 0 || layoutSeed > 0xffffffff) {
+        throw new RangeError("A valid server-issued level layout seed is required.");
+    }
+    let level;
+    try {
+        level = generateLevelVariant(levelNumber, layoutSeed, []);
+    } catch (error) {
+        throw new RangeError(`Level ${levelNumber} layout could not be generated: ${error.message}`);
+    }
     if (!level || level.number !== levelNumber) {
         throw new RangeError("Level configuration is unavailable.");
     }

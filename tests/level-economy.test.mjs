@@ -802,7 +802,7 @@ test("local gameplay rewards are recorded once per paid entry and remain separat
     }), /valid paid level reward record/);
 });
 
-test("NEXT LEVEL advances without waiting for a completion RPC or server timer", () => {
+test("paid level rewards are verified server-side before NEXT LEVEL becomes available", () => {
     const app = readFileSync(new URL("../app.js", import.meta.url), "utf8");
     const scene = readFileSync(new URL("../script.js", import.meta.url), "utf8");
     const clickHandler = app.slice(
@@ -810,19 +810,20 @@ test("NEXT LEVEL advances without waiting for a completion RPC or server timer",
         app.indexOf('\ndocument.getElementById("home-levels-toggle")')
     );
     assert.match(clickHandler, /await startLevel\(number, true\)/);
-    assert.doesNotMatch(clickHandler, /confirmPendingLevelCompletion|level-completion|level-session/);
+    assert.match(clickHandler, /retry-wallet-completion/);
     assert.doesNotMatch(app, /saveWalletLevelCompletion|requestWalletLevelTimer|confirmPendingLevelCompletion/);
-    assert.doesNotMatch(app, /apiUrl\("level-completion"\)|apiUrl\("level-session"\)/);
+    assert.match(app, /apiUrl\("level-completion"\)/);
     assert.doesNotMatch(scene, /fluxgrid:level-timer-start/);
-    assert.match(scene, /nextLevelButton\.disabled = level\.number >= levels\.length/);
+    assert.match(scene, /nextLevelButton\.disabled = Boolean\(walletLevelSessionId\) \|\| level\.number >= levels\.length/);
     const completionHandler = app.slice(
         app.indexOf('window.addEventListener("fluxgrid:level-complete"'),
         app.indexOf("\nbackendReady = initializeBackend()")
     );
-    assert.match(completionHandler, /awardLocalGameReward/);
-    assert.match(completionHandler, /savePlayer\(\)/);
-    assert.match(completionHandler, /not added to your wallet/);
-    assert.doesNotMatch(completionHandler, /fetch\(|supabase\.rpc|level-completion/);
+    assert.match(completionHandler, /verifyWalletLevelCompletion\(detail\)/);
+    assert.doesNotMatch(completionHandler, /awardLocalGameReward|localGameRewardEntries/);
+    assert.match(app, /The server is validating this paid session and puzzle proof/);
+    assert.match(app, /No success is shown without server confirmation/);
+    assert.match(app, /nextLevelButton\.dataset\.action = "retry-wallet-completion"/);
     assert.match(app, /function renderHome\(\)[\s\S]*?void refreshOwnProgress\(\)\.catch/);
 });
 
@@ -869,15 +870,14 @@ test("SKIP LEVEL requires paid next-level entry, spends through the wallet path,
     assert.match(walletMigration, /apply_wallet_ledger_entry\(\s*p_player_id,\s*'game_entry',\s*-v_cost/);
 });
 
-test("local reward storage and completion summary are explicitly non-withdrawable", () => {
+test("legacy device reward data is retained but no longer presented as a separate balance", () => {
     const app = readFileSync(new URL("../app.js", import.meta.url), "utf8");
     const html = readFileSync(new URL("../index.html", import.meta.url), "utf8");
     assert.match(app, /localGameRewardEntries: normalizeLocalGameRewardEntries\(parsed\.localGameRewardEntries\)/);
-    assert.match(app, /player\.localGameRewardEntries = reward\.entries/);
+    assert.doesNotMatch(app, /awardLocalGameReward|getLocalGameRewardBalance/);
     assert.match(html, /VERIFIED WALLET BALANCE/);
-    assert.match(html, /DEVICE-ONLY GAME REWARDS · NOT WITHDRAWABLE/);
-    assert.match(html, /id="local-game-reward-history"/);
-    assert.match(html, /LOCAL GAME REWARD BALANCE/);
+    assert.match(html, /CANONICAL WALLET BALANCE/);
+    assert.doesNotMatch(html, /local-game-reward|DEVICE-ONLY GAME REWARDS/);
 });
 
 test("mirror undo restores only the last two board states", () => {
@@ -1060,12 +1060,10 @@ test("startup plays company and player introductions, then game video, then open
         app.indexOf('window.addEventListener("fluxgrid:level-complete"'),
         app.indexOf('\nbackendReady = initializeBackend()')
     );
-    assert.match(levelCompletionHandler, /awardLocalGameReward/);
-    assert.match(levelCompletionHandler, /Device-only gameplay balance · not withdrawable/);
-    assert.doesNotMatch(levelCompletionHandler, /confirmPendingLevelCompletion|level-completion|supabase\.rpc|fetch\(/);
-    assert.match(levelCompletionHandler, /const nextLevelButton = document\.getElementById\("next-level"\);[\s\S]*?nextLevelButton\.hidden = false;[\s\S]*?nextLevelButton\.disabled = number >= 99;[\s\S]*?nextLevelButton\.dataset\.nextLevel = String\(number \+ 1\)/);
-    assert.match(levelCompletionHandler, /nextLevelButton\.textContent = number >= 99 \? "CAMPAIGN COMPLETE" : "NEXT LEVEL →"/);
-    assert.doesNotMatch(levelCompletionHandler, /pendingLevel\?\.number === number/);
+    assert.match(levelCompletionHandler, /verifyWalletLevelCompletion\(detail\)/);
+    assert.doesNotMatch(levelCompletionHandler, /awardLocalGameReward|localGameRewardEntries/);
+    assert.match(app, /nextLevelButton\.disabled = number >= 99/);
+    assert.match(app, /wallet balance is saved|wallet result is saved/);
     const openingIntro = app.slice(app.indexOf("async function showOpeningIntro"), app.indexOf("\nfunction fitVideoFrame"));
     assert.match(openingIntro, /playOpeningVideo\("companyintro\.mp4"/);
     assert.doesNotMatch(openingIntro, /playGameVideo\(\)/);
@@ -1100,7 +1098,7 @@ test("startup plays company and player introductions, then game video, then open
     assert.doesNotMatch(html, /music\.wav/);
     assert.match(html, /id="completion-balance"/);
     assert.doesNotMatch(html, /CAMPAIGN SCORE|TOKEN TRANSFER|WALLET CREDIT BALANCE|completion-points|completion-token-reward/);
-    assert.match(html, /LEVEL COMPLETED[\s\S]*ENTRY FEE[\s\S]*STAR RATING[\s\S]*LOCAL GAME REWARD[\s\S]*SOLVE TIME[\s\S]*LOCAL GAME REWARD BALANCE/);
+    assert.match(html, /LEVEL COMPLETED[\s\S]*ENTRY FEE[\s\S]*STAR RATING[\s\S]*WALLET REWARD[\s\S]*SOLVE TIME[\s\S]*CANONICAL WALLET BALANCE/);
 
     const scene = readFileSync(new URL("../script.js", import.meta.url), "utf8");
     const activationFinish = scene.indexOf("if (activationProgress >= 1 && pendingLevelCompletion && !skipLevelPending)");
@@ -1355,17 +1353,17 @@ test("campaign levels use authenticated wallet credits for entry", () => {
     assert.doesNotMatch(entryFlow, /gamePoints: true|insufficient_game_points/);
     assert.match(entryFlow, /apiUrl\("level-entry"\)/);
     assert.match(app, /apiUrl\("game-points"\)/);
-    assert.match(app, /function refreshServerGamePoints\(\)/);
+    assert.match(app, /function refreshServerWalletProgress\(\)/);
     assert.doesNotMatch(app, /legacyGameAccessPoints|relicgrid\.game-access\./);
     assert.doesNotMatch(app, /verifyCyfurGamePointsDeposit|getSolscanSignature|game-access-form/);
     assert.match(app, /Practice complete\. No wallet credits, local reward, or campaign progress was awarded/);
 
     const scene = readFileSync(new URL("../script.js", import.meta.url), "utf8");
-    assert.match(scene, /LOCAL GAME REWARD/);
+    assert.match(scene, /WALLET REWARD/);
     assert.match(scene, /PRACTICE REWARD/);
     assert.match(scene, /Practice clears do not earn rewards/);
-    assert.doesNotMatch(scene, /Pending server confirmation; not yet credited/);
-    assert.match(scene, /LOCAL GAME REWARD/);
+    assert.match(scene, /Server verification pending\. Nothing is credited until confirmed/);
+    assert.match(scene, /WALLET REWARD/);
     assert.match(scene, /No reward is credited for a failed attempt/);
     assert.match(scene, /traceLaserRoute\(activeLevel, mirrorOrientations, launchDirection\)/);
     const levelsModule = readFileSync(new URL("../levels.js", import.meta.url), "utf8");
@@ -1563,7 +1561,8 @@ test("deposit UI shows only the treasury wallet and accepts a transaction ID wit
     const walletApi = readFileSync(new URL("../api/wallet.js", import.meta.url), "utf8");
     assert.match(walletApi, /transaction_signature,amount_raw,token_decimals,status,credit_amount_credits/);
     assert.doesNotMatch(walletApi, /account-bound amount and memo|submit the transaction link/i);
-    assert.doesNotMatch(app, /apiUrl\("level-completion"\)|serverGamePoints = String\(balanceAmount\)/);
+    assert.match(app, /apiUrl\("level-completion"\)/);
+    assert.doesNotMatch(app, /serverGamePoints = String\(balanceAmount\)/);
     assert.doesNotMatch(app, /saveGameAccessState|relicgrid\.game-access\.[^`]*setItem/);
     const gamePointsMigration = readFileSync(new URL("../supabase-game-points.sql", import.meta.url), "utf8");
     assert.match(gamePointsMigration, /when 3 then floor\(v_session\.entry_cost_points \* 1\.6\)/i);
@@ -2212,22 +2211,27 @@ test("server proof requires every crystal to be hit in the correct color sequenc
 
 test("server-side time ratings share the configured thresholds and exact reward formulas", async () => {
     for (const level of levels) {
+        const layoutSeed = (level.number * 12345) >>> 0;
+        const variant = generateLevelVariant(level.number, layoutSeed, []);
         const three = await getLevelEconomyAndStars(
             level.number,
-            level.starTimeTargets.threeSeconds * 1000
+            variant.starTimeTargets.threeSeconds * 1000,
+            layoutSeed
         );
         const two = await getLevelEconomyAndStars(
             level.number,
-            level.starTimeTargets.twoSeconds * 1000
+            variant.starTimeTargets.twoSeconds * 1000,
+            layoutSeed
         );
         const one = await getLevelEconomyAndStars(
             level.number,
-            (level.starTimeTargets.twoSeconds + 1) * 1000
+            (variant.starTimeTargets.twoSeconds + 1) * 1000,
+            layoutSeed
         );
         assert.equal(three.result.stars, 3);
-        assert.equal(three.result.rewardCredits, level.economy.threeStarPayoutCredits);
+        assert.equal(three.result.rewardCredits, variant.economy.threeStarPayoutCredits);
         assert.equal(two.result.stars, 2);
-        assert.equal(two.result.rewardCredits, level.economy.twoStarRefundCredits);
+        assert.equal(two.result.rewardCredits, variant.economy.twoStarRefundCredits);
         assert.equal(one.result.stars, 1);
         assert.equal(one.result.rewardCredits, 0);
     }
@@ -2245,7 +2249,8 @@ test("level completion API derives the reward from server time and returns dupli
     process.env.SUPABASE_URL = "https://example.supabase.co";
     process.env.LEVELS_LOCKED = "false";
     const originalFetch = globalThis.fetch;
-    const level = levels[0];
+    const layoutSeed = 123456;
+    const level = generateLevelVariant(1, layoutSeed, []);
     const mirrors = level.solutionMirrors.map(({ row, col, orientation }) => ({
         row,
         col,
@@ -2265,6 +2270,7 @@ test("level completion API derives the reward from server time and returns dupli
                 level_number: 1,
                 timer_started_at: new Date(Date.now() - 1000).toISOString(),
                 expires_at: new Date(Date.now() + 60000).toISOString(),
+                layout_seed: layoutSeed,
                 completed_at: completedAt
             }]), { status: 200 });
         }
@@ -2325,6 +2331,7 @@ test("level completion API derives the reward from server time and returns dupli
                     level_number: 1,
                     timer_started_at: new Date(Date.now() - 1000).toISOString(),
                     expires_at: new Date(Date.now() + 60000).toISOString(),
+                    layout_seed: layoutSeed,
                     completed_at: completedAt
                 }]), { status: 200 });
             }
@@ -2369,6 +2376,7 @@ test("level completion API derives the reward from server time and returns dupli
                     level_number: 1,
                     timer_started_at: new Date(Date.now() - 1000).toISOString(),
                     expires_at: new Date(Date.now() + 60000).toISOString(),
+                    layout_seed: layoutSeed,
                     completed_at: null
                 }]), { status: 200 });
             }
@@ -3368,7 +3376,8 @@ test("enabled level entry sends a stable request ID to the atomic charge operati
             return new Response(JSON.stringify([{
                 session_id: "123e4567-e89b-42d3-a456-426614174000",
                 balance_credits: "0",
-                entry_cost_credits: 100
+                entry_cost_credits: 100,
+                layout_seed: 123
             }]), { status: 200 });
         }
         throw new Error(`Unexpected level-entry request: ${target}`);

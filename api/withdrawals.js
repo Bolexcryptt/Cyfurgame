@@ -9,7 +9,8 @@ const {
 const {
     calculateWithdrawalTokenAmountRaw,
     executeCyfurWithdrawal,
-    getWithdrawalSignerFromEnvironment
+    getWithdrawalSignerFromEnvironment,
+    reconcileFinalizedCyfurWithdrawal
 } = require("../server/lib/withdrawals");
 const { RELICGRID_CYFUR_MINT_ADDRESS, RELICGRID_TREASURY_ADDRESS, isBase58 } = require("../server/lib/solana-deposit");
 
@@ -56,7 +57,7 @@ module.exports = async function withdrawals(request, response) {
             serviceRequest(`wallet_credit_accounts?select=balance_credits,updated_at&player_id=eq.${encodeURIComponent(user.id)}&limit=1`),
             serviceRequest(`wallet_credit_ledger?select=balance_after_credits&player_id=eq.${encodeURIComponent(user.id)}&order=created_at.desc,id.desc&limit=1`),
             readWalletSystemConfig(),
-            serviceRequest(`wallet_withdrawals?select=id,status,amount_credits,amount_raw,transaction_signature,created_at&player_id=eq.${encodeURIComponent(user.id)}&order=created_at.desc&limit=20`),
+            serviceRequest(`wallet_withdrawals?select=id,status,amount_credits,amount_raw,wallet_address,idempotency_key,transaction_signature,balance_deducted,created_at&player_id=eq.${encodeURIComponent(user.id)}&order=created_at.desc&limit=20`),
             serviceRequest(`level_completions?select=level_number&player_id=eq.${encodeURIComponent(user.id)}&level_number=lte.20`),
             serviceRequest(`game_point_level_completions?select=level_number&player_id=eq.${encodeURIComponent(user.id)}&level_number=lte.20`)
         ]);
@@ -73,9 +74,14 @@ module.exports = async function withdrawals(request, response) {
         const storedBalance = account?.balance_credits ?? latestLedgerEntry?.balance_after_credits ?? "0";
         const balanceCredits = String(storedBalance);
         const pendingCredits = history
-            .filter((entry) => ["pending", "submitted"].includes(entry.status))
+            .filter((entry) => ["pending", "submitted"].includes(entry.status) &&
+                entry.balance_deducted !== true)
             .reduce((total, entry) => total + (safeBigInt(String(entry.amount_credits || "0")) ?? 0n), 0n);
-        const availableCredits = balanceCredits;
+        const availableCreditsBigInt = BigInt(balanceCredits) - pendingCredits;
+        if (availableCreditsBigInt < 0n) {
+            throw new Error("Pending withdrawal reservations exceed the verified wallet balance.");
+        }
+        const availableCredits = availableCreditsBigInt.toString();
 
         if (request.method === "GET") {
             const configurationReady = configs?.network === "mainnet-beta" &&
@@ -181,19 +187,18 @@ module.exports = async function withdrawals(request, response) {
         if (creditsBigInt > 9223372036854775807n) {
             return sendJson(response, 400, { error: "amount_out_of_range" });
         }
-        if (creditsBigInt > BigInt(balanceCredits) || creditsBigInt > BigInt(availableCredits)) {
-            return sendJson(response, 402, {
-                error: "insufficient_balance",
-                balanceCredits,
-                availableCredits
-            });
-        }
-
         const amountRaw = calculateWithdrawalTokenAmountRaw(amountCreditsString, Number(configs.token_decimals));
         if (BigInt(amountRaw) > 9223372036854775807n) {
             return sendJson(response, 400, { error: "amount_out_of_range" });
         }
         if (action === "preview") {
+            if (creditsBigInt > BigInt(balanceCredits) || creditsBigInt > BigInt(availableCredits)) {
+                return sendJson(response, 402, {
+                    error: "insufficient_balance",
+                    balanceCredits,
+                    availableCredits
+                });
+            }
             return sendJson(response, 200, {
                 amountCredits: amountCreditsString,
                 amountRaw,
@@ -213,14 +218,38 @@ module.exports = async function withdrawals(request, response) {
             !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(requestId)) {
             return sendJson(response, 400, { error: "idempotency_key_required" });
         }
-        const signer = getWithdrawalSignerFromEnvironment();
-        if (signer.publicKey.toBase58() !== configs.treasury_address) {
-            return sendJson(response, 503, {
-                error: "withdrawal_signer_mismatch",
-                message: "The configured server-side signer does not match the authorized treasury address. No transfer was submitted."
+        const idempotencyKey = `${user.id}:${requestId}`;
+        let priorRequest = history.find((entry) => entry.idempotency_key === idempotencyKey);
+        if (!priorRequest) {
+            [priorRequest] = await serviceRequest(
+                `wallet_withdrawals?select=id,status,amount_credits,amount_raw,wallet_address,idempotency_key,transaction_signature,balance_deducted&player_id=eq.${encodeURIComponent(user.id)}&idempotency_key=eq.${encodeURIComponent(idempotencyKey)}&limit=1`
+            );
+        }
+        if (priorRequest &&
+            (String(priorRequest.amount_credits) !== amountCreditsString ||
+                String(priorRequest.amount_raw) !== amountRaw ||
+                priorRequest.wallet_address !== recipientWalletAddress)) {
+            return sendJson(response, 409, { error: "idempotency_key_reused" });
+        }
+        if (!priorRequest &&
+            (creditsBigInt > BigInt(balanceCredits) || creditsBigInt > BigInt(availableCredits))) {
+            return sendJson(response, 402, {
+                error: "insufficient_balance",
+                balanceCredits,
+                availableCredits
             });
         }
-        const idempotencyKey = `${user.id}:${requestId}`;
+
+        let signer = null;
+        if (!priorRequest) {
+            signer = getWithdrawalSignerFromEnvironment();
+            if (signer.publicKey.toBase58() !== configs.treasury_address) {
+                return sendJson(response, 503, {
+                    error: "withdrawal_signer_mismatch",
+                    message: "The configured server-side signer does not match the authorized treasury address. No transfer was submitted."
+                });
+            }
+        }
         const memo = `RelicGrid withdrawal:${randomUUID()}`;
         let reservation;
         try {
@@ -270,6 +299,92 @@ module.exports = async function withdrawals(request, response) {
             };
             if (reservation.withdrawal_status === "confirmed") {
                 return sendJson(response, 200, payload);
+            }
+            if (reservation.withdrawal_status === "submitted" && reservation.transaction_signature) {
+                let reconciliation;
+                try {
+                    reconciliation = await reconcileFinalizedCyfurWithdrawal({
+                        rpcUrl: process.env.SOLANA_RPC_URL,
+                        signature: reservation.transaction_signature,
+                        playerWalletAddress: recipientWalletAddress,
+                        treasuryAddress: configs.treasury_address,
+                        mintAddress: configs.official_mint_address,
+                        tokenProgramId: configs.token_program_id,
+                        tokenDecimals: Number(configs.token_decimals),
+                        amountRaw
+                    });
+                } catch (error) {
+                    console.error("Submitted withdrawal could not be reconciled.", {
+                        code: error?.code || "withdrawal_chain_reconciliation_failed",
+                        message: sanitizeWithdrawalError(error?.message)
+                    });
+                    return sendJson(response, 202, {
+                        ...payload,
+                        message: "The recorded transaction is still reserved while its finalized chain status is checked. No second transfer was sent."
+                    });
+                }
+
+                if (reconciliation.state === "finalized") {
+                    let finalized;
+                    try {
+                        finalized = await serviceRequest("rpc/confirm_wallet_withdrawal", {
+                            method: "POST",
+                            headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify({
+                                p_withdrawal_id: reservation.withdrawal_id,
+                                p_transaction_signature: reservation.transaction_signature
+                            })
+                        });
+                    } catch (error) {
+                        console.error("Finalized withdrawal balance confirmation is pending.", {
+                            code: error?.code || "withdrawal_balance_confirmation_failed"
+                        });
+                        return sendJson(response, 202, {
+                            ...payload,
+                            message: "The transfer is finalized; the canonical balance deduction will be retried against this signature. No second transfer was sent."
+                        });
+                    }
+                    const finalResult = Array.isArray(finalized) ? finalized[0] : finalized;
+                    if (finalResult) {
+                        return sendJson(response, 200, {
+                            ...payload,
+                            status: "confirmed",
+                            balanceCredits: String(finalResult.balance_credits)
+                        });
+                    }
+                } else if (reconciliation.state === "failed") {
+                    try {
+                        await serviceRequest("rpc/release_wallet_withdrawal", {
+                            method: "POST",
+                            headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify({
+                                p_withdrawal_id: reservation.withdrawal_id,
+                                p_failure_reason: "Finalized Solana transaction failed.",
+                                p_chain_failure_verified: true,
+                                p_transaction_signature: reservation.transaction_signature
+                            })
+                        });
+                    } catch (error) {
+                        console.error("Finalized failed withdrawal could not release its reservation.", {
+                            code: error?.code || "withdrawal_release_failed"
+                        });
+                        return sendJson(response, 503, {
+                            ...payload,
+                            error: "withdrawal_reconciliation_required",
+                            message: "The finalized transaction failed; its reservation remains until the database release is retried."
+                        });
+                    }
+                    return sendJson(response, 502, {
+                        ...payload,
+                        status: "failed",
+                        error: "withdrawal_failed",
+                        message: "The recorded Solana transaction finalized as failed. The reservation has been released."
+                    });
+                }
+                return sendJson(response, 202, {
+                    ...payload,
+                    message: "The recorded transaction is not yet safely reconcilable. Its balance remains reserved, and no second transfer was sent."
+                });
             }
             if (reservation.withdrawal_status === "pending" || reservation.withdrawal_status === "submitted") {
                 return sendJson(response, 202, payload);
