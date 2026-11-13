@@ -1556,7 +1556,7 @@ async function refreshWithdrawalStatus() {
         if (tokenDecimals) tokenDecimals.dataset.decimals = String(decimals);
         balanceNote.textContent = result.level20Requirement?.met === true
             ? "Withdrawals use the available balance shown above."
-            : `Withdrawals use the available balance shown above; complete levels 1-20 to unlock access (${Number(result.level20Requirement?.completedLevels) || 0}/20).`;
+            : `Withdrawals use the available balance shown above; complete levels 1-19 to reach level 20 and unlock access (${Number(result.level20Requirement?.completedLevels) || 0}/19).`;
         minimumValue.textContent = "0.001 CYFUR";
         minimumNote.textContent = "1 credit at the current conversion rate; limited to 5 requests per hour.";
         renderWithdrawalHistory(result.withdrawals || []);
@@ -1574,7 +1574,7 @@ async function refreshWithdrawalStatus() {
                 ? result.level20Requirement.completedLevels
                 : 0;
             setWithdrawalStatus(
-                `Complete levels 1-20 to unlock withdrawals (${completedLevels}/20 server-saved clears).`,
+                `Complete levels 1-19 to reach level 20 and unlock withdrawals (${completedLevels}/19 server-saved clears).`,
                 "disabled"
             );
             return;
