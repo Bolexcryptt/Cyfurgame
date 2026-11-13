@@ -3,7 +3,8 @@ const COLS = 8;
 const CLEAR_TARGET_ROWS = Object.freeze([2, 3, 4]);
 const CLEAR_TARGET_COLS = Object.freeze([2, 3, 4, 5]);
 export const CYFUR_CREDITS_PER_TOKEN = 1000;
-export const LEVEL_TRANSITION_INTERVAL = 5;
+export const TRANSITION_VIDEO_MIN_INTERVAL = 8;
+export const TRANSITION_VIDEO_MAX_INTERVAL = 12;
 export const STAR_TIME_CONFIG = Object.freeze({
     threeStarBaseSeconds: 10,
     threeStarSecondsPerMirror: 1,
@@ -12,13 +13,30 @@ export const STAR_TIME_CONFIG = Object.freeze({
 });
 export const LEVEL_STAR_TIME_OVERRIDES = Object.freeze({});
 
-export function getPendingLevelTransition(completedLevelNumber, playedMilestones = []) {
+export function getNextTransitionMilestone(completedLevelNumber, random = Math.random) {
+    if (!Number.isInteger(completedLevelNumber) || completedLevelNumber < 0 ||
+        completedLevelNumber > 98 || typeof random !== "function") {
+        throw new TypeError("A completed level number and random source are required.");
+    }
+    const sample = random();
+    if (!Number.isFinite(sample) || sample < 0 || sample >= 1) {
+        throw new TypeError("The transition random source must return a value between zero and one.");
+    }
+    const interval = TRANSITION_VIDEO_MIN_INTERVAL +
+        Math.floor(sample * (TRANSITION_VIDEO_MAX_INTERVAL - TRANSITION_VIDEO_MIN_INTERVAL + 1));
+    const milestone = completedLevelNumber + interval;
+    return milestone <= 98 ? milestone : null;
+}
+
+export function getPendingLevelTransition(completedLevelNumber, playedMilestones = [], scheduledMilestone = null) {
     if (!Number.isInteger(completedLevelNumber) || completedLevelNumber < 0 || completedLevelNumber > 98 ||
-        !Array.isArray(playedMilestones)) {
-        throw new TypeError("A completed level number and played milestone list are required.");
+        !Array.isArray(playedMilestones) ||
+        (scheduledMilestone !== null &&
+            (!Number.isInteger(scheduledMilestone) || scheduledMilestone < 1 || scheduledMilestone > 98))) {
+        throw new TypeError("A completed level number, played milestones, and scheduled milestone are required.");
     }
     return completedLevelNumber > 0 &&
-        completedLevelNumber % LEVEL_TRANSITION_INTERVAL === 0 &&
+        scheduledMilestone === completedLevelNumber &&
         !playedMilestones.includes(completedLevelNumber)
         ? completedLevelNumber
         : null;

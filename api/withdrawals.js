@@ -57,18 +57,18 @@ module.exports = async function withdrawals(request, response) {
             serviceRequest(`wallet_credit_ledger?select=balance_after_credits&player_id=eq.${encodeURIComponent(user.id)}&order=created_at.desc,id.desc&limit=1`),
             readWalletSystemConfig(),
             serviceRequest(`wallet_withdrawals?select=id,status,amount_credits,amount_raw,transaction_signature,created_at&player_id=eq.${encodeURIComponent(user.id)}&order=created_at.desc&limit=20`),
-            serviceRequest(`level_completions?select=level_number&player_id=eq.${encodeURIComponent(user.id)}&level_number=lte.30`),
-            serviceRequest(`game_point_level_completions?select=level_number&player_id=eq.${encodeURIComponent(user.id)}&level_number=lte.30`)
+            serviceRequest(`level_completions?select=level_number&player_id=eq.${encodeURIComponent(user.id)}&level_number=lte.20`),
+            serviceRequest(`game_point_level_completions?select=level_number&player_id=eq.${encodeURIComponent(user.id)}&level_number=lte.20`)
         ]);
 
         const completedLevelNumbers = new Set([...completedLevels, ...gamePointCompletions]
             .map((completion) => Number(completion.level_number))
-            .filter((levelNumber) => Number.isInteger(levelNumber) && levelNumber >= 1 && levelNumber <= 30));
-        const level30Requirement = {
-            requiredLevels: 30,
+            .filter((levelNumber) => Number.isInteger(levelNumber) && levelNumber >= 1 && levelNumber <= 20));
+        const level20Requirement = {
+            requiredLevels: 20,
             completedLevels: completedLevelNumbers.size,
-            remainingLevels: 30 - completedLevelNumbers.size,
-            met: completedLevelNumbers.size === 30
+            remainingLevels: 20 - completedLevelNumbers.size,
+            met: completedLevelNumbers.size === 20
         };
         const storedBalance = account?.balance_credits ?? latestLedgerEntry?.balance_after_credits ?? "0";
         const balanceCredits = String(storedBalance);
@@ -102,15 +102,15 @@ module.exports = async function withdrawals(request, response) {
                 configs?.withdrawals_enabled === true;
             return sendJson(response, 200, {
                 withdrawalEnabled: featureEnabled && configurationReady && signerReady && rpcConfigured &&
-                    level30Requirement.met,
+                    level20Requirement.met,
                 readiness: {
                     featureEnabled,
                     configurationReady,
                     signerReady,
                     rpcConfigured,
-                    level30RequirementMet: level30Requirement.met
+                    level20RequirementMet: level20Requirement.met
                 },
-                level30Requirement,
+                level20Requirement,
                 balanceCredits,
                 availableCredits,
                 pendingWithdrawalCredits: pendingCredits.toString(),
@@ -132,11 +132,11 @@ module.exports = async function withdrawals(request, response) {
         if (action !== "preview" && action !== "submit") {
             return sendJson(response, 400, { error: "invalid_withdrawal_action" });
         }
-        if (!level30Requirement.met) {
+        if (!level20Requirement.met) {
             return sendJson(response, 403, {
-                error: "level_30_required",
-                level30Requirement,
-                message: `Complete levels 1-30 to unlock withdrawals. ${level30Requirement.completedLevels} of 30 server-saved level clears are recorded.`
+                error: "level_20_required",
+                level20Requirement,
+                message: `Complete levels 1-20 to unlock withdrawals. ${level20Requirement.completedLevels} of 20 server-saved level clears are recorded.`
             });
         }
         if (!configs || configs.official_mint_address !== RELICGRID_CYFUR_MINT_ADDRESS ||

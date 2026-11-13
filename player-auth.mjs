@@ -73,7 +73,13 @@ export function hydratePlayerFromAuthenticatedAccount(player, authUser, profile,
             : nextLevel,
         transitionMilestonesPlayed: sameIdentity
             ? player.transitionMilestonesPlayed
-            : []
+            : [],
+        nextTransitionLevel: sameIdentity &&
+            Number.isInteger(player.nextTransitionLevel) &&
+            player.nextTransitionLevel >= 0 &&
+            player.nextTransitionLevel <= 98
+            ? player.nextTransitionLevel
+            : null
     };
 }
 

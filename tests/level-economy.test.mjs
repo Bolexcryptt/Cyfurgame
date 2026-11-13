@@ -38,9 +38,11 @@ import {
     getLevelEconomy,
     getLevelLayoutKey,
     getLevelRewardPoints,
+    getNextTransitionMilestone,
     getPendingLevelTransition,
     getLevelStarTimeTargets,
-    LEVEL_TRANSITION_INTERVAL,
+    TRANSITION_VIDEO_MIN_INTERVAL,
+    TRANSITION_VIDEO_MAX_INTERVAL,
     mergeCompletedLevels,
     traceLaserRoute,
     levels
@@ -481,7 +483,7 @@ test("Phantom mobile deeplink encrypts connect and message-sign requests and res
     let assignedUrl = "";
     const walletWindow = {
         nacl,
-        location: { href: "https://cyfur-game-mu.vercel.app/?screen=home", assign(url) { assignedUrl = url; } },
+        location: { href: "https://cyfurpuzzlegame.vercel.app/?screen=home", assign(url) { assignedUrl = url; } },
         localStorage: {
             getItem(key) { return storage.get(key) ?? null; },
             setItem(key, value) { storage.set(key, value); },
@@ -705,10 +707,10 @@ test("gameplay hints reveal the ordered route without changing the puzzle board"
 });
 
 test("Phantom mobile browse link opens the secure current page and rejects insecure URLs", () => {
-    const browseUrl = new URL(createPhantomBrowseUrl("https://cyfur-game-mu.vercel.app/?ignored=1"));
+    const browseUrl = new URL(createPhantomBrowseUrl("https://cyfurpuzzlegame.vercel.app/?ignored=1"));
     assert.equal(browseUrl.origin, "https://phantom.com");
-    assert.equal(browseUrl.pathname, `/ul/browse/${encodeURIComponent("https://cyfur-game-mu.vercel.app/?ignored=1&phantom_handoff=1")}`);
-    assert.equal(browseUrl.searchParams.get("ref"), "https://cyfur-game-mu.vercel.app");
+    assert.equal(browseUrl.pathname, `/ul/browse/${encodeURIComponent("https://cyfurpuzzlegame.vercel.app/?ignored=1&phantom_handoff=1")}`);
+    assert.equal(browseUrl.searchParams.get("ref"), "https://cyfurpuzzlegame.vercel.app");
     assert.throws(() => createPhantomBrowseUrl("http://example.com"), /secure HTTPS/);
 });
 
@@ -743,17 +745,22 @@ test("intro launch selects a current or next unlocked level and formats ledger c
     assert.equal(formatCyfurCredits("invalid"), "Unavailable");
 });
 
-test("transition videos play every five completed levels without repeating a played boundary", () => {
-    assert.equal(LEVEL_TRANSITION_INTERVAL, 5);
-    for (let completed = 1; completed < 99; completed++) {
-        assert.equal(
-            getPendingLevelTransition(completed),
-            completed % 5 === 0 ? completed : null
-        );
+test("transition milestones persist randomized intervals of eight to twelve levels", () => {
+    assert.equal(TRANSITION_VIDEO_MIN_INTERVAL, 8);
+    assert.equal(TRANSITION_VIDEO_MAX_INTERVAL, 12);
+    for (let interval = 8; interval <= 12; interval++) {
+        const milestone = getNextTransitionMilestone(10, () => (interval - 8) / 5);
+        assert.equal(milestone, 10 + interval);
+        assert.equal(getPendingLevelTransition(milestone, [], milestone), milestone);
+        assert.equal(getPendingLevelTransition(milestone - 1, [], milestone), null);
+        assert.equal(getPendingLevelTransition(milestone, [milestone], milestone), null);
     }
-    assert.equal(getPendingLevelTransition(5, [5]), null);
+    assert.equal(getNextTransitionMilestone(90, () => 0), 98);
+    assert.equal(getNextTransitionMilestone(91, () => 0), null);
+    assert.equal(getPendingLevelTransition(5), null);
     assert.throws(() => getPendingLevelTransition(-1), TypeError);
     assert.throws(() => getPendingLevelTransition(99), TypeError);
+    assert.throws(() => getNextTransitionMilestone(10, () => 1), TypeError);
 });
 
 test("local gameplay rewards are recorded once per paid entry and remain separate from the wallet", () => {
@@ -1045,7 +1052,7 @@ test("startup plays company and player introductions, then game video, then open
         app.indexOf('document.getElementById("next-level").addEventListener'),
         app.indexOf('\ndocument.getElementById("home-levels-toggle")')
     );
-    assert.match(nextLevelHandler, /getPendingLevelTransition\(\s*number - 1/);
+    assert.match(nextLevelHandler, /getTransitionMilestone\(number - 1\)/);
     assert.match(nextLevelHandler, /await startLevel\(number, true\)/);
     assert.match(nextLevelHandler, /if \(!started\)[\s\S]*?level-entry-status/);
     assert.doesNotMatch(nextLevelHandler, /pendingCompletionConfirmation|confirmPendingLevelCompletion/);
@@ -1430,11 +1437,11 @@ test("RelicGrid branding is used in the game and hidden scenes stop rendering", 
     assert.match(scene, /GRID\.start\.col = launchDirection === 1 \? -1 : GRID\.cols/);
     assert.match(scene, /activationRingMaterials\.forEach/);
     assert.match(app, /next-level[\s\S]*?startLevel\(number, true\)/);
-    assert.match(app, /LEVEL_TRANSITION_INTERVAL/);
+    assert.match(app, /getNextTransitionMilestone\(milestone\)/);
     assert.match(app, /function playLevelTransition\(nextLevel, milestone\)/);
     assert.match(app, /const transitionClips = \["levels1\.mp4", "levels2\.mp4"\]/);
-    assert.match(app, /Math\.floor\(milestone \/ LEVEL_TRANSITION_INTERVAL\) % 2 === 1[\s\S]*?transitionClips\[0\][\s\S]*?transitionClips\[1\]/);
-    assert.match(app, /getPendingLevelTransition\(\s*number - 1/);
+    assert.match(app, /transitionClips\[player\.transitionMilestonesPlayed\.length % transitionClips\.length\]/);
+    assert.match(app, /getTransitionMilestone\(number - 1\)/);
     assert.match(app, /transitionMilestonesPlayed = \[\.\.\.new Set/);
     assert.match(app, /if \(transitionInProgress\) return false/);
     const transitionFlow = app.slice(

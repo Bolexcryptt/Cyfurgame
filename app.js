@@ -1,12 +1,12 @@
 import {
     CYFUR_CREDITS_PER_TOKEN,
-    LEVEL_TRANSITION_INTERVAL,
     evaluateLevelStars,
     formatCyfurCredits,
     generateLevelVariant,
     getCampaignStartLevel,
     getLevelEconomy,
     getLevelLayoutKey,
+    getNextTransitionMilestone,
     getPendingLevelTransition,
     mergeCompletedLevels,
     levels
@@ -123,6 +123,7 @@ function readPlayer() {
             levelLayoutHistory: {},
             localGameRewardEntries: [],
             transitionMilestonesPlayed: [],
+            nextTransitionLevel: null,
             lastLevel: 1
         };
     }
@@ -168,11 +169,12 @@ function readPlayer() {
             localGameRewardEntries: normalizeLocalGameRewardEntries(parsed.localGameRewardEntries),
             transitionMilestonesPlayed: Array.isArray(parsed.transitionMilestonesPlayed)
                 ? [...new Set(parsed.transitionMilestonesPlayed.filter((milestone) =>
-                    Number.isInteger(milestone) &&
-                    milestone >= LEVEL_TRANSITION_INTERVAL &&
-                    milestone % LEVEL_TRANSITION_INTERVAL === 0 &&
-                    milestone <= 98))]
+                    Number.isInteger(milestone) && milestone >= 1 && milestone <= 98))]
                 : [],
+            nextTransitionLevel: Number.isInteger(parsed.nextTransitionLevel) &&
+                parsed.nextTransitionLevel >= 0 && parsed.nextTransitionLevel <= 98
+                ? parsed.nextTransitionLevel
+                : null,
             lastLevel: Math.min(99, Math.max(1, Number(parsed.lastLevel) || 1))
         };
     } catch (error) {
@@ -189,6 +191,7 @@ function readPlayer() {
             levelLayoutHistory: {},
             localGameRewardEntries: [],
             transitionMilestonesPlayed: [],
+            nextTransitionLevel: null,
             lastLevel: 1
         };
     }
@@ -227,6 +230,28 @@ let pendingPhantomMobileCallback = null;
 
 function savePlayer() {
     localStorage.setItem(storageKey, JSON.stringify(player));
+}
+
+function getTransitionMilestone(completedLevelNumber) {
+    if (player.nextTransitionLevel === 0) return null;
+    if (player.nextTransitionLevel === null ||
+        player.nextTransitionLevel < completedLevelNumber ||
+        player.transitionMilestonesPlayed.includes(player.nextTransitionLevel)) {
+        const progress = Math.max(
+            completedLevelNumber,
+            player.unlockedLevel - 1,
+            player.lastLevel - 1,
+            ...player.completedLevels,
+            ...player.transitionMilestonesPlayed
+        );
+        player.nextTransitionLevel = getNextTransitionMilestone(progress) ?? 0;
+        savePlayer();
+    }
+    return getPendingLevelTransition(
+        completedLevelNumber,
+        player.transitionMilestonesPlayed,
+        player.nextTransitionLevel || null
+    );
 }
 
 function createLevelVariantSeed() {
@@ -860,6 +885,7 @@ async function verifyAccountRecovery(event) {
         player.unlockedLevel = 1;
         player.lastLevel = 1;
         player.transitionMilestonesPlayed = [];
+        player.nextTransitionLevel = null;
         const { data: profile, error } = await supabase
             .from("player_profiles")
             .select("display_name")
@@ -1557,9 +1583,9 @@ async function refreshWithdrawalStatus() {
         const availableCredits = BigInt(result.availableCredits || "0");
         const decimals = Number(result.config?.tokenDecimals ?? 8);
         if (tokenDecimals) tokenDecimals.dataset.decimals = String(decimals);
-        balanceNote.textContent = result.level30Requirement?.met === true
+        balanceNote.textContent = result.level20Requirement?.met === true
             ? "Withdrawals use the available balance shown above."
-            : `Withdrawals use the available balance shown above; complete levels 1-30 to unlock access (${Number(result.level30Requirement?.completedLevels) || 0}/30).`;
+            : `Withdrawals use the available balance shown above; complete levels 1-20 to unlock access (${Number(result.level20Requirement?.completedLevels) || 0}/20).`;
         minimumValue.textContent = "0.001 CYFUR";
         minimumNote.textContent = "1 credit at the current conversion rate; limited to 5 requests per hour.";
         renderWithdrawalHistory(result.withdrawals || []);
@@ -1572,12 +1598,12 @@ async function refreshWithdrawalStatus() {
             setWithdrawalStatus("A withdrawal is already pending confirmation. Check the history below; another request is blocked to prevent duplicate payments.", "pending");
             return;
         }
-        if (result.level30Requirement?.met !== true) {
-            const completedLevels = Number.isInteger(result.level30Requirement?.completedLevels)
-                ? result.level30Requirement.completedLevels
+        if (result.level20Requirement?.met !== true) {
+            const completedLevels = Number.isInteger(result.level20Requirement?.completedLevels)
+                ? result.level20Requirement.completedLevels
                 : 0;
             setWithdrawalStatus(
-                `Complete levels 1-30 to unlock withdrawals (${completedLevels}/30 server-saved clears).`,
+                `Complete levels 1-20 to unlock withdrawals (${completedLevels}/20 server-saved clears).`,
                 "disabled"
             );
             return;
@@ -2549,9 +2575,7 @@ async function playLevelTransition(nextLevel, milestone) {
     transitionInProgress = true;
     await stopVideoPlayback(introVideo);
     const transitionClips = ["levels1.mp4", "levels2.mp4"];
-    const clip = Math.floor(milestone / LEVEL_TRANSITION_INTERVAL) % 2 === 1
-        ? transitionClips[0]
-        : transitionClips[1];
+    const clip = transitionClips[player.transitionMilestonesPlayed.length % transitionClips.length];
     let finished = false;
     const finish = async () => {
         if (finished) return;
@@ -2567,6 +2591,7 @@ async function playLevelTransition(nextLevel, milestone) {
             ...player.transitionMilestonesPlayed,
             milestone
         ])];
+        player.nextTransitionLevel = getNextTransitionMilestone(milestone) ?? 0;
         savePlayer();
         transitionVideo.hidden = true;
         videoSkip.hidden = true;
@@ -2931,10 +2956,7 @@ document.getElementById("next-level").addEventListener("click", async (event) =>
     document.getElementById("game-status").textContent =
         "Your local result is saved. Preparing the next paid entry.";
     try {
-        const milestone = getPendingLevelTransition(
-            number - 1,
-            player.transitionMilestonesPlayed
-        );
+        const milestone = getTransitionMilestone(number - 1);
         if (milestone !== null) {
             await playLevelTransition(number, milestone);
         } else {

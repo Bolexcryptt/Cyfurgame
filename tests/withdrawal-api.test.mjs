@@ -45,7 +45,7 @@ function resetScenario({
     readBalanceOverride = null,
     accountMissing = false,
     ledgerBalanceOverride = null,
-    completedLevels = Array.from({ length: 30 }, (_, index) => index + 1),
+    completedLevels = Array.from({ length: 20 }, (_, index) => index + 1),
     gamePointCompletions = []
 } = {}) {
     scenario = {
@@ -300,9 +300,9 @@ test("withdrawal status reports the authenticated player's balance and eligibili
     assert.equal(response.payload.availableCredits, "10000");
     assert.equal(response.payload.withdrawalEnabled, true);
     assert.equal(response.payload.activeWithdrawal, false);
-    assert.deepEqual(response.payload.level30Requirement, {
-        requiredLevels: 30,
-        completedLevels: 30,
+    assert.deepEqual(response.payload.level20Requirement, {
+        requiredLevels: 20,
+        completedLevels: 20,
         remainingLevels: 0,
         met: true
     });
@@ -337,46 +337,60 @@ test("withdrawal status reports the authenticated player's balance and eligibili
     });
 });
 
-test("withdrawal status stays disabled until all first 30 server-saved levels are complete", async () => {
-    scenario.completedLevels = Array.from({ length: 29 }, (_, index) => index + 1);
+test("withdrawal status stays disabled until all first 20 server-saved levels are complete", async () => {
+    scenario.completedLevels = Array.from({ length: 19 }, (_, index) => index + 1);
 
     const response = await getWithdrawalStatus();
 
     assert.equal(response.statusCode, 200);
     assert.equal(response.payload.withdrawalEnabled, false);
-    assert.deepEqual(response.payload.level30Requirement, {
-        requiredLevels: 30,
-        completedLevels: 29,
+    assert.deepEqual(response.payload.level20Requirement, {
+        requiredLevels: 20,
+        completedLevels: 19,
         remainingLevels: 1,
         met: false
     });
 });
 
 test("withdrawal eligibility combines persisted server point clears without double-counting overlaps", async () => {
-    scenario.completedLevels = Array.from({ length: 15 }, (_, index) => index + 1);
+    scenario.completedLevels = Array.from({ length: 10 }, (_, index) => index + 1);
     scenario.gamePointCompletions = [
-        ...Array.from({ length: 15 }, (_, index) => index + 16),
-        15
+        ...Array.from({ length: 10 }, (_, index) => index + 11),
+        10
     ];
 
     const response = await getWithdrawalStatus();
 
     assert.equal(response.statusCode, 200);
-    assert.equal(response.payload.level30Requirement.met, true);
-    assert.equal(response.payload.level30Requirement.completedLevels, 30);
+    assert.equal(response.payload.level20Requirement.met, true);
+    assert.equal(response.payload.level20Requirement.completedLevels, 20);
 });
 
-test("withdrawal request is rejected before reservation until levels 1 through 30 are server-saved", async () => {
-    scenario.completedLevels = Array.from({ length: 29 }, (_, index) => index + 1);
+test("withdrawal request is rejected before reservation until levels 1 through 20 are server-saved", async () => {
+    scenario.completedLevels = Array.from({ length: 19 }, (_, index) => index + 1);
 
     const response = await submitWithdrawal();
 
     assert.equal(response.statusCode, 403);
-    assert.equal(response.payload.error, "level_30_required");
-    assert.equal(response.payload.level30Requirement.remainingLevels, 1);
+    assert.equal(response.payload.error, "level_20_required");
+    assert.equal(response.payload.level20Requirement.remainingLevels, 1);
     assert.equal(scenario.records.size, 0);
     assert.equal(scenario.ledger.length, 0);
     assert.equal(scenario.sendCount, 0);
+});
+
+test("levels above 20 do not substitute for missing first-20 completion records", async () => {
+    scenario.completedLevels = [
+        ...Array.from({ length: 19 }, (_, index) => index + 1),
+        ...Array.from({ length: 10 }, (_, index) => index + 21)
+    ];
+
+    const response = await getWithdrawalStatus();
+
+    assert.equal(response.statusCode, 200);
+    assert.equal(response.payload.level20Requirement.completedLevels, 19);
+    assert.equal(response.payload.level20Requirement.remainingLevels, 1);
+    assert.equal(response.payload.withdrawalEnabled, false);
 });
 
 test("one CYFUR withdrawal uses exactly 100000000 raw units for the pasted recipient", async () => {
