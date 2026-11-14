@@ -1786,7 +1786,7 @@ function startScene() {
         document.getElementById("completion-time").textContent = `${(elapsedMilliseconds / 1000).toFixed(1)} s`;
         const formattedEntryCost = Number.isSafeInteger(walletLevelEntryCostCredits)
             ? `${walletLevelEntryCostCredits.toLocaleString("en-US")} ${gamePointsSession ? "game points" : "credits"}`
-            : walletLevelSessionId ? "Unavailable" : "FREE PRACTICE";
+            : walletLevelSessionId ? "Unavailable" : "PAID ENTRY REQUIRED";
         document.getElementById("completion-entry-cost").textContent = formattedEntryCost;
 
         const rewardLabel = document.getElementById("completion-reward-label");
