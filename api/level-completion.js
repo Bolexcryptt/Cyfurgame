@@ -172,6 +172,13 @@ module.exports = async function levelCompletion(request, response) {
         if (error.code === "P0002") {
             return sendJson(response, 403, { error: "level_session_not_found" });
         }
+        if (error.code === "23514" &&
+            /wallet_credit_ledger_entry_type_check/.test(error.databaseMessage ?? "")) {
+            return sendJson(response, 503, {
+                error: "wallet_reward_ledger_migration_required",
+                message: "Apply supabase-wallet-game-reward-ledger-fix.sql, then retry verification."
+            });
+        }
         if (error.code === "22023") {
             if (/has not started or has expired/i.test(error.databaseMessage ?? "")) {
                 return sendJson(response, 422, { error: "level_session_not_started_or_expired" });

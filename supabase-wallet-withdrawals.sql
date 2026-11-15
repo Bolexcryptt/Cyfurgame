@@ -59,6 +59,7 @@ alter table public.wallet_credit_ledger
             'deposit',
             'game_entry',
             'game_refund',
+            'game_reward',
             'adjustment',
             'withdrawal_reserve',
             'withdrawal_release'

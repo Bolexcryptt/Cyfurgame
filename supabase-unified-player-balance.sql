@@ -35,7 +35,7 @@ alter table public.wallet_credit_ledger
 alter table public.wallet_credit_ledger
     add constraint wallet_credit_ledger_entry_type_check
     check (entry_type in (
-        'deposit', 'game_entry', 'game_refund', 'adjustment',
+        'deposit', 'game_entry', 'game_refund', 'game_reward', 'adjustment',
         'withdrawal_reserve', 'withdrawal_release', 'withdrawal'
     ));
 alter table public.wallet_credit_ledger

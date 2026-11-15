@@ -2500,6 +2500,46 @@ test("level completion API derives the reward from server time and returns dupli
             diagnosticCode: "22023",
             stage: "completion_rpc"
         });
+
+        globalThis.fetch = async (url) => {
+            const target = String(url);
+            if (target.includes("/auth/v1/user")) {
+                return new Response(JSON.stringify({ id: "test-player" }), { status: 200 });
+            }
+            if (target.includes("/wallet_level_sessions?")) {
+                return new Response(JSON.stringify([{
+                    id: "123e4567-e89b-42d3-a456-426614174000",
+                    player_id: "test-player",
+                    level_number: 1,
+                    timer_started_at: new Date(Date.now() - 1000).toISOString(),
+                    expires_at: new Date(Date.now() + 60000).toISOString(),
+                    layout_seed: layoutSeed,
+                    completed_at: null
+                }]), { status: 200 });
+            }
+            if (target.includes("/rpc/complete_wallet_level")) {
+                return new Response(JSON.stringify({
+                    code: "23514",
+                    message: "new row violates check constraint wallet_credit_ledger_entry_type_check"
+                }), { status: 400 });
+            }
+            throw new Error(`Unexpected reward-ledger test request: ${target}`);
+        };
+        const rewardLedgerResponse = makeResponse();
+        await completionEndpoint({
+            method: "POST",
+            headers: { authorization: "Bearer test-access-token" },
+            body: {
+                sessionId: "123e4567-e89b-42d3-a456-426614174000",
+                mirrors,
+                launchDirection: level.start.direction
+            }
+        }, rewardLedgerResponse);
+        assert.equal(rewardLedgerResponse.statusCode, 503);
+        assert.deepEqual(rewardLedgerResponse.payload, {
+            error: "wallet_reward_ledger_migration_required",
+            message: "Apply supabase-wallet-game-reward-ledger-fix.sql, then retry verification."
+        });
     } finally {
         globalThis.fetch = originalFetch;
         for (const name of envNames) {
@@ -2543,6 +2583,20 @@ test("paid gameplay migration stays disabled and makes entry and reward operatio
     assert.match(replayMigration, /create or replace function public\.complete_game_point_level\(/);
     assert.match(replayMigration, /game_point_level_reward_claims/);
     assert.doesNotMatch(replayMigration, /delete from|truncate|drop table|update public\.wallet_credit_accounts/i);
+
+    const unifiedBalanceMigration = readFileSync(
+        new URL("../supabase-unified-player-balance.sql", import.meta.url),
+        "utf8"
+    );
+    const rewardLedgerFix = readFileSync(
+        new URL("../supabase-wallet-game-reward-ledger-fix.sql", import.meta.url),
+        "utf8"
+    );
+    for (const ledgerMigration of [unifiedBalanceMigration, rewardLedgerFix]) {
+        assert.match(ledgerMigration, /wallet_credit_ledger_entry_type_check/);
+        assert.match(ledgerMigration, /'game_entry', 'game_refund', 'game_reward', 'adjustment'/);
+        assert.match(ledgerMigration, /'withdrawal_reserve', 'withdrawal_release', 'withdrawal'/);
+    }
 });
 
 test("Solana verifier credits only successful finalized transfers to the mapped token owner", async () => {

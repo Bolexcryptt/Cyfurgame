@@ -6021,3 +6021,10 @@ body {
     background: linear-gradient(110deg, #785a35, #493722);
     box-shadow: 0 0 14px rgba(218, 154, 77, .18);
 }
+
+.play-screen .game-hud[data-completed="true"] {
+    border-color: transparent;
+    background: transparent;
+    box-shadow: none;
+    backdrop-filter: none;
+}

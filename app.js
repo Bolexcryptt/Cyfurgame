@@ -3105,7 +3105,11 @@ async function verifyWalletLevelCompletion(detail) {
             !/^\d+$/.test(String(result.balanceCredits)) ||
             !/^\d+$/.test(String(result.rewardCredits)) ||
             !Number.isInteger(result.stars) || result.stars < 1 || result.stars > 3) {
-            throw new Error(result.error || `Level reward could not be confirmed (${response.status}).`);
+            throw new Error(
+                result.message ||
+                result.error ||
+                `Level reward could not be confirmed (${response.status}).`
+            );
         }
 
         const number = detail.number;
