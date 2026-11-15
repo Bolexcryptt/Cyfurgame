@@ -1208,7 +1208,9 @@ async function requestLevelEntry(levelNumber) {
                 return rejectPaidEntry("Wallet database setup is incomplete. No level was started.");
             }
             if (result.error === "wallet_migration_required") {
-                return rejectPaidEntry("The wallet level-entry migration is missing or outdated. No level was started.");
+                return rejectPaidEntry(
+                    `${result.message || "The wallet level-entry migration is missing or outdated."} No level was started.`
+                );
             }
             if (result.error === "level_session_variant_unavailable") {
                 return rejectPaidEntry("This active session predates server-verified puzzle layouts and cannot receive a completion reward. Wait for its expiry before starting another paid level.");
@@ -1535,7 +1537,7 @@ async function refreshWithdrawalStatus() {
         if (tokenDecimals) tokenDecimals.dataset.decimals = String(decimals);
         balanceNote.textContent = result.level20Requirement?.met === true
             ? "Withdrawals use the available balance shown above."
-            : `Withdrawals use the available balance shown above; complete levels 1-19 to reach level 20 and unlock access (${Number(result.level20Requirement?.completedLevels) || 0}/19).`;
+            : `Withdrawals use the available balance shown above; start a server-authorized paid level 20 or higher to unlock access (highest verified level: ${Number(result.level20Requirement?.highestServerLevelReached) || 0}).`;
         minimumValue.textContent = "0.001 CYFUR";
         minimumNote.textContent = "1 credit at the current conversion rate; limited to 5 requests per hour.";
         renderWithdrawalHistory(result.withdrawals || []);
@@ -1549,11 +1551,11 @@ async function refreshWithdrawalStatus() {
             return;
         }
         if (result.level20Requirement?.met !== true) {
-            const completedLevels = Number.isInteger(result.level20Requirement?.completedLevels)
-                ? result.level20Requirement.completedLevels
+            const highestServerLevelReached = Number.isInteger(result.level20Requirement?.highestServerLevelReached)
+                ? result.level20Requirement.highestServerLevelReached
                 : 0;
             setWithdrawalStatus(
-                `Complete levels 1-19 to reach level 20 and unlock withdrawals (${completedLevels}/19 server-saved clears).`,
+                `Start a server-authorized paid level 20 or higher to unlock withdrawals (highest verified level: ${highestServerLevelReached}).`,
                 "disabled"
             );
             return;

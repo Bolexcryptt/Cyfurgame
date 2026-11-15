@@ -12,6 +12,9 @@ const {
 const { areLevelsGloballyLocked } = require("../server/lib/level-lock");
 const gamePoints = require("../server/lib/game-points");
 
+const WALLET_MIGRATION_MESSAGE =
+    "Apply supabase-unified-player-balance.sql in Supabase, then retry level entry.";
+
 module.exports = async function levelEntry(request, response) {
     const requestUrl = new URL(request.url || "/", "http://localhost");
     if (request.query?.route === "game-points" ||
@@ -165,13 +168,22 @@ module.exports = async function levelEntry(request, response) {
             return sendJson(response, 503, { error: "paid_gameplay_disabled", paidGameplayEnabled: false });
         }
         if (error.code === "PGRST202") {
-            return sendJson(response, 503, { error: "wallet_migration_required" });
+            return sendJson(response, 503, {
+                error: "wallet_migration_required",
+                message: WALLET_MIGRATION_MESSAGE
+            });
         }
         if (error.code === "42703") {
-            return sendJson(response, 503, { error: "wallet_migration_required" });
+            return sendJson(response, 503, {
+                error: "wallet_migration_required",
+                message: WALLET_MIGRATION_MESSAGE
+            });
         }
         if (error.code === "42702") {
-            return sendJson(response, 503, { error: "wallet_migration_required" });
+            return sendJson(response, 503, {
+                error: "wallet_migration_required",
+                message: WALLET_MIGRATION_MESSAGE
+            });
         }
         return sendJson(response, 502, { error: "level_access_check_unavailable" });
     }

@@ -51,25 +51,25 @@ module.exports = async function withdrawals(request, response) {
             [latestLedgerEntry],
             configs,
             history,
-            completedLevels,
-            gamePointCompletions
+            paidWalletLevelSessions,
+            paidGamePointLevelSessions
         ] = await Promise.all([
             serviceRequest(`wallet_credit_accounts?select=balance_credits,updated_at&player_id=eq.${encodeURIComponent(user.id)}&limit=1`),
             serviceRequest(`wallet_credit_ledger?select=balance_after_credits&player_id=eq.${encodeURIComponent(user.id)}&order=created_at.desc,id.desc&limit=1`),
             readWalletSystemConfig(),
             serviceRequest(`wallet_withdrawals?select=id,status,amount_credits,amount_raw,wallet_address,idempotency_key,transaction_signature,balance_deducted,created_at&player_id=eq.${encodeURIComponent(user.id)}&order=created_at.desc&limit=20`),
-            serviceRequest(`level_completions?select=level_number&player_id=eq.${encodeURIComponent(user.id)}&level_number=lte.19`),
-            serviceRequest(`game_point_level_completions?select=level_number&player_id=eq.${encodeURIComponent(user.id)}&level_number=lte.19`)
+            serviceRequest(`wallet_level_sessions?select=level_number&player_id=eq.${encodeURIComponent(user.id)}`),
+            serviceRequest(`game_point_level_sessions?select=level_number&player_id=eq.${encodeURIComponent(user.id)}`)
         ]);
 
-        const completedLevelNumbers = new Set([...completedLevels, ...gamePointCompletions]
-            .map((completion) => Number(completion.level_number))
-            .filter((levelNumber) => Number.isInteger(levelNumber) && levelNumber >= 1 && levelNumber <= 19));
+        const highestServerLevelReached = [...paidWalletLevelSessions, ...paidGamePointLevelSessions]
+            .map((session) => Number(session.level_number))
+            .filter((levelNumber) => Number.isInteger(levelNumber) && levelNumber >= 1 && levelNumber <= 99)
+            .reduce((highest, levelNumber) => Math.max(highest, levelNumber), 0);
         const level20Requirement = {
-            requiredLevels: 19,
-            completedLevels: completedLevelNumbers.size,
-            remainingLevels: 19 - completedLevelNumbers.size,
-            met: completedLevelNumbers.size === 19
+            requiredLevel: 20,
+            highestServerLevelReached,
+            met: highestServerLevelReached >= 20
         };
         const storedBalance = account?.balance_credits ?? latestLedgerEntry?.balance_after_credits ?? "0";
         const balanceCredits = String(storedBalance);
@@ -142,7 +142,7 @@ module.exports = async function withdrawals(request, response) {
             return sendJson(response, 403, {
                 error: "level_20_required",
                 level20Requirement,
-                message: `Complete levels 1-19 to reach level 20 and unlock withdrawals. ${level20Requirement.completedLevels} of 19 server-saved level clears are recorded.`
+                message: `Reach level 20 through a server-authorized paid entry to unlock withdrawals. Your highest server-recorded level is ${level20Requirement.highestServerLevelReached}.`
             });
         }
         if (!configs || configs.official_mint_address !== RELICGRID_CYFUR_MINT_ADDRESS ||

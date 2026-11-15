@@ -267,7 +267,7 @@ test("a distinct active session for another level is rejected without another ch
     assert.equal(database.balance, 892n);
 });
 
-test("ambiguous SQL output columns report that the wallet migration is required", async (context) => {
+test("outdated paid-entry RPC reports the required Supabase migration", async (context) => {
     context.after(restoreEnvironment);
     configureEnvironment({ gameplayEnabled: true });
     installEntryDatabase({
@@ -280,6 +280,7 @@ test("ambiguous SQL output columns report that the wallet migration is required"
 
     assert.equal(result.statusCode, 503);
     assert.equal(result.payload.error, "wallet_migration_required");
+    assert.match(result.payload.message, /supabase-unified-player-balance\.sql/);
 });
 
 test("approved star rewards and failed attempts follow the existing completion-time rules", () => {

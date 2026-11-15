@@ -52,16 +52,16 @@ function resetScenario({
     readBalanceOverride = null,
     accountMissing = false,
     ledgerBalanceOverride = null,
-    completedLevels = Array.from({ length: 19 }, (_, index) => index + 1),
-    gamePointCompletions = []
+    enteredWalletLevels = [32],
+    enteredGamePointLevels = []
 } = {}) {
     scenario = {
         actualBalance: balance,
         readBalanceOverride,
         accountMissing,
         ledgerBalanceOverride,
-        completedLevels,
-        gamePointCompletions,
+        enteredWalletLevels,
+        enteredGamePointLevels,
         transferOutcome,
         reconcileOutcome: "pending",
         confirmFailureCount: 0,
@@ -135,11 +135,11 @@ function installFakeFetch() {
                 created_at: "2026-01-01T00:00:00Z"
             })));
         }
-        if (path.startsWith("level_completions")) {
-            return dbResponse(200, scenario.completedLevels.map((level_number) => ({ level_number })));
+        if (path.startsWith("wallet_level_sessions")) {
+            return dbResponse(200, scenario.enteredWalletLevels.map((level_number) => ({ level_number })));
         }
-        if (path.startsWith("game_point_level_completions")) {
-            return dbResponse(200, scenario.gamePointCompletions.map((level_number) => ({ level_number })));
+        if (path.startsWith("game_point_level_sessions")) {
+            return dbResponse(200, scenario.enteredGamePointLevels.map((level_number) => ({ level_number })));
         }
         if (path === "rpc/reserve_wallet_withdrawal") {
             if (scenario.rateLimited) {
@@ -324,9 +324,8 @@ test("withdrawal status reports the authenticated player's balance and eligibili
     assert.equal(response.payload.withdrawalEnabled, true);
     assert.equal(response.payload.activeWithdrawal, false);
     assert.deepEqual(response.payload.level20Requirement, {
-        requiredLevels: 19,
-        completedLevels: 19,
-        remainingLevels: 0,
+        requiredLevel: 20,
+        highestServerLevelReached: 32,
         met: true
     });
 
@@ -360,70 +359,71 @@ test("withdrawal status reports the authenticated player's balance and eligibili
     });
 });
 
-test("withdrawal status unlocks once the player reaches level 20", async () => {
-    scenario.completedLevels = Array.from({ length: 18 }, (_, index) => index + 1);
+test("withdrawal status unlocks when a server-recorded paid entry reaches level 20", async () => {
+    scenario.enteredWalletLevels = [19];
 
     const response = await getWithdrawalStatus();
 
     assert.equal(response.statusCode, 200);
     assert.equal(response.payload.withdrawalEnabled, false);
     assert.deepEqual(response.payload.level20Requirement, {
-        requiredLevels: 19,
-        completedLevels: 18,
-        remainingLevels: 1,
+        requiredLevel: 20,
+        highestServerLevelReached: 19,
         met: false
     });
 
-    scenario.completedLevels.push(19);
+    scenario.enteredWalletLevels.push(20);
     const reachedLevel20 = await getWithdrawalStatus();
     assert.equal(reachedLevel20.statusCode, 200);
     assert.equal(reachedLevel20.payload.withdrawalEnabled, true);
     assert.deepEqual(reachedLevel20.payload.level20Requirement, {
-        requiredLevels: 19,
-        completedLevels: 19,
-        remainingLevels: 0,
+        requiredLevel: 20,
+        highestServerLevelReached: 20,
         met: true
     });
 });
 
-test("withdrawal eligibility combines persisted server point clears without double-counting overlaps", async () => {
-    scenario.completedLevels = Array.from({ length: 10 }, (_, index) => index + 1);
-    scenario.gamePointCompletions = [
-        ...Array.from({ length: 9 }, (_, index) => index + 11),
-        10
-    ];
+test("a server-recorded level 32 entry unlocks withdrawals without requiring earlier level clears", async () => {
+    scenario.enteredWalletLevels = [32];
 
     const response = await getWithdrawalStatus();
 
     assert.equal(response.statusCode, 200);
     assert.equal(response.payload.level20Requirement.met, true);
-    assert.equal(response.payload.level20Requirement.completedLevels, 19);
+    assert.equal(response.payload.level20Requirement.highestServerLevelReached, 32);
 });
 
-test("withdrawal request is rejected before reservation until levels 1 through 19 are server-saved", async () => {
-    scenario.completedLevels = Array.from({ length: 18 }, (_, index) => index + 1);
+test("legacy server-recorded paid entries also count toward the level 20 withdrawal gate", async () => {
+    scenario.enteredWalletLevels = [];
+    scenario.enteredGamePointLevels = [32];
+
+    const response = await getWithdrawalStatus();
+
+    assert.equal(response.statusCode, 200);
+    assert.equal(response.payload.level20Requirement.met, true);
+    assert.equal(response.payload.level20Requirement.highestServerLevelReached, 32);
+});
+
+test("withdrawal request is rejected before any server-authorized level 20 entry", async () => {
+    scenario.enteredWalletLevels = [19];
 
     const response = await submitWithdrawal();
 
     assert.equal(response.statusCode, 403);
     assert.equal(response.payload.error, "level_20_required");
-    assert.equal(response.payload.level20Requirement.remainingLevels, 1);
+    assert.equal(response.payload.level20Requirement.highestServerLevelReached, 19);
     assert.equal(scenario.records.size, 0);
     assert.equal(scenario.ledger.length, 0);
     assert.equal(scenario.sendCount, 0);
 });
 
-test("levels above 20 do not substitute for missing first-19 completion records", async () => {
-    scenario.completedLevels = [
-        ...Array.from({ length: 18 }, (_, index) => index + 1),
-        ...Array.from({ length: 10 }, (_, index) => index + 21)
-    ];
+test("local completion records do not substitute for a server-authorized paid entry", async () => {
+    scenario.enteredWalletLevels = [];
 
     const response = await getWithdrawalStatus();
 
     assert.equal(response.statusCode, 200);
-    assert.equal(response.payload.level20Requirement.completedLevels, 18);
-    assert.equal(response.payload.level20Requirement.remainingLevels, 1);
+    assert.equal(response.payload.level20Requirement.highestServerLevelReached, 0);
     assert.equal(response.payload.withdrawalEnabled, false);
 });
 
