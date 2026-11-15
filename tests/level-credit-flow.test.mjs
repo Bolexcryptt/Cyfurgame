@@ -75,6 +75,16 @@ function installEntryDatabase({
         if (path.startsWith("wallet_system_config")) {
             return response(200, [{ paid_gameplay_enabled: gameplayEnabled }]);
         }
+        if (url.pathname.endsWith("/wallet_level_sessions")) {
+            if (!activeSession) return response(200, []);
+            return response(200, [{
+                id: activeSession.session_id,
+                level_number: activeSession.level_number,
+                layout_seed: activeSession.layout_seed,
+                entry_cost_credits: activeSession.entry_cost_credits,
+                expires_at: new Date(Date.now() + 60 * 60 * 1000).toISOString()
+            }]);
+        }
         if (path === "rpc/start_wallet_level") {
             rpcCalls++;
             if (startRpcError) {
@@ -106,7 +116,7 @@ function installEntryDatabase({
 
                 balance -= cost;
                 const session = {
-                    session_id: `session-${sessions.size + 1}`,
+                    session_id: `123e4567-e89b-42d3-a456-${String(426614174000 + sessions.size + 1).padStart(12, "0")}`,
                     balance_credits: balance.toString(),
                     entry_cost_credits: cost.toString(),
                     level_number: body.p_level_number,
@@ -186,7 +196,8 @@ test("exact entry-fee balance creates a server session and deducts once", async 
 
     assert.equal(result.statusCode, 200);
     assert.equal(result.payload.allowed, true);
-    assert.equal(result.payload.sessionId, "session-1");
+    assert.equal(result.payload.sessionId, "123e4567-e89b-42d3-a456-426614174001");
+    assert.equal(result.payload.levelNumber, 1);
     assert.equal(result.payload.entryCostCredits, 100);
     assert.equal(result.payload.balanceCredits, "0");
     assert.equal(database.balance, 0n);
@@ -249,7 +260,7 @@ test("separate entry requests for the active level reuse its session without ano
     assert.equal(database.balance, 892n);
 });
 
-test("a distinct active session for another level is rejected without another charge", async (context) => {
+test("a distinct active session is resumed instead of blocking entry or charging again", async (context) => {
     context.after(restoreEnvironment);
     configureEnvironment({ gameplayEnabled: true });
     const database = installEntryDatabase({
@@ -262,8 +273,11 @@ test("a distinct active session for another level is rejected without another ch
     const second = await enterLevel({ levelNumber: 1, requestId: requestIds[1] });
 
     assert.equal(first.statusCode, 200);
-    assert.equal(second.statusCode, 409);
-    assert.equal(second.payload.error, "level_session_active");
+    assert.equal(second.statusCode, 200);
+    assert.equal(second.payload.allowed, true);
+    assert.equal(second.payload.sessionId, first.payload.sessionId);
+    assert.equal(second.payload.levelNumber, 2);
+    assert.equal(second.payload.resumedExistingSession, true);
     assert.equal(database.balance, 892n);
 });
 

@@ -858,8 +858,10 @@ test("SKIP LEVEL requires paid next-level entry, spends through the wallet path,
     assert.match(skipHandler, /player\.unlockedLevel = Math\.max\(player\.unlockedLevel, nextLevelNumber\)/);
     assert.match(skipHandler, /No stars or reward were awarded/);
     assert.doesNotMatch(skipHandler, /awardLocalGameReward|completedLevels\s*=/);
-    assert.match(startLevel, /skipButton\.hidden = number >= 99;\s*skipButton\.disabled = number >= 99/);
+    assert.match(startLevel, /skipButton\.hidden = enteredLevelNumber >= 99;\s*skipButton\.disabled = enteredLevelNumber >= 99/);
     assert.match(startLevel, /const entry = await requestLevelEntry\(number\)/);
+    assert.match(startLevel, /entry\.resumedExistingSession[\s\S]*?No additional credits were deducted/);
+    assert.match(startLevel, /generateLevelVariant\(enteredLevelNumber, layoutSeed\)/);
     assert.match(app, /skippedLevels: Array\.isArray\(parsed\.skippedLevels\)/);
     assert.match(app, /cell\.classList\.add\("is-skipped"\)/);
     assert.match(scene, /fluxgrid:skip-level-pending/);

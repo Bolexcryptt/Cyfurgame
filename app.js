@@ -1232,7 +1232,9 @@ async function requestLevelEntry(levelNumber) {
                 /^\d+$/.test(String(result.balanceCredits)) &&
                 /^\d+$/.test(String(result.entryCostCredits)) &&
                 Number.isSafeInteger(result.layoutSeed) &&
-                result.layoutSeed >= 0 && result.layoutSeed <= 0xffffffff) {
+                result.layoutSeed >= 0 && result.layoutSeed <= 0xffffffff &&
+                (result.levelNumber === undefined ||
+                    (Number.isInteger(result.levelNumber) && result.levelNumber >= 1 && result.levelNumber <= 99))) {
                 pendingLevelEntryRequests.delete(levelNumber);
                 sessionStorage.removeItem(requestStorageKey);
                 return result;
@@ -2738,28 +2740,29 @@ async function startLevel(number, resumeMusic = false) {
         if (!musicWasPlaying) stopMusic();
     };
     try {
-        const levelKey = String(number);
-        const previousLayoutKeys = [
-            ...(player.levelLayoutHistory[levelKey] || []),
-            ...(player.lastLevelLayouts[levelKey] ? [player.lastLevelLayouts[levelKey]] : [])
-        ];
         const entry = await requestLevelEntry(number);
         if (!entry) {
             stopNewMusic();
             return false;
         }
+        const enteredLevelNumber = Number.isInteger(entry.levelNumber) ? entry.levelNumber : number;
+        const levelKey = String(enteredLevelNumber);
+        const previousLayoutKeys = [
+            ...(player.levelLayoutHistory[levelKey] || []),
+            ...(player.lastLevelLayouts[levelKey] ? [player.lastLevelLayouts[levelKey]] : [])
+        ];
         const layoutSeed = entry.layoutSeed;
-        const level = generateLevelVariant(number, layoutSeed);
+        const level = generateLevelVariant(enteredLevelNumber, layoutSeed);
         const gameGuide = document.getElementById("game-guide");
-        const showTutorial = number === 1 && !player.tutorialSeen;
+        const showTutorial = enteredLevelNumber === 1 && !player.tutorialSeen;
         gameGuide.hidden = !showTutorial;
         document.getElementById("first-level-tutorial").hidden = !showTutorial;
         setPuzzleHintVisible(false);
         activeWalletLevelSessionId = entry.sessionId;
         activeLevelEntryCostCredits = Number(entry.entryCostCredits);
         const skipButton = document.getElementById("skip-level");
-        skipButton.hidden = number >= 99;
-        skipButton.disabled = number >= 99;
+        skipButton.hidden = enteredLevelNumber >= 99;
+        skipButton.disabled = enteredLevelNumber >= 99;
         document.getElementById("wallet-balance").textContent = formatCredits(entry.balanceCredits);
         document.getElementById("wallet-balance-state").textContent = "CREDITS · BACKEND VERIFIED";
         walletStatusSnapshot = {
@@ -2767,15 +2770,17 @@ async function startLevel(number, resumeMusic = false) {
             balanceCredits: String(entry.balanceCredits),
             balanceVerified: true
         };
-        const entryMessage = `Level ${String(number).padStart(2, "0")} started. ${formatCredits(entry.entryCostCredits)} wallet credits deducted; verified balance ${formatCredits(entry.balanceCredits)}.`;
+        const entryMessage = entry.resumedExistingSession
+            ? `Resuming your active paid Level ${String(enteredLevelNumber).padStart(2, "0")} session. No additional credits were deducted.`
+            : `Level ${String(enteredLevelNumber).padStart(2, "0")} started. ${formatCredits(entry.entryCostCredits)} wallet credits deducted; verified balance ${formatCredits(entry.balanceCredits)}.`;
         setLevelEntryMessage(entryMessage, "success");
-        player.lastLevel = number;
+        player.lastLevel = enteredLevelNumber;
         const layoutKey = getLevelLayoutKey(level);
         player.lastLevelLayouts[levelKey] = layoutKey;
         player.levelLayoutHistory[levelKey] = [...new Set([...previousLayoutKeys, layoutKey])];
         pendingLevel = level;
         savePlayer();
-        document.getElementById("play-level").textContent = `LEVEL ${String(number).padStart(2, "0")}`;
+        document.getElementById("play-level").textContent = `LEVEL ${String(enteredLevelNumber).padStart(2, "0")}`;
         document.getElementById("play-level-title").textContent = level.title;
         showScreen("play-screen");
         window.setTimeout(() => {

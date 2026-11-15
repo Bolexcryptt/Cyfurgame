@@ -37,9 +37,12 @@ module.exports = async function levelEntry(request, response) {
         return sendJson(response, 503, { error: "wallet_api_not_configured" });
     }
 
+    let playerId = null;
+    let currentBalance = null;
     try {
         const user = await authenticate(request);
         if (!user) return sendJson(response, 401, { error: "authentication_required" });
+        playerId = user.id;
 
         const levelNumber = request.body?.levelNumber;
         const entryCostCredits = getLevelEntryCostCredits(levelNumber);
@@ -64,6 +67,7 @@ module.exports = async function levelEntry(request, response) {
         if (!/^\d+$/.test(String(balance))) {
             return sendJson(response, 503, { error: "verified_balance_unavailable" });
         }
+        currentBalance = String(balance);
 
         const baseResponse = {
             balanceCredits: String(balance),
@@ -119,15 +123,18 @@ module.exports = async function levelEntry(request, response) {
             allowed: true,
             paidGameplayEnabled: true,
             sessionId: session.session_id,
+            levelNumber,
             layoutSeed: Number(session.layout_seed),
             balanceCredits: String(session.balance_credits),
             entryCostCredits: Number(session.entry_cost_credits)
         });
     } catch (error) {
-        console.error("Paid level access check failed closed.", {
-            status: error.status ?? 500,
-            code: error.code ?? "level_access_check_failed"
-        });
+        if (error.code !== "55006") {
+            console.error("Paid level access check failed closed.", {
+                status: error.status ?? 500,
+                code: error.code ?? "level_access_check_failed"
+            });
+        }
         if (error.status === 404 && error.code === "PGRST205") {
             return sendJson(response, 503, { error: "wallet_schema_not_installed" });
         }
@@ -162,6 +169,47 @@ module.exports = async function levelEntry(request, response) {
             }
         }
         if (error.code === "55006") {
+            try {
+                const activeSessions = await serviceRequest(
+                    `wallet_level_sessions?select=id,level_number,layout_seed,entry_cost_credits,expires_at&player_id=eq.${encodeURIComponent(playerId)}&completed_at=is.null&expires_at=gt.${encodeURIComponent(new Date().toISOString())}&order=created_at.desc&limit=1`
+                );
+                const activeSession = activeSessions[0];
+                if (activeSession) {
+                    const activeLevelNumber = Number(activeSession.level_number);
+                    const layoutSeed = Number(activeSession.layout_seed);
+                    const entryCostCredits = String(activeSession.entry_cost_credits);
+                    const entryCost = Number(entryCostCredits);
+                    const expiresAt = Date.parse(activeSession.expires_at);
+                    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(activeSession.id) ||
+                        !Number.isInteger(activeLevelNumber) || activeLevelNumber < 1 || activeLevelNumber > 99 ||
+                        !/^\d+$/.test(String(activeSession.layout_seed)) ||
+                        !Number.isSafeInteger(layoutSeed) || layoutSeed < 0 || layoutSeed > 0xffffffff ||
+                        !/^\d+$/.test(entryCostCredits) || !Number.isSafeInteger(entryCost) ||
+                        !Number.isFinite(expiresAt) || expiresAt <= Date.now()) {
+                        return sendJson(response, 409, {
+                            error: "level_session_variant_unavailable",
+                            levelNumber: Number.isInteger(activeLevelNumber) ? activeLevelNumber : undefined
+                        });
+                    }
+                    return sendJson(response, 200, {
+                        balanceCredits: currentBalance,
+                        balanceVerified: true,
+                        allowed: true,
+                        paidGameplayEnabled: true,
+                        sessionId: activeSession.id,
+                        levelNumber: activeLevelNumber,
+                        layoutSeed,
+                        entryCostCredits: entryCost,
+                        resumedExistingSession: true
+                    });
+                }
+            } catch (resumeError) {
+                console.error("Active paid level session could not be resumed.", {
+                    status: resumeError.status ?? 500,
+                    code: resumeError.code ?? "active_level_session_lookup_failed"
+                });
+                return sendJson(response, 502, { error: "level_access_check_unavailable" });
+            }
             return sendJson(response, 409, { error: "level_session_active" });
         }
         if (error.code === "55000") {
