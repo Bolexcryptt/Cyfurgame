@@ -289,16 +289,20 @@ test("approved star rewards and failed attempts follow the existing completion-t
         const economy = getLevelEconomy(levelNumber);
         const targets = getLevelStarTimeTargets(level);
         assert.deepEqual(
-            evaluateLevelStars(level, targets.threeSeconds * 1000),
+            evaluateLevelStars(level, targets.threeSeconds * 1000 - 1),
             { stars: 3, rewardCredits: Math.floor(economy.entryCostCredits * 1.6), status: "completed" }
         );
         assert.deepEqual(
-            evaluateLevelStars(level, targets.twoSeconds * 1000),
+            evaluateLevelStars(level, targets.threeSeconds * 1000),
             { stars: 2, rewardCredits: Math.floor(economy.entryCostCredits * 0.4), status: "completed" }
         );
         assert.deepEqual(
-            evaluateLevelStars(level, (targets.twoSeconds + 1) * 1000),
+            evaluateLevelStars(level, targets.twoSeconds * 1000),
             { stars: 1, rewardCredits: 0, status: "completed" }
+        );
+        assert.deepEqual(
+            evaluateLevelStars(level, 36500),
+            { stars: 2, rewardCredits: Math.floor(economy.entryCostCredits * 0.4), status: "completed" }
         );
         assert.deepEqual(
             evaluateLevelStars(level, targets.threeSeconds * 1000, false),

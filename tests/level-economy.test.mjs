@@ -2310,17 +2310,17 @@ test("server-side time ratings share the configured thresholds and exact reward 
         const variant = generateLevelVariant(level.number, layoutSeed, []);
         const three = await getLevelEconomyAndStars(
             level.number,
-            variant.starTimeTargets.threeSeconds * 1000,
+            variant.starTimeTargets.threeSeconds * 1000 - 1,
             layoutSeed
         );
         const two = await getLevelEconomyAndStars(
             level.number,
-            variant.starTimeTargets.twoSeconds * 1000,
+            variant.starTimeTargets.threeSeconds * 1000,
             layoutSeed
         );
         const one = await getLevelEconomyAndStars(
             level.number,
-            (variant.starTimeTargets.twoSeconds + 1) * 1000,
+            variant.starTimeTargets.twoSeconds * 1000,
             layoutSeed
         );
         assert.equal(three.result.stars, 3);
@@ -2329,6 +2329,18 @@ test("server-side time ratings share the configured thresholds and exact reward 
         assert.equal(two.result.rewardCredits, variant.economy.twoStarRefundCredits);
         assert.equal(one.result.stars, 1);
         assert.equal(one.result.rewardCredits, 0);
+        if (level.number === 34) {
+            const thirtySixAndHalfSeconds = await getLevelEconomyAndStars(
+                level.number,
+                36500,
+                layoutSeed
+            );
+            assert.equal(thirtySixAndHalfSeconds.result.stars, 2);
+            assert.equal(
+                thirtySixAndHalfSeconds.result.rewardCredits,
+                variant.economy.twoStarRefundCredits
+            );
+        }
     }
 });
 
@@ -4212,38 +4224,18 @@ test("deposit transaction API prepares and broadcasts through the authenticated 
     }
 });
 
-test("each connected star outcome uses its configured time threshold and payout", () => {
+test("each connected star outcome uses the fixed time threshold and matching payout", () => {
     for (const level of levels) {
-        const { threeSeconds, twoSeconds } = level.starTimeTargets;
-        const payouts = [
-            evaluateLevelStars(level, threeSeconds * 1000),
-            evaluateLevelStars(level, threeSeconds * 1000 + 1),
-            evaluateLevelStars(level, twoSeconds * 1000),
-            evaluateLevelStars(level, twoSeconds * 1000 + 1)
-        ];
-        assert.deepEqual(evaluateLevelStars(level, threeSeconds * 1000), {
-            stars: 3,
-            rewardCredits: level.economy.threeStarPayoutCredits,
-            status: "completed"
-        });
-        assert.deepEqual(evaluateLevelStars(level, threeSeconds * 1000 + 1), {
-            stars: 2,
-            rewardCredits: level.economy.twoStarRefundCredits,
-            status: "completed"
-        });
-        assert.deepEqual(evaluateLevelStars(level, twoSeconds * 1000 + 1), {
-            stars: 1,
-            rewardCredits: 0,
-            status: "completed"
-        });
-        assert.ok(
-            payouts[0].rewardCredits > payouts[1].rewardCredits &&
-            payouts[1].rewardCredits > payouts[3].rewardCredits,
-            `Level ${level.number} must pay more for faster completion.`
-        );
-        assert.ok(payouts.every((result, index) =>
-            index === 0 || payouts[index - 1].rewardCredits >= result.rewardCredits
-        ));
+        assert.deepEqual(level.starTimeTargets, { threeSeconds: 20, twoSeconds: 40 });
+        const payouts = [19999, 20000, 39999, 40000]
+            .map((elapsed) => evaluateLevelStars(level, elapsed));
+        assert.deepEqual(payouts.map((result) => result.stars), [3, 2, 2, 1]);
+        assert.deepEqual(payouts.map((result) => result.rewardCredits), [
+            level.economy.threeStarPayoutCredits,
+            level.economy.twoStarRefundCredits,
+            level.economy.twoStarRefundCredits,
+            0
+        ]);
     }
 });
 
@@ -4255,21 +4247,18 @@ test("no battery connection is a fail with no stars and no payout", () => {
     });
 });
 
-test("par-based time thresholds stay inside the requested non-overlapping performance tiers", () => {
+test("all levels use exact 20-second and 40-second tier boundaries", () => {
     for (const level of levels) {
         const targets = getLevelStarTimeTargets(level);
         assert.equal(level.starTimeTargets.threeSeconds, targets.threeSeconds);
         assert.equal(level.starTimeTargets.twoSeconds, targets.twoSeconds);
-        assert.ok(targets.threeSeconds >= 10 && targets.threeSeconds <= 20);
-        assert.ok(targets.twoSeconds >= 30 && targets.twoSeconds <= 40);
-        assert.ok(targets.threeSeconds < targets.twoSeconds);
+        assert.deepEqual(targets, { threeSeconds: 20, twoSeconds: 40 });
         assert.equal(evaluateLevelStars(level, targets.threeSeconds * 1000 - 1).stars, 3);
-        assert.equal(evaluateLevelStars(level, targets.threeSeconds * 1000).stars, 3);
-        assert.equal(evaluateLevelStars(level, targets.threeSeconds * 1000 + 1).stars, 2);
-        assert.equal(evaluateLevelStars(level, targets.twoSeconds * 1000).stars, 2);
-        assert.equal(evaluateLevelStars(level, targets.twoSeconds * 1000 + 1).stars, 1);
+        assert.equal(evaluateLevelStars(level, targets.threeSeconds * 1000).stars, 2);
+        assert.equal(evaluateLevelStars(level, targets.twoSeconds * 1000 - 1).stars, 2);
+        assert.equal(evaluateLevelStars(level, targets.twoSeconds * 1000).stars, 1);
     }
-    assert.deepEqual(levels[0].starTimeTargets, { threeSeconds: 10, twoSeconds: 30 });
+    assert.deepEqual(levels[0].starTimeTargets, { threeSeconds: 20, twoSeconds: 40 });
     assert.deepEqual(levels[98].starTimeTargets, { threeSeconds: 20, twoSeconds: 40 });
 });
 

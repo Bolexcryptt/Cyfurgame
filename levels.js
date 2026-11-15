@@ -6,12 +6,9 @@ export const CYFUR_CREDITS_PER_TOKEN = 1000;
 export const TRANSITION_VIDEO_MIN_INTERVAL = 8;
 export const TRANSITION_VIDEO_MAX_INTERVAL = 12;
 export const STAR_TIME_CONFIG = Object.freeze({
-    threeStarBaseSeconds: 10,
-    threeStarSecondsPerMirror: 1,
     threeStarMaxSeconds: 20,
-    twoStarWindowSeconds: 20
+    twoStarMaxSeconds: 40
 });
-export const LEVEL_STAR_TIME_OVERRIDES = Object.freeze({});
 
 export function getNextTransitionMilestone(completedLevelNumber, random = Math.random) {
     if (!Number.isInteger(completedLevelNumber) || completedLevelNumber < 0 ||
@@ -43,28 +40,10 @@ export function getPendingLevelTransition(completedLevelNumber, playedMilestones
 }
 
 export function getLevelStarTimeTargets(level) {
-    const complexity = Math.max(1, level?.par ?? 1);
-    const threeSeconds = Math.min(
-        STAR_TIME_CONFIG.threeStarMaxSeconds,
-        STAR_TIME_CONFIG.threeStarBaseSeconds +
-            Math.max(0, complexity - 2) * STAR_TIME_CONFIG.threeStarSecondsPerMirror
-    );
-    const defaults = {
-        threeSeconds,
-        twoSeconds: threeSeconds + STAR_TIME_CONFIG.twoStarWindowSeconds
+    return {
+        threeSeconds: STAR_TIME_CONFIG.threeStarMaxSeconds,
+        twoSeconds: STAR_TIME_CONFIG.twoStarMaxSeconds
     };
-    const overrides = LEVEL_STAR_TIME_OVERRIDES[level?.number] ?? {};
-    const targets = {
-        threeSeconds: overrides.threeSeconds ?? defaults.threeSeconds,
-        twoSeconds: overrides.twoSeconds ?? defaults.twoSeconds
-    };
-    if (!Number.isFinite(targets.threeSeconds) || !Number.isFinite(targets.twoSeconds) ||
-        targets.threeSeconds < 10 || targets.threeSeconds > 20 ||
-        targets.twoSeconds < 30 || targets.twoSeconds > 40 ||
-        targets.twoSeconds <= targets.threeSeconds) {
-        throw new RangeError(`Invalid star-time thresholds for level ${level?.number ?? "unknown"}.`);
-    }
-    return targets;
 }
 const DIRECTIONS = [
     { row: -1, col: 0 },
@@ -428,18 +407,19 @@ export function evaluateLevelStars(level, elapsedMilliseconds, connected = true)
     if (!level || !Number.isFinite(elapsedMilliseconds) || elapsedMilliseconds < 0 || !connected) {
         return { stars: 0, rewardCredits: 0, status: "fail" };
     }
-    const timeTargets = level.starTimeTargets ?? getLevelStarTimeTargets(level);
-    if (!Number.isFinite(timeTargets.threeSeconds) || !Number.isFinite(timeTargets.twoSeconds) ||
-        timeTargets.threeSeconds < 0 || timeTargets.twoSeconds <= timeTargets.threeSeconds) {
+    const timeTargets = getLevelStarTimeTargets(level);
+    if (level.starTimeTargets &&
+        (level.starTimeTargets.threeSeconds !== timeTargets.threeSeconds ||
+            level.starTimeTargets.twoSeconds !== timeTargets.twoSeconds)) {
         throw new RangeError(`Invalid star-time thresholds for level ${level.number ?? "unknown"}.`);
     }
     const elapsedSeconds = elapsedMilliseconds / 1000;
     let stars = 0;
     let rewardCredits = 0;
-    if (elapsedSeconds <= timeTargets.threeSeconds) {
+    if (elapsedSeconds < timeTargets.threeSeconds) {
         stars = 3;
         rewardCredits = level.economy?.threeStarPayoutCredits ?? 0;
-    } else if (elapsedSeconds <= timeTargets.twoSeconds) {
+    } else if (elapsedSeconds < timeTargets.twoSeconds) {
         stars = 2;
         rewardCredits = level.economy?.twoStarRefundCredits ?? 0;
     } else {
