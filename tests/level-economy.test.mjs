@@ -2364,6 +2364,7 @@ test("level completion API derives the reward from server time and returns dupli
         slash: orientation === "/"
     }));
     let completedAt = null;
+    let timerAgeMilliseconds = 1000;
     let rpcPayload;
     globalThis.fetch = async (url, options = {}) => {
         const target = String(url);
@@ -2375,7 +2376,7 @@ test("level completion API derives the reward from server time and returns dupli
                 id: "123e4567-e89b-42d3-a456-426614174000",
                 player_id: "test-player",
                 level_number: 1,
-                timer_started_at: new Date(Date.now() - 1000).toISOString(),
+                timer_started_at: new Date(Date.now() - timerAgeMilliseconds).toISOString(),
                 expires_at: new Date(Date.now() + 60000).toISOString(),
                 layout_seed: layoutSeed,
                 completed_at: completedAt
@@ -2384,7 +2385,7 @@ test("level completion API derives the reward from server time and returns dupli
         if (target.includes("/rpc/complete_wallet_level")) {
             rpcPayload = JSON.parse(options.body);
             return new Response(JSON.stringify([{
-                balance_credits: "160",
+                balance_credits: String(100 + Number(rpcPayload.p_reward_credits)),
                 stars: rpcPayload.p_stars,
                 reward_credits: rpcPayload.p_reward_credits,
                 elapsed_milliseconds: rpcPayload.p_elapsed_milliseconds,
@@ -2423,6 +2424,24 @@ test("level completion API derives the reward from server time and returns dupli
         assert.equal(rpcPayload.p_reward_credits, 160);
         assert.ok(rpcPayload.p_elapsed_milliseconds < 35000);
         assert.equal("stars" in response.payload, true);
+
+        timerAgeMilliseconds = 45000;
+        const twoStarResponse = makeResponse();
+        await completionEndpoint({
+            method: "POST",
+            headers: { authorization: "Bearer test-access-token" },
+            body: {
+                sessionId: "123e4567-e89b-42d3-a456-426614174000",
+                mirrors,
+                launchDirection: level.start.direction
+            }
+        }, twoStarResponse);
+        assert.equal(twoStarResponse.statusCode, 200);
+        assert.equal(twoStarResponse.payload.stars, 2);
+        assert.equal(twoStarResponse.payload.rewardCredits, "40");
+        assert.equal(twoStarResponse.payload.balanceCredits, "140");
+        assert.equal(rpcPayload.p_stars, 2);
+        assert.equal(rpcPayload.p_reward_credits, 40);
 
         completedAt = new Date().toISOString();
         const duplicateResponse = makeResponse();
@@ -2550,7 +2569,47 @@ test("level completion API derives the reward from server time and returns dupli
         assert.equal(rewardLedgerResponse.statusCode, 503);
         assert.deepEqual(rewardLedgerResponse.payload, {
             error: "wallet_reward_ledger_migration_required",
-            message: "Apply supabase-wallet-game-reward-ledger-fix.sql, then retry verification."
+            message: "Apply the updated supabase-wallet-game-reward-ledger-fix.sql in Supabase, then tap Retry Verification."
+        });
+
+        globalThis.fetch = async (url) => {
+            const target = String(url);
+            if (target.includes("/auth/v1/user")) {
+                return new Response(JSON.stringify({ id: "test-player" }), { status: 200 });
+            }
+            if (target.includes("/wallet_level_sessions?")) {
+                return new Response(JSON.stringify([{
+                    id: "123e4567-e89b-42d3-a456-426614174000",
+                    player_id: "test-player",
+                    level_number: 1,
+                    timer_started_at: new Date(Date.now() - 1000).toISOString(),
+                    expires_at: new Date(Date.now() + 60000).toISOString(),
+                    layout_seed: layoutSeed,
+                    completed_at: null
+                }]), { status: 200 });
+            }
+            if (target.includes("/rpc/complete_wallet_level")) {
+                return new Response(JSON.stringify({
+                    code: "22023",
+                    message: "Invalid wallet ledger entry."
+                }), { status: 400 });
+            }
+            throw new Error(`Unexpected stale-ledger-function request: ${target}`);
+        };
+        const staleLedgerFunctionResponse = makeResponse();
+        await completionEndpoint({
+            method: "POST",
+            headers: { authorization: "Bearer test-access-token" },
+            body: {
+                sessionId: "123e4567-e89b-42d3-a456-426614174000",
+                mirrors,
+                launchDirection: level.start.direction
+            }
+        }, staleLedgerFunctionResponse);
+        assert.equal(staleLedgerFunctionResponse.statusCode, 503);
+        assert.deepEqual(staleLedgerFunctionResponse.payload, {
+            error: "wallet_reward_ledger_migration_required",
+            message: "Apply the updated supabase-wallet-game-reward-ledger-fix.sql in Supabase, then tap Retry Verification."
         });
     } finally {
         globalThis.fetch = originalFetch;
@@ -2604,11 +2663,22 @@ test("paid gameplay migration stays disabled and makes entry and reward operatio
         new URL("../supabase-wallet-game-reward-ledger-fix.sql", import.meta.url),
         "utf8"
     );
+    const legacyWalletMigration = readFileSync(new URL("../supabase-wallet.sql", import.meta.url), "utf8");
     for (const ledgerMigration of [unifiedBalanceMigration, rewardLedgerFix]) {
         assert.match(ledgerMigration, /wallet_credit_ledger_entry_type_check/);
         assert.match(ledgerMigration, /'game_entry', 'game_refund', 'game_reward', 'adjustment'/);
         assert.match(ledgerMigration, /'withdrawal_reserve', 'withdrawal_release', 'withdrawal'/);
     }
+    const rewardLedgerFunction = rewardLedgerFix.slice(
+        rewardLedgerFix.indexOf("create or replace function public.apply_wallet_ledger_entry("),
+        rewardLedgerFix.indexOf("revoke all on function public.apply_wallet_ledger_entry(")
+    );
+    assert.match(rewardLedgerFunction, /p_entry_type not in \([^)]*'game_reward'/);
+    assert.match(legacyWalletMigration, /entry_type in \('deposit', 'game_entry', 'game_refund', 'game_reward', 'adjustment'\)/);
+    assert.match(
+        legacyWalletMigration,
+        /p_entry_type not in \('deposit', 'game_entry', 'game_refund', 'game_reward', 'adjustment'\)/
+    );
 });
 
 test("Solana verifier credits only successful finalized transfers to the mapped token owner", async () => {
@@ -4224,10 +4294,10 @@ test("deposit transaction API prepares and broadcasts through the authenticated 
     }
 });
 
-test("each connected star outcome uses the fixed time threshold and matching payout", () => {
+test("each connected star outcome uses the fixed 30-second and 60-second thresholds", () => {
     for (const level of levels) {
-        assert.deepEqual(level.starTimeTargets, { threeSeconds: 20, twoSeconds: 40 });
-        const payouts = [19999, 20000, 39999, 40000]
+        assert.deepEqual(level.starTimeTargets, { threeSeconds: 30, twoSeconds: 60 });
+        const payouts = [29999, 30000, 59999, 60000]
             .map((elapsed) => evaluateLevelStars(level, elapsed));
         assert.deepEqual(payouts.map((result) => result.stars), [3, 2, 2, 1]);
         assert.deepEqual(payouts.map((result) => result.rewardCredits), [
@@ -4247,19 +4317,21 @@ test("no battery connection is a fail with no stars and no payout", () => {
     });
 });
 
-test("all levels use exact 20-second and 40-second tier boundaries", () => {
+test("all levels use exact 30-second and 60-second tier boundaries", () => {
     for (const level of levels) {
         const targets = getLevelStarTimeTargets(level);
         assert.equal(level.starTimeTargets.threeSeconds, targets.threeSeconds);
         assert.equal(level.starTimeTargets.twoSeconds, targets.twoSeconds);
-        assert.deepEqual(targets, { threeSeconds: 20, twoSeconds: 40 });
+        assert.deepEqual(targets, { threeSeconds: 30, twoSeconds: 60 });
         assert.equal(evaluateLevelStars(level, targets.threeSeconds * 1000 - 1).stars, 3);
         assert.equal(evaluateLevelStars(level, targets.threeSeconds * 1000).stars, 2);
         assert.equal(evaluateLevelStars(level, targets.twoSeconds * 1000 - 1).stars, 2);
         assert.equal(evaluateLevelStars(level, targets.twoSeconds * 1000).stars, 1);
+        assert.equal(evaluateLevelStars(level, 21900).stars, 3);
+        assert.equal(evaluateLevelStars(level, 29300).stars, 3);
     }
-    assert.deepEqual(levels[0].starTimeTargets, { threeSeconds: 20, twoSeconds: 40 });
-    assert.deepEqual(levels[98].starTimeTargets, { threeSeconds: 20, twoSeconds: 40 });
+    assert.deepEqual(levels[0].starTimeTargets, { threeSeconds: 30, twoSeconds: 60 });
+    assert.deepEqual(levels[98].starTimeTargets, { threeSeconds: 30, twoSeconds: 60 });
 });
 
 test("invalid elapsed times and incomplete solves never receive a reward", () => {

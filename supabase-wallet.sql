@@ -68,7 +68,7 @@ create table if not exists public.wallet_credit_ledger (
     id uuid primary key default gen_random_uuid(),
     player_id uuid not null references public.player_profiles (id) on delete cascade,
     deposit_id uuid references public.wallet_deposits (id) on delete restrict,
-    entry_type text not null check (entry_type in ('deposit', 'game_entry', 'game_refund', 'adjustment')),
+    entry_type text not null check (entry_type in ('deposit', 'game_entry', 'game_refund', 'game_reward', 'adjustment')),
     amount_credits bigint not null check (amount_credits <> 0),
     balance_after_credits bigint not null check (balance_after_credits >= 0),
     idempotency_key text not null unique,
@@ -176,7 +176,7 @@ begin
     end if;
     if p_player_id is null
        or p_entry_type is null
-       or p_entry_type not in ('deposit', 'game_entry', 'game_refund', 'adjustment')
+       or p_entry_type not in ('deposit', 'game_entry', 'game_refund', 'game_reward', 'adjustment')
        or p_amount_credits is null or p_amount_credits = 0
        or p_idempotency_key is null or char_length(p_idempotency_key) not between 1 and 200 then
         raise exception 'Invalid wallet ledger entry.' using errcode = '22023';

@@ -6,8 +6,8 @@ export const CYFUR_CREDITS_PER_TOKEN = 1000;
 export const TRANSITION_VIDEO_MIN_INTERVAL = 8;
 export const TRANSITION_VIDEO_MAX_INTERVAL = 12;
 export const STAR_TIME_CONFIG = Object.freeze({
-    threeStarMaxSeconds: 20,
-    twoStarMaxSeconds: 40
+    threeStarMaxSeconds: 30,
+    twoStarMaxSeconds: 60
 });
 
 export function getNextTransitionMilestone(completedLevelNumber, random = Math.random) {

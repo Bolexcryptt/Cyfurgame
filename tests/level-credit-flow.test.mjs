@@ -304,6 +304,12 @@ test("approved star rewards and failed attempts follow the existing completion-t
             evaluateLevelStars(level, 36500),
             { stars: 2, rewardCredits: Math.floor(economy.entryCostCredits * 0.4), status: "completed" }
         );
+        for (const elapsed of [21900, 29300, 29999]) {
+            assert.deepEqual(
+                evaluateLevelStars(level, elapsed),
+                { stars: 3, rewardCredits: Math.floor(economy.entryCostCredits * 1.6), status: "completed" }
+            );
+        }
         assert.deepEqual(
             evaluateLevelStars(level, targets.threeSeconds * 1000, false),
             { stars: 0, rewardCredits: 0, status: "fail" }

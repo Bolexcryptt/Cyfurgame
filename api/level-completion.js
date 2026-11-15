@@ -176,12 +176,18 @@ module.exports = async function levelCompletion(request, response) {
             /wallet_credit_ledger_entry_type_check/.test(error.databaseMessage ?? "")) {
             return sendJson(response, 503, {
                 error: "wallet_reward_ledger_migration_required",
-                message: "Apply supabase-wallet-game-reward-ledger-fix.sql, then retry verification."
+                message: "Apply the updated supabase-wallet-game-reward-ledger-fix.sql in Supabase, then tap Retry Verification."
             });
         }
         if (error.code === "22023") {
             if (/has not started or has expired/i.test(error.databaseMessage ?? "")) {
                 return sendJson(response, 422, { error: "level_session_not_started_or_expired" });
+            }
+            if (/Invalid wallet ledger entry\./i.test(error.databaseMessage ?? "")) {
+                return sendJson(response, 503, {
+                    error: "wallet_reward_ledger_migration_required",
+                    message: "Apply the updated supabase-wallet-game-reward-ledger-fix.sql in Supabase, then tap Retry Verification."
+                });
             }
             if (/reward does not match/i.test(error.databaseMessage ?? "")) {
                 return sendJson(response, 503, { error: "wallet_migration_required" });
