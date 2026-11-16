@@ -8,7 +8,6 @@ import {
     getLevelLayoutKey,
     getNextTransitionMilestone,
     getPendingLevelTransition,
-    mergeCompletedLevels,
     levels
 } from "./levels.js";
 import { supabase, supabaseConfigured } from "./supabase.js";
@@ -195,6 +194,10 @@ function readPlayer() {
 
 let player = readPlayer();
 let serverWalletCompletions = [];
+let serverCurrentLevel = 1;
+let serverProgressPlayerId = null;
+let serverProgressLoaded = false;
+let serverProgressRequest = 0;
 let activeVideoPlayback = null;
 let transitionInProgress = false;
 let openingFlowFinished = false;
@@ -253,10 +256,11 @@ function getTransitionMilestone(completedLevelNumber) {
 async function refreshServerWalletProgress() {
     if (!authUser || !supabaseConfigured || !supabase) {
         serverWalletCompletions = [];
-        renderLevels();
         return false;
     }
 
+    const requestId = ++serverProgressRequest;
+    const requestedPlayerId = authUser.id;
     const headers = await getWalletAuthorizationHeaders();
     const response = await fetch(apiUrl("game-points"), {
         headers,
@@ -265,14 +269,24 @@ async function refreshServerWalletProgress() {
     const result = await response.json().catch(() => ({}));
     if (!response.ok ||
         !/^\d+$/.test(String(result.balanceCredits ?? result.balancePoints)) ||
-        !Array.isArray(result.completedLevels)) {
+        !Array.isArray(result.completedLevels) ||
+        !Number.isInteger(result.currentLevel) || result.currentLevel < 1 || result.currentLevel > 99) {
         throw new Error(result.error || `Server wallet balance could not be loaded (${response.status}).`);
     }
 
+    if (requestId !== serverProgressRequest || !authUser || authUser.id !== requestedPlayerId) {
+        return false;
+    }
+
+    const sameProgressOwner = serverProgressPlayerId === requestedPlayerId;
+    serverCurrentLevel = sameProgressOwner
+        ? Math.max(serverCurrentLevel, result.currentLevel)
+        : result.currentLevel;
+    serverProgressPlayerId = requestedPlayerId;
+    serverProgressLoaded = true;
     serverWalletCompletions = [...new Set(result.completedLevels
         .map(Number)
         .filter((levelNumber) => Number.isInteger(levelNumber) && levelNumber >= 1 && levelNumber <= 99))];
-    renderLevels();
     return true;
 }
 
@@ -469,33 +483,22 @@ function getContinueLevel() {
     return getCampaignStartLevel(player.completedLevels, player.lastLevel, player.unlockedLevel);
 }
 
-async function refreshOwnProgress() {
+async function refreshOwnProgress(profile = null) {
     if (!authUser) return;
-    const { data, error } = await supabase
-        .from("level_completions")
-        .select("level_number")
-        .eq("player_id", authUser.id);
-    if (error) throw error;
-    let serverWalletLevels = [];
-    try {
-        await refreshServerWalletProgress();
-        serverWalletLevels = serverWalletCompletions;
-    } catch (walletProgressError) {
-        serverWalletCompletions = [];
-        console.error("Server wallet balance or progress could not be loaded.", walletProgressError);
-    }
+    const refreshed = await refreshServerWalletProgress();
+    if (!refreshed) return false;
     const hydrated = hydratePlayerFromAuthenticatedAccount(
         player,
         authUser,
-        { display_name: player.name },
-        mergeCompletedLevels(
-            player.completedLevels,
-            [...data.map((record) => record.level_number), ...serverWalletLevels],
-            !player.playerId || player.playerId === authUser.id
-        )
+        profile || { display_name: player.name },
+        serverWalletCompletions,
+        serverCurrentLevel
     );
     Object.assign(player, hydrated);
     savePlayer();
+    renderProfile();
+    renderLevels();
+    return true;
 }
 
 async function initializeBackend() {
@@ -507,6 +510,13 @@ async function initializeBackend() {
     try {
         const session = await restoreOrCreatePlayerSession(supabase.auth);
         authUser = session.user;
+        if (serverProgressPlayerId !== authUser.id) {
+            serverProgressRequest += 1;
+            serverProgressLoaded = false;
+            serverCurrentLevel = 1;
+            serverWalletCompletions = [];
+            serverProgressPlayerId = null;
+        }
 
         const { data: profile, error: profileError } = await supabase
             .from("player_profiles")
@@ -523,13 +533,7 @@ async function initializeBackend() {
             if (error) throw error;
         }
 
-        Object.assign(player, hydratePlayerFromAuthenticatedAccount(
-            player,
-            authUser,
-            profile,
-            []
-        ));
-        await refreshOwnProgress();
+        await refreshOwnProgress(profile);
         backendStatus = "Connected to the RelicGrid leaderboard.";
         savePlayer();
         renderProfile();
@@ -609,42 +613,62 @@ function startMusic() {
 }
 
 function renderProfile() {
-    const completed = player.completedLevels.length;
+    const progressReady = serverProgressLoaded &&
+        Boolean(authUser) && serverProgressPlayerId === authUser.id;
+    const completedLevels = progressReady ? player.completedLevels : [];
+    const completed = completedLevels.length;
     const name = player.name || "Pilot";
-    const continueLevel = getContinueLevel();
+    const continueLevel = progressReady ? getContinueLevel() : null;
+    const progressLabel = progressReady
+        ? `${completed} / 99`
+        : backendStatus.startsWith("Connecting")
+            ? "SYNCING PROGRESS…"
+            : "PROGRESS UNAVAILABLE";
     document.getElementById("profile-name").textContent = name;
     document.getElementById("profile-initial").textContent = name.slice(0, 1).toUpperCase();
-    document.getElementById("profile-progress").textContent = `${completed} / 99 cleared`;
-    document.getElementById("hero-campaign-status").textContent = `${completed} / 99 CLEARED`;
-    document.getElementById("hero-cleared-count").textContent = `${completed} / 99`;
-    document.getElementById("hero-unlocked-count").textContent =
-        `${String(continueLevel).padStart(2, "0")} / 99`;
+    document.getElementById("profile-progress").textContent = progressReady
+        ? `${progressLabel} cleared`
+        : progressLabel;
+    document.getElementById("hero-campaign-status").textContent = progressReady
+        ? `${progressLabel} CLEARED`
+        : progressLabel;
+    document.getElementById("hero-cleared-count").textContent = progressLabel;
+    document.getElementById("hero-unlocked-count").textContent = progressReady
+        ? `${String(continueLevel).padStart(2, "0")} / 99`
+        : "— / 99";
     const clearedProgress = Math.min(100, completed / 99 * 100);
-    const nextProgress = Math.min(100, continueLevel / 99 * 100);
+    const nextProgress = progressReady ? Math.min(100, continueLevel / 99 * 100) : 0;
     document.getElementById("hero-cleared-fill").style.width = `${clearedProgress}%`;
     document.getElementById("hero-unlocked-fill").style.width = `${nextProgress}%`;
-    document.getElementById("hero-telemetry-cleared").textContent = `${completed} / 99`;
-    document.getElementById("hero-telemetry-next").textContent =
-        `${String(continueLevel).padStart(2, "0")} / 99`;
+    document.getElementById("hero-telemetry-cleared").textContent = progressReady
+        ? `${completed} / 99`
+        : progressLabel;
+    document.getElementById("hero-telemetry-next").textContent = progressReady
+        ? `${String(continueLevel).padStart(2, "0")} / 99`
+        : "— / 99";
     const clearedTelemetry = document.getElementById("hero-telemetry-cleared-fill");
     const nextTelemetry = document.getElementById("hero-telemetry-next-fill");
     clearedTelemetry.style.width = `${clearedProgress}%`;
     nextTelemetry.style.width = `${nextProgress}%`;
     clearedTelemetry.parentElement.setAttribute("aria-valuenow", String(Math.round(clearedProgress)));
     nextTelemetry.parentElement.setAttribute("aria-valuenow", String(Math.round(nextProgress)));
-    document.getElementById("hero-current-sector").textContent =
-        `LEVEL ${String(continueLevel).padStart(2, "0")}`;
+    document.getElementById("hero-current-sector").textContent = progressReady
+        ? `LEVEL ${String(continueLevel).padStart(2, "0")}`
+        : "SYNCING";
     document.getElementById("hero-sector-access").textContent = levelsGloballyLocked
         ? "ALL SECTORS LOCKED"
         : "WALLET CREDITS REQUIRED";
-    document.getElementById("continue-game").disabled = levelsGloballyLocked;
+    const continueButton = document.getElementById("continue-game");
+    continueButton.disabled = levelsGloballyLocked || !progressReady;
+    continueButton.querySelector(".mission-button-label").firstChild.textContent =
+        progressReady ? "START GAME" : "PROGRESS SYNC REQUIRED";
     const campaignMap = document.getElementById("campaign-map-grid");
     const campaignMapCells = document.createDocumentFragment();
     for (const level of levels) {
         const cell = document.createElement("span");
-        const completedLevel = player.completedLevels.includes(level.number);
-        const skippedLevel = player.skippedLevels.includes(level.number);
-        const currentLevel = level.number === continueLevel && !completedLevel;
+        const completedLevel = completedLevels.includes(level.number);
+        const skippedLevel = progressReady && player.skippedLevels.includes(level.number);
+        const currentLevel = progressReady && level.number === continueLevel && !completedLevel;
         cell.className = `campaign-map-cell${completedLevel ? " is-cleared" : ""}${currentLevel ? " is-current" : ""}`;
         if (skippedLevel && !completedLevel) cell.classList.add("is-skipped");
         cell.title = `Sector ${String(level.number).padStart(2, "0")}: ${
@@ -672,8 +696,10 @@ function renderProfile() {
     profileDetails.replaceChildren(
         statCard("CALLSIGN", name),
         statCard("PLAYER ID", player.playerId || "Available after account setup"),
-        statCard("LEVELS COMPLETED", `${completed} / 99`),
-        statCard("NEXT STORY LEVEL", `LEVEL ${String(player.unlockedLevel).padStart(2, "0")}`),
+        statCard("LEVELS COMPLETED", progressLabel),
+        statCard("NEXT STORY LEVEL", progressReady
+            ? `LEVEL ${String(player.unlockedLevel).padStart(2, "0")}`
+            : progressLabel),
         statCard("LEADERBOARD", supabaseConfigured ? backendStatus : "RelicGrid account service is unavailable")
     );
     renderPlayerAccountStatus();
@@ -835,14 +861,12 @@ async function verifyAccountRecovery(event) {
         const recoveredUser = await verifyExistingAccountRecovery(supabase.auth, email, token);
         pendingAccountRecoveryPlayerId = null;
         authUser = recoveredUser;
+        serverProgressRequest += 1;
+        serverProgressLoaded = false;
+        serverCurrentLevel = 1;
+        serverProgressPlayerId = null;
+        serverWalletCompletions = [];
         pendingAccountEmail = "";
-        player.name = "";
-        player.playerId = recoveredUser.id;
-        player.completedLevels = [];
-        player.unlockedLevel = 1;
-        player.lastLevel = 1;
-        player.transitionMilestonesPlayed = [];
-        player.nextTransitionLevel = null;
         const { data: profile, error } = await supabase
             .from("player_profiles")
             .select("display_name")
@@ -850,8 +874,7 @@ async function verifyAccountRecovery(event) {
             .maybeSingle();
         if (error) throw error;
         if (!profile) throw new Error("The recovered player profile could not be loaded.");
-        player.name = profile.display_name || "";
-        await refreshOwnProgress();
+        await refreshOwnProgress(profile);
         savePlayer();
         backendReady = Promise.resolve(true);
         renderProfile();
@@ -996,11 +1019,13 @@ function statCard(label, value) {
 function renderLevels() {
     const list = document.getElementById("level-list");
     const fragment = document.createDocumentFragment();
-    const continueLevel = getContinueLevel();
+    const progressReady = serverProgressLoaded &&
+        Boolean(authUser) && serverProgressPlayerId === authUser.id;
+    const continueLevel = progressReady ? getContinueLevel() : null;
     for (const level of levels) {
-        const completed = player.completedLevels.includes(level.number);
-        const skipped = player.skippedLevels.includes(level.number);
-        const current = level.number === continueLevel && !completed;
+        const completed = progressReady && player.completedLevels.includes(level.number);
+        const skipped = progressReady && player.skippedLevels.includes(level.number);
+        const current = progressReady && level.number === continueLevel && !completed;
         const item = document.createElement("li");
         const button = document.createElement("button");
         button.style.setProperty("--card-index", String((level.number - 1) % 12));
@@ -1027,7 +1052,7 @@ function renderLevels() {
         const levelLocked = levelsGloballyLocked;
         button.className =
             `${levelLocked ? "is-locked" : "is-unlocked"}${completed ? " is-complete" : ""}${skipped ? " is-skipped" : ""}${current ? " is-current" : ""}`;
-        button.disabled = levelLocked;
+        button.disabled = levelLocked || !progressReady;
         const entryCost = document.createElement("small");
         entryCost.className = "level-cost";
         entryCost.textContent = hasWalletEntryCredits
@@ -2774,7 +2799,9 @@ async function startLevel(number, resumeMusic = false) {
             ? `Resuming your active paid Level ${String(enteredLevelNumber).padStart(2, "0")} session. No additional credits were deducted.`
             : `Level ${String(enteredLevelNumber).padStart(2, "0")} started. ${formatCredits(entry.entryCostCredits)} wallet credits deducted; verified balance ${formatCredits(entry.balanceCredits)}.`;
         setLevelEntryMessage(entryMessage, "success");
-        player.lastLevel = enteredLevelNumber;
+        serverCurrentLevel = Math.max(serverCurrentLevel, enteredLevelNumber);
+        player.unlockedLevel = Math.max(player.unlockedLevel, serverCurrentLevel);
+        player.lastLevel = Math.max(player.lastLevel, serverCurrentLevel);
         const layoutKey = getLevelLayoutKey(level);
         player.lastLevelLayouts[levelKey] = layoutKey;
         player.levelLayoutHistory[levelKey] = [...new Set([...previousLayoutKeys, layoutKey])];
@@ -2876,7 +2903,7 @@ document.getElementById("skip-level").addEventListener("click", async (event) =>
         player.skippedLevels = [...new Set([...player.skippedLevels, currentLevel])]
             .filter((level) => !player.completedLevels.includes(level))
             .sort((a, b) => a - b);
-        player.unlockedLevel = Math.max(player.unlockedLevel, nextLevelNumber);
+        player.unlockedLevel = Math.max(player.unlockedLevel, serverCurrentLevel, nextLevelNumber);
         savePlayer();
         skipCommitted = true;
         renderProfile();
@@ -3123,7 +3150,9 @@ async function verifyWalletLevelCompletion(detail) {
         player.completedLevels = [...new Set([...player.completedLevels, number])].sort((a, b) => a - b);
         player.skippedLevels = player.skippedLevels.filter((completed) => completed !== number);
         player.unlockedLevel = Math.min(99, Math.max(player.unlockedLevel, number + 1));
-        player.lastLevel = Math.min(99, number + 1);
+        serverCurrentLevel = Math.max(serverCurrentLevel, Math.min(99, number + 1));
+        player.unlockedLevel = Math.max(player.unlockedLevel, serverCurrentLevel);
+        player.lastLevel = Math.max(player.lastLevel, serverCurrentLevel);
         savePlayer();
 
         document.getElementById("wallet-balance").textContent = formatCredits(result.balanceCredits);

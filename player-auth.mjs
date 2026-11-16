@@ -38,9 +38,16 @@ export async function restoreOrCreatePlayerSession(auth) {
     return { user: data.user, createdAnonymously: true };
 }
 
-export function hydratePlayerFromAuthenticatedAccount(player, authUser, profile, serverCompletedLevels) {
+export function hydratePlayerFromAuthenticatedAccount(
+    player,
+    authUser,
+    profile,
+    serverCompletedLevels,
+    serverCurrentLevel
+) {
     if (!player || typeof authUser?.id !== "string" || !authUser.id ||
-        !profile || !Array.isArray(serverCompletedLevels)) {
+        !profile || !Array.isArray(serverCompletedLevels) ||
+        !Number.isInteger(serverCurrentLevel) || serverCurrentLevel < 1 || serverCurrentLevel > 99) {
         throw new TypeError("The authenticated player, profile, and server progress are required.");
     }
 
@@ -49,17 +56,14 @@ export function hydratePlayerFromAuthenticatedAccount(player, authUser, profile,
         Number.isInteger(level) && level >= 1 && level <= 99
     ))].sort((a, b) => a - b);
     const completed = new Set(completedLevels);
-    let nextLevel = 1;
-    while (completed.has(nextLevel) && nextLevel < 99) nextLevel += 1;
+    let firstIncompleteLevel = 1;
+    while (completed.has(firstIncompleteLevel) && firstIncompleteLevel < 99) firstIncompleteLevel += 1;
+    const currentLevel = Math.max(serverCurrentLevel, firstIncompleteLevel);
     const skippedLevels = sameIdentity && Array.isArray(player.skippedLevels)
         ? [...new Set(player.skippedLevels.filter((level) =>
             Number.isInteger(level) && level >= 1 && level < 99 && !completed.has(level)
         ))]
         : [];
-    const nextAfterSkip = skippedLevels.reduce(
-        (next, level) => Math.max(next, level + 1),
-        1
-    );
 
     return {
         ...player,
@@ -67,10 +71,8 @@ export function hydratePlayerFromAuthenticatedAccount(player, authUser, profile,
         playerId: authUser.id,
         completedLevels,
         skippedLevels,
-        unlockedLevel: Math.max(nextLevel, nextAfterSkip),
-        lastLevel: sameIdentity
-            ? Math.min(99, Math.max(1, Number(player.lastLevel) || nextLevel))
-            : nextLevel,
+        unlockedLevel: currentLevel,
+        lastLevel: currentLevel,
         transitionMilestonesPlayed: sameIdentity
             ? player.transitionMilestonesPlayed
             : [],

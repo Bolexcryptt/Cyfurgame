@@ -23,25 +23,36 @@ module.exports = async function gamePoints(request, response) {
         const user = await authenticate(request);
         if (!user) return sendJson(response, 401, { error: "authentication_required" });
         const playerId = encodeURIComponent(user.id);
-        const [accounts, walletCompletions, legacyCompletions] = await Promise.all([
+        const [accounts, walletCompletions, legacyCompletions, profiles] = await Promise.all([
             serviceRequest(`wallet_credit_accounts?select=balance_credits&player_id=eq.${playerId}&limit=1`),
             serviceRequest(`level_completions?select=level_number&player_id=eq.${playerId}`),
-            serviceRequest(`game_point_level_completions?select=level_number&player_id=eq.${playerId}`)
+            serviceRequest(`game_point_level_completions?select=level_number&player_id=eq.${playerId}`),
+            serviceRequest(`player_profiles?select=current_level&id=eq.${playerId}&limit=1`)
         ]);
         const balanceCredits = String(accounts[0]?.balance_credits ?? "0");
         if (!/^\d+$/.test(balanceCredits)) {
             throw new Error("Canonical wallet account returned an invalid balance.");
         }
+        const currentLevel = Number(profiles[0]?.current_level);
+        if (!Number.isInteger(currentLevel) || currentLevel < 1 || currentLevel > 99) {
+            throw new Error("Authoritative player progression is unavailable.");
+        }
         const completedLevels = [...new Set([...walletCompletions, ...legacyCompletions]
             .map((row) => Number(row.level_number))
             .filter((levelNumber) => Number.isInteger(levelNumber) && levelNumber >= 1 && levelNumber <= 99))]
             .sort((a, b) => a - b);
-        return sendJson(response, 200, { balanceCredits, completedLevels });
+        return sendJson(response, 200, { balanceCredits, completedLevels, currentLevel });
     } catch (error) {
         console.error("Canonical wallet progress could not be loaded.", {
             status: error.status ?? 500,
             code: error.code ?? "wallet_progress_read_failed"
         });
+        if (["42703", "PGRST204"].includes(error.code)) {
+            return sendJson(response, 503, {
+                error: "player_progress_migration_required",
+                message: "Apply supabase-player-progression-persistence.sql before loading campaign progress."
+            });
+        }
         return sendJson(response, 502, { error: "wallet_progress_unavailable" });
     }
 };

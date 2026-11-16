@@ -38,7 +38,7 @@ function makeResponse() {
     };
 }
 
-function mockWalletDatabase() {
+function mockWalletDatabase(currentLevel = 1) {
     const calls = [];
     globalThis.fetch = async (input) => {
         const url = new URL(input);
@@ -54,6 +54,9 @@ function mockWalletDatabase() {
         }
         if (url.pathname.includes("level_completions")) {
             return new Response(JSON.stringify([{ level_number: 4 }]));
+        }
+        if (url.pathname.includes("player_profiles")) {
+            return new Response(JSON.stringify([{ current_level: currentLevel }]));
         }
         throw new Error(`Unexpected request: ${url}`);
     };
@@ -72,6 +75,7 @@ test("legacy game-points reads expose the canonical wallet and preserve prior cl
         assert.equal(response.statusCode, 200);
         assert.equal(response.payload.balanceCredits, "2750");
         assert.deepEqual(response.payload.completedLevels, [2, 4]);
+        assert.equal(response.payload.currentLevel, 1);
         assert.equal(calls.some((path) => path.includes("game_point_accounts")), false);
     } finally {
         restoreEnvironment();
@@ -80,7 +84,7 @@ test("legacy game-points reads expose the canonical wallet and preserve prior cl
 
 test("legacy game-points route returns the same canonical wallet balance", async () => {
     configureEnvironment();
-    mockWalletDatabase();
+    mockWalletDatabase(45);
     try {
         const response = makeResponse();
         await levelEntry({
@@ -91,6 +95,64 @@ test("legacy game-points route returns the same canonical wallet balance", async
         assert.equal(response.statusCode, 200);
         assert.equal(response.payload.balanceCredits, "2750");
         assert.deepEqual(response.payload.completedLevels, [2, 4]);
+        assert.equal(response.payload.currentLevel, 45);
+    } finally {
+        restoreEnvironment();
+    }
+});
+
+test("progress reads fail closed if the server has no authoritative current-level record", async () => {
+    configureEnvironment();
+    globalThis.fetch = async (input) => {
+        const url = new URL(input);
+        if (url.pathname.endsWith("/auth/v1/user")) {
+            return new Response(JSON.stringify({ id: "00000000-0000-4000-8000-000000000001" }));
+        }
+        if (url.pathname.includes("wallet_credit_accounts")) {
+            return new Response(JSON.stringify([{ balance_credits: "2750" }]));
+        }
+        if (url.pathname.includes("player_profiles")) {
+            return new Response(JSON.stringify([]));
+        }
+        if (url.pathname.includes("level_completions") ||
+            url.pathname.includes("game_point_level_completions")) {
+            return new Response(JSON.stringify([]));
+        }
+        throw new Error(`Unexpected request: ${url}`);
+    };
+    try {
+        const response = makeResponse();
+        await gamePoints({
+            method: "GET",
+            headers: { authorization: "Bearer player-token" }
+        }, response);
+        assert.equal(response.statusCode, 502);
+        assert.deepEqual(response.payload, { error: "wallet_progress_unavailable" });
+    } finally {
+        restoreEnvironment();
+    }
+});
+
+test("progress reads explain when the current-level migration is missing", async () => {
+    configureEnvironment();
+    globalThis.fetch = async (input) => {
+        const url = new URL(input);
+        if (url.pathname.endsWith("/auth/v1/user")) {
+            return new Response(JSON.stringify({ id: "00000000-0000-4000-8000-000000000001" }));
+        }
+        if (url.pathname.includes("player_profiles")) {
+            return new Response(JSON.stringify({ code: "42703" }), { status: 400 });
+        }
+        return new Response(JSON.stringify([]));
+    };
+    try {
+        const response = makeResponse();
+        await gamePoints({
+            method: "GET",
+            headers: { authorization: "Bearer player-token" }
+        }, response);
+        assert.equal(response.statusCode, 503);
+        assert.equal(response.payload.error, "player_progress_migration_required");
     } finally {
         restoreEnvironment();
     }

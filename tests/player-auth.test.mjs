@@ -126,7 +126,7 @@ test("authenticated account hydration uses server progress and ignores another l
         is_anonymous: false
     }, {
         display_name: "Server Pilot"
-    }, [2, 1, 2, 200]);
+    }, [2, 1, 2, 200], 3);
 
     assert.equal(hydrated.playerId, playerId);
     assert.equal(hydrated.name, "Server Pilot");
@@ -154,12 +154,12 @@ test("same authenticated account keeps local-only settings but server progress s
         is_anonymous: true
     }, {
         display_name: ""
-    }, [1, 4]);
+    }, [1, 4], 45);
 
     assert.equal(hydrated.name, "Local callsign");
     assert.deepEqual(hydrated.completedLevels, [1, 4]);
-    assert.equal(hydrated.unlockedLevel, 2);
-    assert.equal(hydrated.lastLevel, 6);
+    assert.equal(hydrated.unlockedLevel, 45);
+    assert.equal(hydrated.lastLevel, 45);
     assert.deepEqual(hydrated.transitionMilestonesPlayed, [5]);
     assert.equal(hydrated.nextTransitionLevel, 17);
     assert.equal(hydrated.tutorialSeen, true);
@@ -179,11 +179,11 @@ test("skipped-level unlocks survive account refresh and do not cross player iden
         is_anonymous: true
     }, {
         display_name: ""
-    }, [1]);
+    }, [1], 3);
 
     assert.deepEqual(samePlayer.skippedLevels, [2]);
     assert.equal(samePlayer.unlockedLevel, 3);
-    assert.equal(samePlayer.lastLevel, 2);
+    assert.equal(samePlayer.lastLevel, 3);
 
     const otherPlayer = hydratePlayerFromAuthenticatedAccount({
         name: "Another pilot",
@@ -197,11 +197,72 @@ test("skipped-level unlocks survive account refresh and do not cross player iden
         is_anonymous: false
     }, {
         display_name: "Server Pilot"
-    }, []);
+    }, [], 1);
 
     assert.deepEqual(otherPlayer.skippedLevels, []);
     assert.equal(otherPlayer.unlockedLevel, 1);
     assert.equal(otherPlayer.lastLevel, 1);
+});
+
+test("authenticated server progression overrides stale cached levels and preserves high progress", () => {
+    const hydrated = hydratePlayerFromAuthenticatedAccount({
+        name: "Local callsign",
+        playerId,
+        completedLevels: [1, 2, 3, 32, 48],
+        unlockedLevel: 49,
+        lastLevel: 48,
+        skippedLevels: [45],
+        transitionMilestonesPlayed: [25]
+    }, {
+        id: playerId,
+        is_anonymous: false
+    }, {
+        display_name: "Server Pilot"
+    }, [1, 2, 3], 46);
+
+    assert.deepEqual(hydrated.completedLevels, [1, 2, 3]);
+    assert.equal(hydrated.unlockedLevel, 46);
+    assert.equal(hydrated.lastLevel, 46);
+    assert.deepEqual(hydrated.skippedLevels, [45]);
+    assert.deepEqual(hydrated.transitionMilestonesPlayed, [25]);
+});
+
+test("new authenticated players initialize at level one with no local clears", () => {
+    const hydrated = hydratePlayerFromAuthenticatedAccount({
+        name: "",
+        playerId: "",
+        completedLevels: [32, 45],
+        unlockedLevel: 46,
+        lastLevel: 45,
+        transitionMilestonesPlayed: [25]
+    }, {
+        id: playerId,
+        is_anonymous: true
+    }, {
+        display_name: ""
+    }, [], 1);
+
+    assert.deepEqual(hydrated.completedLevels, []);
+    assert.equal(hydrated.unlockedLevel, 1);
+    assert.equal(hydrated.lastLevel, 1);
+    assert.deepEqual(hydrated.transitionMilestonesPlayed, []);
+});
+
+test("progress migration backfills monotonically and advances only on server level events", () => {
+    const migration = readFileSync(
+        new URL("../supabase-player-progression-persistence.sql", import.meta.url),
+        "utf8"
+    );
+    assert.match(migration, /add column if not exists current_level integer not null default 1/);
+    assert.match(migration, /set current_level = greatest\(profile\.current_level, saved\.current_level\)/);
+    assert.match(migration, /from public\.wallet_level_sessions/);
+    assert.match(migration, /from public\.level_completions/);
+    assert.match(migration, /set current_level = greatest\(current_level, new\.level_number\)/);
+    assert.match(migration, /least\(99, new\.level_number \+ 1\)/);
+    assert.match(migration, /Player progression cannot move backwards/);
+    assert.doesNotMatch(migration, /updated_at/i);
+    assert.doesNotMatch(migration, /update public\.wallet_credit_accounts/i);
+    assert.doesNotMatch(migration, /update public\.wallet_credit_ledger/i);
 });
 
 test("an invalid saved session fails closed instead of silently creating another player", async () => {
