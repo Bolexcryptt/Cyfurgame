@@ -16,8 +16,66 @@ function requireOtp(token) {
     return token.trim();
 }
 
+const sessionRequests = new WeakMap();
+const playerSessionRestorations = new WeakMap();
+
+export async function getPlayerSession(auth) {
+    if (!auth || (typeof auth !== "object" && typeof auth !== "function") ||
+        typeof auth.getSession !== "function") {
+        throw new TypeError("The RelicGrid authentication client is unavailable.");
+    }
+
+    const pending = sessionRequests.get(auth);
+    if (pending) return pending;
+
+    const request = Promise.resolve().then(() => auth.getSession());
+    sessionRequests.set(auth, request);
+    try {
+        return await request;
+    } finally {
+        if (sessionRequests.get(auth) === request) sessionRequests.delete(auth);
+    }
+}
+
+export async function resolveAuthoritativeCurrentLevel(apiCurrentLevel, readPlayerProfile) {
+    if (Number.isInteger(apiCurrentLevel) && apiCurrentLevel >= 1 && apiCurrentLevel <= 99) {
+        return apiCurrentLevel;
+    }
+    if (typeof readPlayerProfile !== "function") {
+        throw new TypeError("A player profile reader is required when the progress API omits the current level.");
+    }
+
+    const profile = await readPlayerProfile();
+    const profileCurrentLevel = profile?.current_level;
+    if (!Number.isInteger(profileCurrentLevel) ||
+        profileCurrentLevel < 1 || profileCurrentLevel > 99) {
+        throw new Error("Saved campaign progress is unavailable in the authenticated player profile.");
+    }
+    return profileCurrentLevel;
+}
+
 export async function restoreOrCreatePlayerSession(auth) {
-    const { data: sessionData, error: sessionError } = await auth.getSession();
+    if (!auth || (typeof auth !== "object" && typeof auth !== "function") ||
+        typeof auth.getSession !== "function") {
+        throw new TypeError("The RelicGrid authentication client is unavailable.");
+    }
+
+    const pending = playerSessionRestorations.get(auth);
+    if (pending) return pending;
+
+    const restoration = restoreOrCreatePlayerSessionOnce(auth);
+    playerSessionRestorations.set(auth, restoration);
+    try {
+        return await restoration;
+    } finally {
+        if (playerSessionRestorations.get(auth) === restoration) {
+            playerSessionRestorations.delete(auth);
+        }
+    }
+}
+
+async function restoreOrCreatePlayerSessionOnce(auth) {
+    const { data: sessionData, error: sessionError } = await getPlayerSession(auth);
     if (sessionError) throw sessionError;
 
     if (sessionData.session) {

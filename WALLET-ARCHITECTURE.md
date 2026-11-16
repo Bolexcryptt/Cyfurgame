@@ -44,7 +44,7 @@ Apply `supabase-unified-player-balance.sql` after the wallet, withdrawals, and g
 
 Device-local legacy reward records are non-withdrawable and are intentionally excluded from the migration.
 
-Paid campaign entry costs `floor(100 × 1.08^(level - 1))` credits from the canonical account. The server issues a random layout seed and starts the timer in the atomic entry RPC. The client displays the same seeded board, submits its mirror proof on completion, and receives the reward automatically after server verification; there is no owner/admin approval step. Three stars award 160% of the entry cost, two stars award 40%, and one star awards 0. Rewards are idempotently recorded in the wallet ledger and the shared level-clear table. Until the server confirms the result, the UI shows it as pending and keeps NEXT LEVEL disabled.
+Paid campaign entry costs `floor(100 × 1.08^(level - 1))` credits from the canonical account. The server issues a random layout seed. The solve timer starts on the player's first puzzle action and is reset when an active paid session is resumed. The client displays the same seeded board, submits its mirror proof on completion, and receives the reward automatically after server verification; there is no owner/admin approval step. Three stars award 160% of the entry cost, two stars award 40%, and one star awards 0. Rewards are idempotently recorded in the wallet ledger and the shared level-clear table. Until the server confirms the result, the UI shows it as pending and keeps NEXT LEVEL disabled.
 
 Withdrawal requests reserve availability without changing the displayed wallet balance or inserting a debit. The reserved amount is excluded from further spending while the request is pending. Only after Solana confirms the transfer does the confirmation RPC debit credits and add the withdrawal ledger row. A repeated request with the same idempotency key checks the recorded signature and exact finalized token transfer, then retries only the database confirmation; it never submits a second transfer. A verified finalized failure releases the reservation without a debit; legacy pending withdrawals that were already debited are refunded only after verified failure. Ambiguous signed transactions remain reserved until safely reconciled.
 
@@ -155,13 +155,13 @@ Wallet entry prices are unchanged. Server-measured completion time selects one o
 - Three-star payout: `floor(entry cost × 1.6)`
 - Two-star refund: `floor(entry cost × 0.4)`
 - One-star completion or failure: `0`
-- Three stars: finish at or below a par-derived threshold from 10 to 20 seconds.
-- Two stars: finish after the three-star threshold and at or below a threshold from 30 to 40 seconds.
-- One star: finish after the two-star threshold.
+- Three stars: finish in under 30 seconds.
+- Two stars: finish in 30 to under 60 seconds.
+- One star: finish in 60 seconds or more.
 
 Paid campaign entry deducts its fee from the verified wallet through the server. After server proof validation, the completion reward is added to that same wallet and campaign clear ledger once per paid session.
 
-Skipping an active paid level records that level locally as skipped and awards no stars or reward; its already charged entry fee is not refunded. The next level opens only after its normal entry fee is verified and charged through the existing wallet-entry ledger path. Insufficient balance or a free-practice session cannot record a skip. Skipped levels are shown separately from completed levels.
+Skipping an active paid level atomically expires that session and opens the next level through `skip_wallet_level`, which reuses the normal wallet-entry ledger charge. The skipped level receives no stars or reward, and its already charged entry fee is not refunded. Insufficient balance or a free-practice session cannot record a skip. Skipped levels are shown separately from completed levels. Apply `supabase-wallet-skip-level.sql` after `supabase-unified-player-balance.sql`.
 
 Every paid level entry receives a server-generated seed. The client and server regenerate the same valid puzzle from that seed; the server verifies the submitted mirrors against that exact layout before crediting a reward. Practice can continue using its locally generated layouts.
 

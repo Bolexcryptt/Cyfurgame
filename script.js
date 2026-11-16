@@ -1772,6 +1772,11 @@ function startScene() {
     function startSolveTimer() {
         if (levelStartedAt === null) {
             levelStartedAt = performance.now();
+            if (walletLevelSessionId) {
+                window.dispatchEvent(new CustomEvent("fluxgrid:solve-timer-start", {
+                    detail: { walletSessionId: walletLevelSessionId }
+                }));
+            }
         }
     }
 

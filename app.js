@@ -23,6 +23,8 @@ import {
     requestExistingAccountRecovery,
     hydratePlayerFromAuthenticatedAccount,
     isAccountEmailConfirmationCallback,
+    getPlayerSession,
+    resolveAuthoritativeCurrentLevel,
     restoreOrCreatePlayerSession,
     verifyAccountEmailLink,
     verifyExistingAccountRecovery
@@ -207,6 +209,8 @@ let pendingLevel = null;
 let activeWalletLevelSessionId = null;
 let pendingVerifiedLevelCompletion = null;
 let walletLevelCompletionInProgress = false;
+let walletLevelTimerStartPromise = null;
+let walletLevelTimerStartError = null;
 const pendingLevelEntryRequests = new Map();
 let levelEntryRequestInProgress = false;
 let depositVerificationInProgress = false;
@@ -269,10 +273,21 @@ async function refreshServerWalletProgress() {
     const result = await response.json().catch(() => ({}));
     if (!response.ok ||
         !/^\d+$/.test(String(result.balanceCredits ?? result.balancePoints)) ||
-        !Array.isArray(result.completedLevels) ||
-        !Number.isInteger(result.currentLevel) || result.currentLevel < 1 || result.currentLevel > 99) {
-        throw new Error(result.error || `Server wallet balance could not be loaded (${response.status}).`);
+        !Array.isArray(result.completedLevels)) {
+        throw new Error(result.error || `Server campaign progress could not be loaded (${response.status}).`);
     }
+    const currentLevel = await resolveAuthoritativeCurrentLevel(result.currentLevel, async () => {
+        const { data, error } = await supabase
+            .from("player_profiles")
+            .select("current_level")
+            .eq("id", requestedPlayerId)
+            .maybeSingle();
+        if (error) {
+            console.error("Saved campaign progress could not be loaded from the player profile.", error);
+            throw new Error("Saved campaign progress could not be loaded from the player profile.");
+        }
+        return data;
+    });
 
     if (requestId !== serverProgressRequest || !authUser || authUser.id !== requestedPlayerId) {
         return false;
@@ -280,8 +295,8 @@ async function refreshServerWalletProgress() {
 
     const sameProgressOwner = serverProgressPlayerId === requestedPlayerId;
     serverCurrentLevel = sameProgressOwner
-        ? Math.max(serverCurrentLevel, result.currentLevel)
-        : result.currentLevel;
+        ? Math.max(serverCurrentLevel, currentLevel)
+        : currentLevel;
     serverProgressPlayerId = requestedPlayerId;
     serverProgressLoaded = true;
     serverWalletCompletions = [...new Set(result.completedLevels
@@ -447,7 +462,20 @@ document.addEventListener("visibilitychange", () => {
 });
 window.addEventListener("pagehide", pauseMusic);
 if (Capacitor.isNativePlatform()) {
+    if (supabase) {
+        void supabase.auth.startAutoRefresh().catch((error) => {
+            console.error("Native authentication refresh could not be started.", error);
+        });
+    }
     void App.addListener("appStateChange", ({ isActive }) => {
+        if (supabase) {
+            const refreshTask = isActive
+                ? supabase.auth.startAutoRefresh()
+                : supabase.auth.stopAutoRefresh();
+            void refreshTask.catch((error) => {
+                console.error("Native authentication refresh lifecycle could not be synchronized.", error);
+            });
+        }
         if (!isActive) {
             pauseMusic();
             if (activeVideoPlayback) {
@@ -684,12 +712,14 @@ function renderProfile() {
     if (progressFill) {
         progressFill.style.width = `${Math.min(100, completed / 99 * 100)}%`;
     }
-    const nextLevel = levels[continueLevel - 1];
+    const nextLevel = progressReady ? levels[continueLevel - 1] : null;
     const nextLevelLabel = document.getElementById("hero-next-level");
     if (nextLevelLabel) {
-        nextLevelLabel.textContent = nextLevel
-            ? `LEVEL ${String(nextLevel.number).padStart(2, "0")} / 99`
-            : "CAMPAIGN COMPLETE";
+        nextLevelLabel.textContent = !progressReady
+            ? progressLabel
+            : nextLevel
+                ? `LEVEL ${String(nextLevel.number).padStart(2, "0")} / 99`
+                : "CAMPAIGN COMPLETE";
     }
 
     const profileDetails = document.getElementById("profile-details");
@@ -740,7 +770,7 @@ async function requestAccountRecoveryPreflight() {
         authUser.is_anonymous !== true) {
         throw new Error("Account recovery requires the current anonymous player session.");
     }
-    const { data, error } = await supabase.auth.getSession();
+    const { data, error } = await getPlayerSession(supabase.auth);
     if (error) throw error;
     if (!data.session?.access_token || data.session.user?.id !== authUser.id) {
         throw new Error("The current RelicGrid player session could not be verified.");
@@ -1151,7 +1181,7 @@ function setLevelEntryMessage(message, state = "disabled") {
     }
 }
 
-async function requestLevelEntry(levelNumber) {
+async function requestLevelEntry(levelNumber, skipSessionId = null) {
         if (levelEntryRequestInProgress) return null;
         if (levelsGloballyLocked) {
             setLevelEntryMessage("All levels are temporarily locked. Your saved progress is unchanged.", "disabled");
@@ -1168,16 +1198,19 @@ async function requestLevelEntry(levelNumber) {
         levelEntryRequestInProgress = true;
         setLevelEntryMessage("Checking campaign access and wallet credits with the backend…", "pending");
         try {
-            const { data, error } = await supabase.auth.getSession();
+            const { data, error } = await getPlayerSession(supabase.auth);
             if (error) throw error;
             const accessToken = data.session?.access_token;
             if (!accessToken) {
                 return rejectPaidEntry("Your RelicGrid sign-in has expired. Sign in again before starting a paid level.");
             }
-            const requestStorageKey = `relicgrid.level-entry.${authUser?.id || "player"}.${levelNumber}`;
+            const requestKey = skipSessionId ? `skip:${skipSessionId}` : String(levelNumber);
+            const requestStorageKey = skipSessionId
+                ? `relicgrid.level-skip.${authUser?.id || "player"}.${skipSessionId}`
+                : `relicgrid.level-entry.${authUser?.id || "player"}.${levelNumber}`;
             const storedRequestId = sessionStorage.getItem(requestStorageKey);
-            const requestId = pendingLevelEntryRequests.get(levelNumber) ?? storedRequestId ?? crypto.randomUUID();
-            pendingLevelEntryRequests.set(levelNumber, requestId);
+            const requestId = pendingLevelEntryRequests.get(requestKey) ?? storedRequestId ?? crypto.randomUUID();
+            pendingLevelEntryRequests.set(requestKey, requestId);
             sessionStorage.setItem(requestStorageKey, requestId);
 
             const response = await fetch(apiUrl("level-entry"), {
@@ -1186,12 +1219,16 @@ async function requestLevelEntry(levelNumber) {
                     Authorization: `Bearer ${accessToken}`,
                     "Content-Type": "application/json"
                 },
-                body: JSON.stringify({ levelNumber, requestId }),
+                body: JSON.stringify({
+                    levelNumber,
+                    requestId,
+                    ...(skipSessionId ? { skipSessionId } : {})
+                }),
                 cache: "no-store"
             });
             const result = await response.json().catch(() => ({}));
             if (!response.ok && response.status < 500) {
-                pendingLevelEntryRequests.delete(levelNumber);
+                pendingLevelEntryRequests.delete(requestKey);
                 sessionStorage.removeItem(requestStorageKey);
             }
 
@@ -1249,6 +1286,11 @@ async function requestLevelEntry(levelNumber) {
             if (result.error === "authentication_required") {
                 return rejectPaidEntry("Your sign-in expired before level entry. Sign in again; no level was started.");
             }
+            if (skipSessionId && response.ok && result.levelNumber !== levelNumber) {
+                return rejectPaidEntry(
+                    "The server did not open the requested next level. Your current puzzle remains available; reset it or retry the skip."
+                );
+            }
             if (response.status === 404 || response.status === 501) {
                 return rejectPaidEntry("This deployment is missing the paid-entry API. No level was started.");
             }
@@ -1260,7 +1302,7 @@ async function requestLevelEntry(levelNumber) {
                 result.layoutSeed >= 0 && result.layoutSeed <= 0xffffffff &&
                 (result.levelNumber === undefined ||
                     (Number.isInteger(result.levelNumber) && result.levelNumber >= 1 && result.levelNumber <= 99))) {
-                pendingLevelEntryRequests.delete(levelNumber);
+                pendingLevelEntryRequests.delete(requestKey);
                 sessionStorage.removeItem(requestStorageKey);
                 return result;
             }
@@ -1539,7 +1581,7 @@ async function refreshWithdrawalStatus() {
             setWithdrawalStatus("Sign in to your game account before requesting a CYFUR withdrawal.", "error");
             return;
         }
-        const { data, error } = await supabase.auth.getSession();
+        const { data, error } = await getPlayerSession(supabase.auth);
         if (error) throw error;
         const accessToken = data.session?.access_token;
         if (!accessToken) {
@@ -1647,7 +1689,7 @@ async function submitWithdrawalRequest(event) {
 
     try {
         if (!supabaseConfigured || !supabase) throw new Error("RelicGrid sign-in is unavailable.");
-        const { data, error } = await supabase.auth.getSession();
+        const { data, error } = await getPlayerSession(supabase.auth);
         if (error) throw error;
         const accessToken = data.session?.access_token;
         if (!accessToken) throw new Error("Sign in to your RelicGrid account before requesting a CYFUR withdrawal.");
@@ -1772,7 +1814,7 @@ async function refreshWallet() {
             setWalletMessage("The account service is not configured. Funding is disabled.", "error");
             return;
         }
-        const { data, error } = await supabase.auth.getSession();
+        const { data, error } = await getPlayerSession(supabase.auth);
         if (error) throw error;
         const accessToken = data.session?.access_token;
         if (!accessToken) {
@@ -2183,7 +2225,7 @@ function setWithdrawalLinkStatus(message, state = "") {
 
 async function verifyDepositSignature(signatureOrLink) {
     if (!supabaseConfigured || !supabase) throw new Error("RelicGrid sign-in is unavailable.");
-    const { data, error } = await supabase.auth.getSession();
+    const { data, error } = await getPlayerSession(supabase.auth);
     if (error) throw error;
     const accessToken = data.session?.access_token;
     if (!accessToken) throw new Error("Sign in before submitting a transaction signature.");
@@ -2243,7 +2285,7 @@ async function verifyDepositSignature(signatureOrLink) {
 
 async function getWalletAuthorizationHeaders() {
     if (!supabaseConfigured || !supabase) throw new Error("RelicGrid sign-in is unavailable.");
-    const { data, error } = await supabase.auth.getSession();
+    const { data, error } = await getPlayerSession(supabase.auth);
     if (error) throw error;
     const accessToken = data.session?.access_token;
     if (!accessToken) throw new Error("Sign in to your game account before creating deposit instructions.");
@@ -2251,6 +2293,20 @@ async function getWalletAuthorizationHeaders() {
         Authorization: `Bearer ${accessToken}`,
         "Content-Type": "application/json"
     };
+}
+
+async function startWalletLevelTimer(sessionId) {
+    const response = await fetch(apiUrl("level-session"), {
+        method: "POST",
+        headers: await getWalletAuthorizationHeaders(),
+        body: JSON.stringify({ sessionId }),
+        cache: "no-store"
+    });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok || typeof result.startedAt !== "string" ||
+        !Number.isFinite(Date.parse(result.startedAt))) {
+        throw new Error(result.message || result.error || `The server timer could not start (${response.status}).`);
+    }
 }
 
 async function requestDepositTransaction(action, payload = {}) {
@@ -2751,7 +2807,7 @@ function fitVideoFrame(video) {
     videoScreen.style.setProperty("--phone-height", `${video.videoHeight * scale}px`);
 }
 
-async function startLevel(number, resumeMusic = false) {
+async function startLevel(number, resumeMusic = false, { skipSessionId = null } = {}) {
     if (levelStartInProgress) return false;
     if (!levels[number - 1]) return false;
     if (levelsGloballyLocked) {
@@ -2765,7 +2821,7 @@ async function startLevel(number, resumeMusic = false) {
         if (!musicWasPlaying) stopMusic();
     };
     try {
-        const entry = await requestLevelEntry(number);
+        const entry = await requestLevelEntry(number, skipSessionId);
         if (!entry) {
             stopNewMusic();
             return false;
@@ -2785,6 +2841,8 @@ async function startLevel(number, resumeMusic = false) {
         setPuzzleHintVisible(false);
         activeWalletLevelSessionId = entry.sessionId;
         activeLevelEntryCostCredits = Number(entry.entryCostCredits);
+        walletLevelTimerStartPromise = null;
+        walletLevelTimerStartError = null;
         const skipButton = document.getElementById("skip-level");
         skipButton.hidden = enteredLevelNumber >= 99;
         skipButton.disabled = enteredLevelNumber >= 99;
@@ -2893,7 +2951,9 @@ document.getElementById("skip-level").addEventListener("click", async (event) =>
     let skipCommitted = false;
     try {
         const nextLevelNumber = currentLevel + 1;
-        const started = await startLevel(nextLevelNumber, true);
+        const started = await startLevel(nextLevelNumber, true, {
+            skipSessionId: activeWalletLevelSessionId
+        });
         if (!started) {
             document.getElementById("game-status").textContent =
                 document.getElementById("level-entry-status").textContent;
@@ -2917,9 +2977,9 @@ document.getElementById("skip-level").addEventListener("click", async (event) =>
         document.getElementById("game-status").textContent = error.message;
     } finally {
         skipLevelInProgress = false;
+        button.textContent = "SKIP LEVEL →";
         if (!skipCommitted) {
             window.dispatchEvent(new CustomEvent("fluxgrid:skip-level-cancelled"));
-            button.textContent = "SKIP LEVEL →";
             button.hidden = currentLevel >= 99;
             button.disabled = !activeWalletLevelSessionId ||
                 !document.getElementById("completion-summary").hidden;
@@ -2928,6 +2988,25 @@ document.getElementById("skip-level").addEventListener("click", async (event) =>
 });
 document.getElementById("next-level").addEventListener("click", async (event) => {
     const button = event.currentTarget;
+    if (button.dataset.action === "restart-paid-level") {
+        const number = pendingVerifiedLevelCompletion?.number;
+        if (!Number.isInteger(number) || nextLevelAdvanceInProgress) return;
+        nextLevelAdvanceInProgress = true;
+        button.disabled = true;
+        try {
+            const started = await startLevel(number, true);
+            if (!started) {
+                document.getElementById("game-status").textContent =
+                    document.getElementById("level-entry-status").textContent;
+            }
+        } catch (error) {
+            console.error(`Paid level ${number} could not be restarted.`, error);
+            document.getElementById("game-status").textContent = error.message;
+        } finally {
+            nextLevelAdvanceInProgress = false;
+        }
+        return;
+    }
     if (button.dataset.action === "retry-wallet-completion") {
         if (pendingVerifiedLevelCompletion) {
             void verifyWalletLevelCompletion(pendingVerifiedLevelCompletion);
@@ -3121,6 +3200,12 @@ async function verifyWalletLevelCompletion(detail) {
     document.getElementById("game-status").textContent = "Verifying the level result with RelicGrid…";
 
     try {
+        if (!walletLevelTimerStartPromise) {
+            throw new Error("The server timer did not start. Reopen this paid level and try again; it will not charge you twice.");
+        }
+        await walletLevelTimerStartPromise;
+        if (walletLevelTimerStartError) throw walletLevelTimerStartError;
+
         const headers = await getWalletAuthorizationHeaders();
         const response = await fetch(apiUrl("level-completion"), {
             method: "POST",
@@ -3136,6 +3221,7 @@ async function verifyWalletLevelCompletion(detail) {
         if (!response.ok || result.status !== "confirmed" ||
             !/^\d+$/.test(String(result.balanceCredits)) ||
             !/^\d+$/.test(String(result.rewardCredits)) ||
+            !Number.isFinite(result.elapsedMilliseconds) || result.elapsedMilliseconds < 0 ||
             !Number.isInteger(result.stars) || result.stars < 1 || result.stars > 3) {
             throw new Error(
                 result.message ||
@@ -3166,6 +3252,8 @@ async function verifyWalletLevelCompletion(detail) {
         document.getElementById("completion-stars").textContent = `${result.stars} / 3`;
         document.getElementById("completion-star-icons").textContent =
             `${"★".repeat(result.stars)}${"☆".repeat(3 - result.stars)}`;
+        document.getElementById("completion-time").textContent =
+            `${(result.elapsedMilliseconds / 1000).toFixed(1)} s`;
         document.getElementById("completion-reward-label").textContent = "WALLET REWARD";
         document.getElementById("completion-reward").textContent = `+${formatCredits(rewardCredits)} credits`;
         document.getElementById("completion-reward-note").textContent = result.duplicate === true
@@ -3201,12 +3289,31 @@ async function verifyWalletLevelCompletion(detail) {
             "The level result is awaiting server confirmation. Retry verification; no reward is shown as successful.";
         nextLevelButton.hidden = false;
         nextLevelButton.disabled = false;
-        nextLevelButton.dataset.action = "retry-wallet-completion";
-        nextLevelButton.textContent = "RETRY VERIFICATION";
+        if (walletLevelTimerStartError) {
+            nextLevelButton.dataset.action = "restart-paid-level";
+            nextLevelButton.textContent = "RESTART LEVEL";
+            document.getElementById("completion-reward-note").textContent =
+                `${error.message} No reward was processed. Restart this paid session; its entry fee will not be charged again.`;
+        } else {
+            nextLevelButton.dataset.action = "retry-wallet-completion";
+            nextLevelButton.textContent = "RETRY VERIFICATION";
+        }
     } finally {
         walletLevelCompletionInProgress = false;
     }
 }
+
+window.addEventListener("fluxgrid:solve-timer-start", (event) => {
+    const sessionId = event.detail?.walletSessionId;
+    if (!sessionId) return;
+    walletLevelTimerStartError = null;
+    walletLevelTimerStartPromise = startWalletLevelTimer(sessionId).catch((error) => {
+        walletLevelTimerStartError = error;
+        console.error("Server timer for the paid level could not be started.", error);
+        document.getElementById("game-status").textContent =
+            "The server timer could not start. The level reward will not be submitted until the timer is confirmed.";
+    });
+});
 
 window.addEventListener("fluxgrid:level-complete", (event) => {
     if (skipLevelInProgress) return;

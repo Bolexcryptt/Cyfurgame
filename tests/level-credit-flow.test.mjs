@@ -56,13 +56,15 @@ function installEntryDatabase({
     initialBalance,
     hasAccount = true,
     gameplayEnabled = false,
-    startRpcError = null
+    startRpcError = null,
+    initialActiveSession = null
 }) {
     let balance = BigInt(initialBalance);
     let rpcTail = Promise.resolve();
     const sessions = new Map();
-    let activeSession = null;
+    let activeSession = initialActiveSession;
     let rpcCalls = 0;
+    let skipRpcCalls = 0;
     globalThis.fetch = async (input, options = {}) => {
         const url = new URL(input);
         const path = url.pathname.replace("/rest/v1/", "");
@@ -129,20 +131,58 @@ function installEntryDatabase({
             rpcTail = operation.then(() => undefined);
             return operation;
         }
+        if (path === "rpc/skip_wallet_level") {
+            skipRpcCalls++;
+            const body = JSON.parse(options.body);
+            const operation = rpcTail.then(() => {
+                const existing = sessions.get(body.p_request_id);
+                if (existing) return response(200, [existing]);
+                if (!activeSession || activeSession.session_id !== body.p_session_id ||
+                    activeSession.level_number + 1 !== body.p_next_level_number) {
+                    return response(400, {
+                        code: "22023",
+                        message: "Active level session cannot be skipped."
+                    });
+                }
+
+                const cost = BigInt(getLevelEntryCostCredits(body.p_next_level_number));
+                if (balance < cost) {
+                    return response(400, { code: "P0001", message: "Insufficient credits." });
+                }
+                balance -= cost;
+                const session = {
+                    session_id: `123e4567-e89b-42d3-a456-${String(426614174000 + sessions.size + 1).padStart(12, "0")}`,
+                    balance_credits: balance.toString(),
+                    entry_cost_credits: cost.toString(),
+                    level_number: body.p_next_level_number,
+                    layout_seed: body.p_layout_seed
+                };
+                activeSession = session;
+                sessions.set(body.p_request_id, session);
+                return response(200, [session]);
+            });
+            rpcTail = operation.then(() => undefined);
+            return operation;
+        }
         throw new Error(`Unexpected level-entry request: ${url}`);
     };
     return {
         get balance() { return balance; },
-        get rpcCalls() { return rpcCalls; }
+        get rpcCalls() { return rpcCalls; },
+        get skipRpcCalls() { return skipRpcCalls; }
     };
 }
 
-async function enterLevel({ levelNumber = 1, requestId = requestIds[0] } = {}) {
+async function enterLevel({
+    levelNumber = 1,
+    requestId = requestIds[0],
+    skipSessionId
+} = {}) {
     const apiResponse = createApiResponse();
     await levelEntry({
         method: "POST",
         headers: { authorization: "Bearer player-token" },
-        body: { levelNumber, requestId }
+        body: { levelNumber, requestId, ...(skipSessionId ? { skipSessionId } : {}) }
     }, apiResponse);
     return apiResponse;
 }
@@ -170,6 +210,56 @@ test("zero and insufficient balances are rejected with required fee and verified
         assert.equal(result.payload.balanceCredits, balance);
         assert.equal(result.payload.balanceVerified, true);
     }
+});
+
+test("skip entry atomically forfeits the active session and charges exactly for the next level", async (context) => {
+    context.after(restoreEnvironment);
+    configureEnvironment({ gameplayEnabled: true });
+    const activeSession = {
+        session_id: "123e4567-e89b-42d3-a456-426614174099",
+        level_number: 1,
+        entry_cost_credits: "100",
+        layout_seed: 10
+    };
+    const database = installEntryDatabase({
+        initialBalance: "10000",
+        gameplayEnabled: true,
+        initialActiveSession: activeSession
+    });
+
+    const result = await enterLevel({
+        levelNumber: 2,
+        requestId: requestIds[0],
+        skipSessionId: activeSession.session_id
+    });
+
+    assert.equal(result.statusCode, 200);
+    assert.equal(result.payload.levelNumber, 2);
+    assert.equal(result.payload.sessionId, "123e4567-e89b-42d3-a456-426614174001");
+    assert.equal(result.payload.entryCostCredits, getLevelEntryCostCredits(2));
+    assert.equal(database.skipRpcCalls, 1);
+    assert.equal(database.rpcCalls, 0);
+    assert.equal(database.balance, 10000n - BigInt(getLevelEntryCostCredits(2)));
+});
+
+test("skip entry rejects malformed session IDs before any database operation", async (context) => {
+    context.after(restoreEnvironment);
+    configureEnvironment({ gameplayEnabled: true });
+    const database = installEntryDatabase({
+        initialBalance: "10000",
+        gameplayEnabled: true
+    });
+
+    const result = await enterLevel({
+        levelNumber: 2,
+        requestId: requestIds[0],
+        skipSessionId: "not-a-session-id"
+    });
+
+    assert.equal(result.statusCode, 400);
+    assert.equal(result.payload.error, "invalid_skip_session_id");
+    assert.equal(database.skipRpcCalls, 0);
+    assert.equal(database.rpcCalls, 0);
 });
 
 test("level 99 does not require earlier completions and still requires its entry fee", async (context) => {
@@ -333,6 +423,7 @@ test("approved star rewards and failed attempts follow the existing completion-t
 
 test("the SQL accounting functions serialize entry and award rewards once per session", () => {
     const sql = readFileSync(new URL("../supabase-wallet-deposit-processing.sql", import.meta.url), "utf8");
+    const skipSql = readFileSync(new URL("../supabase-wallet-skip-level.sql", import.meta.url), "utf8");
     const start = sql.slice(
         sql.indexOf("create or replace function public.start_wallet_level("),
         sql.indexOf("create or replace function public.start_wallet_level_timer(")
@@ -355,6 +446,11 @@ test("the SQL accounting functions serialize entry and award rewards once per se
     assert.match(complete, /level-reward:' \|\| p_session_id::text/);
     assert.match(complete, /on conflict \(player_id, level_number\) do nothing/);
     assert.doesNotMatch(complete, /select balance_credits into v_balance\s+from public\.wallet_credit_accounts\b/);
+    assert.match(skipSql, /create or replace function public\.skip_wallet_level\(/);
+    assert.match(skipSql, /where id = p_session_id and player_id = p_player_id\s+for update/);
+    assert.match(skipSql, /set expires_at = now\(\)/);
+    assert.match(skipSql, /public\.start_wallet_level\(/);
+    assert.doesNotMatch(skipSql, /update public\.wallet_credit_accounts|apply_wallet_ledger_entry|game_reward/i);
     assert.match(sql, /paid_gameplay_enabled = false/);
     const safetyMigration = readFileSync(new URL("../supabase-wallet-level-entry-safety.sql", import.meta.url), "utf8");
     assert.match(safetyMigration, /create or replace function public\.start_wallet_level\(/);

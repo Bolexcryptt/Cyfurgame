@@ -852,14 +852,18 @@ test("SKIP LEVEL requires paid next-level entry, spends through the wallet path,
     assert.match(controlsStyle, /grid-template-areas:[\s\S]*?"undo skip"\s*"reset reset"\s*"power power"/);
     assert.match(skipHandler, /skipLevelInProgress \|\| nextLevelAdvanceInProgress \|\| levelStartInProgress/);
     assert.match(skipHandler, /!activeWalletLevelSessionId/);
-    assert.match(skipHandler, /await startLevel\(nextLevelNumber, true\)/);
-    assert.ok(skipHandler.indexOf("await startLevel(nextLevelNumber, true)") <
+    assert.match(skipHandler, /await startLevel\(nextLevelNumber, true, \{\s*skipSessionId: activeWalletLevelSessionId\s*\}\)/);
+    assert.ok(skipHandler.indexOf("await startLevel(nextLevelNumber, true, {") <
         skipHandler.indexOf("player.skippedLevels ="));
-    assert.match(skipHandler, /player\.unlockedLevel = Math\.max\(player\.unlockedLevel, nextLevelNumber\)/);
+    assert.match(skipHandler, /player\.unlockedLevel = Math\.max\(player\.unlockedLevel, serverCurrentLevel, nextLevelNumber\)/);
     assert.match(skipHandler, /No stars or reward were awarded/);
     assert.doesNotMatch(skipHandler, /awardLocalGameReward|completedLevels\s*=/);
     assert.match(startLevel, /skipButton\.hidden = enteredLevelNumber >= 99;\s*skipButton\.disabled = enteredLevelNumber >= 99/);
-    assert.match(startLevel, /const entry = await requestLevelEntry\(number\)/);
+    assert.match(app, /async function requestLevelEntry\(levelNumber, skipSessionId = null\)/);
+    assert.match(app, /result\.levelNumber !== levelNumber/);
+    assert.match(scene, /resetButton\.addEventListener\("click", resetGame\)/);
+    assert.match(scene, /window\.dispatchEvent\(new CustomEvent\("fluxgrid:game-reset"\)\)/);
+    assert.match(startLevel, /const entry = await requestLevelEntry\(number, skipSessionId\)/);
     assert.match(startLevel, /entry\.resumedExistingSession[\s\S]*?No additional credits were deducted/);
     assert.match(startLevel, /generateLevelVariant\(enteredLevelNumber, layoutSeed\)/);
     assert.match(app, /skippedLevels: Array\.isArray\(parsed\.skippedLevels\)/);
@@ -1064,6 +1068,13 @@ test("startup plays company and player introductions, then game video, then open
     );
     assert.match(levelCompletionHandler, /verifyWalletLevelCompletion\(detail\)/);
     assert.doesNotMatch(levelCompletionHandler, /awardLocalGameReward|localGameRewardEntries/);
+    const verifyLevelCompletion = app.slice(
+        app.indexOf("async function verifyWalletLevelCompletion"),
+        app.indexOf('\nwindow.addEventListener("fluxgrid:solve-timer-start"')
+    );
+    assert.ok(verifyLevelCompletion.indexOf("await walletLevelTimerStartPromise") <
+        verifyLevelCompletion.indexOf('fetch(apiUrl("level-completion")'));
+    assert.match(verifyLevelCompletion, /completion-time"\)\.textContent =\s*`\$\{\(result\.elapsedMilliseconds \/ 1000\)\.toFixed\(1\)\} s`/);
     assert.match(app, /nextLevelButton\.disabled = number >= 99/);
     assert.match(app, /wallet balance is saved|wallet result is saved/);
     const openingIntro = app.slice(app.indexOf("async function showOpeningIntro"), app.indexOf("\nfunction fitVideoFrame"));
@@ -1071,15 +1082,18 @@ test("startup plays company and player introductions, then game video, then open
     assert.doesNotMatch(openingIntro, /playGameVideo\(\)/);
     assert.equal(existsSync(new URL("../gamevideo.mp4", import.meta.url)), true);
     assert.doesNotMatch(app, /function startInitialLevel\(\)/);
-    assert.match(app, /await refreshOwnProgress\(\)/);
-    assert.match(app, /mergeCompletedLevels\([\s\S]*?!player\.playerId \|\| player\.playerId === authUser\.id/);
+    assert.match(app, /await refreshOwnProgress\(profile\)/);
+    assert.doesNotMatch(app, /mergeCompletedLevels/);
+    assert.match(app, /result\.currentLevel/);
+    assert.match(app, /serverProgressLoaded/);
+    assert.match(app, /continueButton\.disabled = levelsGloballyLocked \|\| !progressReady/);
     assert.match(app, /hydratePlayerFromAuthenticatedAccount\(/);
     const initializeBackend = app.slice(app.indexOf("async function initializeBackend"), app.indexOf("\nfunction showScreen"));
     assert.ok(initializeBackend.indexOf("authUser = session.user;") <
-        initializeBackend.indexOf("hydratePlayerFromAuthenticatedAccount("));
-    assert.ok(initializeBackend.indexOf("hydratePlayerFromAuthenticatedAccount(") <
-        initializeBackend.indexOf("await refreshOwnProgress();"));
-    assert.match(app, /async function startLevel\(number, resumeMusic = false\) \{\s*if \(levelStartInProgress\) return/);
+        initializeBackend.indexOf("await refreshOwnProgress(profile);"));
+    assert.doesNotMatch(initializeBackend, /hydratePlayerFromAuthenticatedAccount\(/);
+    assert.match(app, /player\.lastLevel = Math\.max\(player\.lastLevel, serverCurrentLevel\)/);
+    assert.match(app, /async function startLevel\(number, resumeMusic = false, \{ skipSessionId = null \} = \{\}\) \{\s*if \(levelStartInProgress\) return/);
     assert.match(app, /window\.addEventListener\("fluxgrid:core-activation-start", pauseMusic\)/);
     assert.match(app, /window\.addEventListener\("fluxgrid:core-activation-cancel", startMusic\)/);
 
@@ -1101,8 +1115,11 @@ test("startup plays company and player introductions, then game video, then open
     assert.match(html, /id="completion-balance"/);
     assert.doesNotMatch(html, /CAMPAIGN SCORE|TOKEN TRANSFER|WALLET CREDIT BALANCE|completion-points|completion-token-reward/);
     assert.match(html, /LEVEL COMPLETED[\s\S]*ENTRY FEE[\s\S]*STAR RATING[\s\S]*WALLET REWARD[\s\S]*SOLVE TIME[\s\S]*CANONICAL WALLET BALANCE/);
+    assert.match(styles, /\.play-screen \.game-hud\[data-completed="true"\] \.completion-metric\s*\{\s*background: transparent;/);
+    assert.match(styles, /\.hero-action-panel #home-level-entry-status\s*\{\s*border-color: transparent;\s*background: transparent;/);
 
     const scene = readFileSync(new URL("../script.js", import.meta.url), "utf8");
+    assert.match(scene, /function startSolveTimer\(\)[\s\S]*?fluxgrid:solve-timer-start/);
     const activationFinish = scene.indexOf("if (activationProgress >= 1 && pendingLevelCompletion && !skipLevelPending)");
     const finishCall = scene.indexOf("finishLevelCompletion(pendingLevelCompletion)", activationFinish);
     assert.ok(activationFinish >= 0);
@@ -1353,6 +1370,7 @@ test("level entry starts only after verified paid authorization", async () => {
             console,
             crypto: { randomUUID: () => "123e4567-e89b-42d3-a456-426614174000" },
             document: { getElementById: (id) => elements.get(id) ?? null },
+            getPlayerSession: async (auth) => auth.getSession(),
             fetch: async () => ({
                 status: statusCode,
                 ok: statusCode >= 200 && statusCode < 300,
@@ -1420,7 +1438,7 @@ test("level entry starts only after verified paid authorization", async () => {
         /document\.getElementById\("continue-game"\)\.addEventListener\("click", \(\) => \{\s*void startLevelFromHome\(getContinueLevel\(\)\)/
     );
     assert.match(app, /async function startLevelFromHome\(number\)[\s\S]*?catch \(error\)/);
-    assert.match(app, /const entry = await requestLevelEntry\(number\)/);
+    assert.match(app, /const entry = await requestLevelEntry\(number, skipSessionId\)/);
 });
 
 test("campaign levels use authenticated wallet credits for entry", () => {
@@ -1435,7 +1453,7 @@ test("campaign levels use authenticated wallet credits for entry", () => {
     assert.ok(endIndex > startIndex);
     assert.ok(entryStart >= 0);
     assert.ok(entryEnd > entryStart);
-    assert.match(startLevel, /const entry = await requestLevelEntry\(number\)/);
+    assert.match(startLevel, /const entry = await requestLevelEntry\(number, skipSessionId\)/);
     assert.match(startLevel, /activeWalletLevelSessionId = entry\.sessionId/);
     assert.match(startLevel, /entryCostCredits: activeLevelEntryCostCredits/);
     assert.match(app, /getLevelEconomy\(level\.number\)\.entryCostCredits/);

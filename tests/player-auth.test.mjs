@@ -5,8 +5,10 @@ import { createRequire } from "node:module";
 import {
     requestAccountEmailLink,
     requestExistingAccountRecovery,
+    getPlayerSession,
     hydratePlayerFromAuthenticatedAccount,
     isAccountEmailConfirmationCallback,
+    resolveAuthoritativeCurrentLevel,
     restoreOrCreatePlayerSession,
     verifyAccountEmailLink,
     verifyExistingAccountRecovery
@@ -17,6 +19,23 @@ const walletHandler = require("../api/wallet.js");
 const originalFetch = globalThis.fetch;
 const originalEnv = { ...process.env };
 const playerId = "00000000-0000-4000-8000-000000000001";
+
+test("campaign progress uses the API level or falls back to the authenticated player profile", async () => {
+    let profileRead = false;
+    assert.equal(await resolveAuthoritativeCurrentLevel(45, async () => {
+        profileRead = true;
+        return { current_level: 32 };
+    }), 45);
+    assert.equal(profileRead, false);
+
+    assert.equal(await resolveAuthoritativeCurrentLevel(undefined, async () => ({
+        current_level: 45
+    })), 45);
+    await assert.rejects(
+        resolveAuthoritativeCurrentLevel(undefined, async () => ({ current_level: 0 })),
+        /Saved campaign progress is unavailable/
+    );
+});
 
 function resetEnvironment() {
     process.env.SUPABASE_URL = "https://supabase.example";
@@ -108,6 +127,55 @@ test("a new player gets one anonymous identity only when no session exists", asy
     assert.equal(result.user.id, playerId);
     assert.equal(result.createdAnonymously, true);
     assert.equal(anonymousSignIns, 1);
+});
+
+test("simultaneous app requests share one session read and refresh operation", async () => {
+    let sessionReads = 0;
+    const auth = {
+        async getSession() {
+            sessionReads += 1;
+            await new Promise((resolve) => setTimeout(resolve, 10));
+            return {
+                data: { session: { access_token: "fresh-access-token", user: { id: playerId } } },
+                error: null
+            };
+        }
+    };
+
+    const sessions = await Promise.all(
+        Array.from({ length: 12 }, () => getPlayerSession(auth))
+    );
+
+    assert.equal(sessionReads, 1);
+    assert.ok(sessions.every((result) => result.data.session.access_token === "fresh-access-token"));
+
+    await getPlayerSession(auth);
+    assert.equal(sessionReads, 2, "resolved sessions are not cached for later requests");
+});
+
+test("simultaneous session restoration creates at most one anonymous player", async () => {
+    let sessionReads = 0;
+    let anonymousSignIns = 0;
+    const auth = {
+        async getSession() {
+            sessionReads += 1;
+            await new Promise((resolve) => setTimeout(resolve, 10));
+            return { data: { session: null }, error: null };
+        },
+        async signInAnonymously() {
+            anonymousSignIns += 1;
+            await new Promise((resolve) => setTimeout(resolve, 10));
+            return { data: { user: { id: playerId, is_anonymous: true } }, error: null };
+        }
+    };
+
+    const sessions = await Promise.all(
+        Array.from({ length: 6 }, () => restoreOrCreatePlayerSession(auth))
+    );
+
+    assert.equal(sessionReads, 1);
+    assert.equal(anonymousSignIns, 1);
+    assert.ok(sessions.every((session) => session.user.id === playerId));
 });
 
 test("authenticated account hydration uses server progress and ignores another local identity", () => {
@@ -466,6 +534,12 @@ test("player records remain keyed to auth user IDs and web sessions persist", ()
     assert.match(walletSchema, /player_id uuid primary key references public\.player_profiles \(id\) on delete cascade/i);
     assert.match(withdrawalSchema, /player_id uuid not null references public\.player_profiles \(id\) on delete cascade/i);
     assert.match(client, /persistSession:\s*true/);
+    assert.match(client, /autoRefreshToken:\s*true/);
+    assert.equal((client.match(/createClient\(/g) || []).length, 1);
+    assert.doesNotMatch(app, /onAuthStateChange/);
+    assert.doesNotMatch(app, /supabase\.auth\.getSession\(/);
+    assert.match(app, /supabase\.auth\.startAutoRefresh\(\)/);
+    assert.match(app, /supabase\.auth\.stopAutoRefresh\(\)/);
     assert.doesNotMatch(localPlayerReader, /balanceCredits|walletBalance|balancePoints/);
     assert.match(app, /localStorage\.setItem\(storageKey, JSON\.stringify\(player\)\)/);
     assert.match(walletApi, /const storedBalance = accountBalance \?\? lastLedgerBalance \?\? null/);

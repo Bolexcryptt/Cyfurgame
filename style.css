@@ -4562,6 +4562,10 @@ body {
 .section-heading p { max-width: 650px; color: var(--console-muted); line-height: 1.5; }
 .campaign-progress-card { border-color: var(--console-line); background: #081923; }
 .level-entry-status { border-color: var(--console-line); background: #0b1c25; }
+.hero-action-panel #home-level-entry-status {
+    border-color: transparent;
+    background: transparent;
+}
 
 .level-list { grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 9px; }
 .level-card {
@@ -6027,4 +6031,8 @@ body {
     background: transparent;
     box-shadow: none;
     backdrop-filter: none;
+}
+
+.play-screen .game-hud[data-completed="true"] .completion-metric {
+    background: transparent;
 }

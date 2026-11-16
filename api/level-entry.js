@@ -100,16 +100,32 @@ module.exports = async function levelEntry(request, response) {
             !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(requestId)) {
             return sendJson(response, 400, { error: "invalid_entry_request_id" });
         }
+        const skipSessionId = request.body?.skipSessionId;
+        if (skipSessionId !== undefined &&
+            (typeof skipSessionId !== "string" ||
+                !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(skipSessionId))) {
+            return sendJson(response, 400, { error: "invalid_skip_session_id" });
+        }
         const layoutSeed = randomInt(0, 0x100000000);
-        const [session] = await serviceRequest("rpc/start_wallet_level", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
+        const rpcName = skipSessionId ? "rpc/skip_wallet_level" : "rpc/start_wallet_level";
+        const rpcBody = skipSessionId
+            ? {
+                p_player_id: user.id,
+                p_session_id: skipSessionId,
+                p_next_level_number: levelNumber,
+                p_request_id: requestId,
+                p_layout_seed: layoutSeed
+            }
+            : {
                 p_player_id: user.id,
                 p_level_number: levelNumber,
                 p_request_id: requestId,
                 p_layout_seed: layoutSeed
-            })
+            };
+        const [session] = await serviceRequest(rpcName, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(rpcBody)
         });
         if (!session || typeof session.session_id !== "string" ||
             !/^\d+$/.test(String(session.balance_credits))) {
