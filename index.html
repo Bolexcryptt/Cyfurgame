@@ -40,8 +40,9 @@
                 <button id="video-action-button" class="button button-primary" type="button" hidden>Next <span>→</span></button>
             </div>
             <section id="campaign-thank-you" class="campaign-thank-you" aria-label="Campaign complete" hidden>
-                <img src="endgamelogo.png" alt="CY-FUR Labs Inc.">
-                <p>Thanks for playing</p>
+                <video id="campaign-credit-video" playsinline preload="auto" hidden aria-label="RelicGrid campaign credits"></video>
+                <p id="campaign-thank-you-message" hidden>Thanks for playing</p>
+                <button id="campaign-home-button" class="button button-primary campaign-home-button" type="button" hidden>HOME →</button>
             </section>
         </section>
 
@@ -69,7 +70,7 @@
                     <button id="leaderboard-open" class="button button-quiet" type="button">LEADERBOARD</button>
                     <button id="profile-open" class="profile-chip" type="button" aria-label="Open player profile">
                         <span class="profile-avatar" id="profile-initial">?</span>
-                        <span><b id="profile-name">Pilot</b><small id="profile-progress">0 / 99 cleared</small></span>
+                        <span><b id="profile-name">Pilot</b>                        <small id="profile-progress">0 / 99 progressed</small></span>
                         <span class="profile-chevron">⌄</span>
                     </button>
                 </div>
@@ -84,9 +85,9 @@
                     <section class="hero-telemetry-panel" aria-label="Campaign telemetry">
                         <header><span>CAMPAIGN TELEMETRY</span><i aria-hidden="true"></i></header>
                         <div class="hero-telemetry-row">
-                            <span>SECTORS CLEARED</span>
+                            <span>CAMPAIGN PROGRESS</span>
                             <strong id="hero-telemetry-cleared">0 / 99</strong>
-                            <i class="hero-telemetry-track" role="progressbar" aria-label="Campaign levels cleared" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><b id="hero-telemetry-cleared-fill"></b></i>
+                            <i class="hero-telemetry-track" role="progressbar" aria-label="Campaign progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><b id="hero-telemetry-cleared-fill"></b></i>
                         </div>
                         <div class="hero-telemetry-row hero-telemetry-row-amber">
                             <span>NEXT SECTOR</span>
@@ -119,7 +120,7 @@
                     </section>
                     <section class="hero-progress-rail" aria-hidden="true">
                         <div class="hero-progress-meter">
-                            <span>SECTORS CLEARED</span>
+                            <span>LEVELS PROGRESSED</span>
                             <strong id="hero-cleared-count">0 / 99</strong>
                             <i class="hero-meter-track"><b id="hero-cleared-fill"></b></i>
                         </div>
@@ -129,14 +130,14 @@
                             <i class="hero-meter-track"><b id="hero-unlocked-fill"></b></i>
                         </div>
                     </section>
-                    <section class="hero-tactical-map" aria-label="Campaign completion map">
+                    <section class="hero-tactical-map" aria-label="Campaign progress map">
                         <header><span>CAMPAIGN MAP</span><strong>99 SECTORS</strong></header>
                         <div id="campaign-map-grid" class="campaign-map-grid" role="img" aria-label="Campaign sectors"></div>
-                        <footer><span><i></i> CLEARED</span><span><i></i> CURRENT</span><span><i></i> AVAILABLE</span></footer>
+                        <footer><span><i></i> CLEARED</span><span><i></i> SKIPPED</span><span><i></i> CURRENT</span><span><i></i> AVAILABLE</span></footer>
                     </section>
                     <div class="hero-signal-readout">
                         <span><i></i> SECTOR STATUS</span>
-                        <b id="hero-campaign-status">0 / 99 CLEARED</b>
+                        <b id="hero-campaign-status">0 / 99 PROGRESSED</b>
                         <small>UP NEXT <strong id="hero-current-sector">LEVEL 01</strong></small>
                         <small id="hero-sector-access">ALL SECTORS AVAILABLE</small>
                         <button id="home-levels-toggle" class="hero-sector-button" type="button" aria-controls="level-section" aria-expanded="false" aria-label="Open level map" title="Open level map">
@@ -163,7 +164,7 @@
                             <p id="level-section-description">Choose a sector to enter using verified wallet credits. Each level requires a successful paid entry.</p>
                         </div>
                         <div class="campaign-progress-card">
-                            <span>SECTORS CLEARED</span>
+                            <span>CAMPAIGN PROGRESS</span>
                             <b id="campaign-progress">00 / 99</b>
                             <i><span id="campaign-progress-fill"></span></i>
                         </div>

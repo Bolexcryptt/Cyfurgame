@@ -54,6 +54,19 @@ export async function resolveAuthoritativeCurrentLevel(apiCurrentLevel, readPlay
     return profileCurrentLevel;
 }
 
+export function getCampaignProgressCount(completedLevels, currentLevel) {
+    if (!Array.isArray(completedLevels) ||
+        !Number.isInteger(currentLevel) || currentLevel < 1 || currentLevel > 99) {
+        throw new TypeError("Valid completed levels and current campaign level are required.");
+    }
+
+    const completed = new Set(completedLevels.filter((level) =>
+        Number.isInteger(level) && level >= 1 && level <= 99
+    ));
+    const completedCount = Math.max(completed.size, completed.has(99) ? 99 : 0);
+    return Math.max(completedCount, currentLevel - 1);
+}
+
 export async function restoreOrCreatePlayerSession(auth) {
     if (!auth || (typeof auth !== "object" && typeof auth !== "function") ||
         typeof auth.getSession !== "function") {

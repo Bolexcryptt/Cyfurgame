@@ -6,6 +6,7 @@ import {
     requestAccountEmailLink,
     requestExistingAccountRecovery,
     getPlayerSession,
+    getCampaignProgressCount,
     hydratePlayerFromAuthenticatedAccount,
     isAccountEmailConfirmationCallback,
     resolveAuthoritativeCurrentLevel,
@@ -35,6 +36,14 @@ test("campaign progress uses the API level or falls back to the authenticated pl
         resolveAuthoritativeCurrentLevel(undefined, async () => ({ current_level: 0 })),
         /Saved campaign progress is unavailable/
     );
+});
+
+test("campaign progress counts reached levels without treating skips as completions", () => {
+    const completedLevels = Array.from({ length: 79 }, (_, index) => index + 1);
+    assert.equal(getCampaignProgressCount(completedLevels, 85), 84);
+    assert.equal(getCampaignProgressCount(completedLevels, 80), 79);
+    assert.equal(getCampaignProgressCount([], 1), 0);
+    assert.equal(getCampaignProgressCount([...completedLevels, 99], 85), 99);
 });
 
 function resetEnvironment() {

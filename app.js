@@ -24,6 +24,7 @@ import {
     hydratePlayerFromAuthenticatedAccount,
     isAccountEmailConfirmationCallback,
     getPlayerSession,
+    getCampaignProgressCount,
     resolveAuthoritativeCurrentLevel,
     restoreOrCreatePlayerSession,
     verifyAccountEmailLink,
@@ -647,38 +648,41 @@ function renderProfile() {
     const completed = completedLevels.length;
     const name = player.name || "Pilot";
     const continueLevel = progressReady ? getContinueLevel() : null;
+    const progressed = progressReady
+        ? getCampaignProgressCount(completedLevels, continueLevel)
+        : 0;
     const progressLabel = progressReady
-        ? `${completed} / 99`
+        ? `${progressed} / 99`
         : backendStatus.startsWith("Connecting")
             ? "SYNCING PROGRESS…"
             : "PROGRESS UNAVAILABLE";
     document.getElementById("profile-name").textContent = name;
     document.getElementById("profile-initial").textContent = name.slice(0, 1).toUpperCase();
     document.getElementById("profile-progress").textContent = progressReady
-        ? `${progressLabel} cleared`
+        ? `${progressLabel} progressed`
         : progressLabel;
     document.getElementById("hero-campaign-status").textContent = progressReady
-        ? `${progressLabel} CLEARED`
+        ? `${progressLabel} PROGRESSED`
         : progressLabel;
     document.getElementById("hero-cleared-count").textContent = progressLabel;
     document.getElementById("hero-unlocked-count").textContent = progressReady
         ? `${String(continueLevel).padStart(2, "0")} / 99`
         : "— / 99";
-    const clearedProgress = Math.min(100, completed / 99 * 100);
+    const campaignProgress = Math.min(100, progressed / 99 * 100);
     const nextProgress = progressReady ? Math.min(100, continueLevel / 99 * 100) : 0;
-    document.getElementById("hero-cleared-fill").style.width = `${clearedProgress}%`;
+    document.getElementById("hero-cleared-fill").style.width = `${campaignProgress}%`;
     document.getElementById("hero-unlocked-fill").style.width = `${nextProgress}%`;
     document.getElementById("hero-telemetry-cleared").textContent = progressReady
-        ? `${completed} / 99`
+        ? `${progressed} / 99`
         : progressLabel;
     document.getElementById("hero-telemetry-next").textContent = progressReady
         ? `${String(continueLevel).padStart(2, "0")} / 99`
         : "— / 99";
     const clearedTelemetry = document.getElementById("hero-telemetry-cleared-fill");
     const nextTelemetry = document.getElementById("hero-telemetry-next-fill");
-    clearedTelemetry.style.width = `${clearedProgress}%`;
+    clearedTelemetry.style.width = `${campaignProgress}%`;
     nextTelemetry.style.width = `${nextProgress}%`;
-    clearedTelemetry.parentElement.setAttribute("aria-valuenow", String(Math.round(clearedProgress)));
+    clearedTelemetry.parentElement.setAttribute("aria-valuenow", String(Math.round(campaignProgress)));
     nextTelemetry.parentElement.setAttribute("aria-valuenow", String(Math.round(nextProgress)));
     document.getElementById("hero-current-sector").textContent = progressReady
         ? `LEVEL ${String(continueLevel).padStart(2, "0")}`
@@ -695,7 +699,7 @@ function renderProfile() {
     for (const level of levels) {
         const cell = document.createElement("span");
         const completedLevel = completedLevels.includes(level.number);
-        const skippedLevel = progressReady && player.skippedLevels.includes(level.number);
+        const skippedLevel = progressReady && level.number < continueLevel && !completedLevel;
         const currentLevel = progressReady && level.number === continueLevel && !completedLevel;
         cell.className = `campaign-map-cell${completedLevel ? " is-cleared" : ""}${currentLevel ? " is-current" : ""}`;
         if (skippedLevel && !completedLevel) cell.classList.add("is-skipped");
@@ -707,10 +711,10 @@ function renderProfile() {
     }
     campaignMap.replaceChildren(campaignMapCells);
     document.getElementById("campaign-progress").textContent =
-        `${String(completed).padStart(2, "0")} / 99`;
+        `${String(progressed).padStart(2, "0")} / 99`;
     const progressFill = document.getElementById("campaign-progress-fill");
     if (progressFill) {
-        progressFill.style.width = `${Math.min(100, completed / 99 * 100)}%`;
+        progressFill.style.width = `${campaignProgress}%`;
     }
     const nextLevel = progressReady ? levels[continueLevel - 1] : null;
     const nextLevelLabel = document.getElementById("hero-next-level");
@@ -726,7 +730,7 @@ function renderProfile() {
     profileDetails.replaceChildren(
         statCard("CALLSIGN", name),
         statCard("PLAYER ID", player.playerId || "Available after account setup"),
-        statCard("LEVELS COMPLETED", progressLabel),
+        statCard("LEVELS COMPLETED", progressReady ? `${completed} / 99` : progressLabel),
         statCard("NEXT STORY LEVEL", progressReady
             ? `LEVEL ${String(player.unlockedLevel).padStart(2, "0")}`
             : progressLabel),
@@ -1054,7 +1058,7 @@ function renderLevels() {
     const continueLevel = progressReady ? getContinueLevel() : null;
     for (const level of levels) {
         const completed = progressReady && player.completedLevels.includes(level.number);
-        const skipped = progressReady && player.skippedLevels.includes(level.number);
+        const skipped = progressReady && level.number < continueLevel && !completed;
         const current = progressReady && level.number === continueLevel && !completed;
         const item = document.createElement("li");
         const button = document.createElement("button");
@@ -2527,26 +2531,90 @@ async function enterGameMenu() {
 }
 
 function playCampaignEnding() {
-    let finished = false;
+    let sequenceCancelled = false;
+    let endingTransitionStarted = false;
+    let creditsStarted = false;
+    let creditsFinished = false;
+    let endingFinishedAt = 0;
     const thankYou = document.getElementById("campaign-thank-you");
-    const finish = async () => {
-        if (finished) return;
-        await stopVideoPlayback(transitionVideo, false);
-        finished = true;
-        delete videoScreen.dataset.campaignEnding;
-        transitionVideo.hidden = true;
-        videoSkip.hidden = true;
-        videoSkip.onclick = null;
-        videoAction.hidden = true;
-        videoAction.onclick = null;
-        videoScreen.dataset.fullscreenVideo = "true";
+    const creditVideo = document.getElementById("campaign-credit-video");
+    const thankYouMessage = document.getElementById("campaign-thank-you-message");
+    const homeButton = document.getElementById("campaign-home-button");
+    const delay = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
+
+    const showThanks = async () => {
+        await delay(Math.max(0, 10_000 - (Date.now() - endingFinishedAt)));
+        if (sequenceCancelled) return;
         videoScreen.dataset.campaignThankYou = "true";
         thankYou.hidden = false;
-        if (!await lockCampaignThankYouLandscape()) {
+        creditVideo.hidden = true;
+        thankYouMessage.hidden = false;
+        homeButton.hidden = false;
+        if (!await lockCampaignThankYouLandscape() && !sequenceCancelled) {
             videoScreen.dataset.orientationBlocked = "true";
             rotateDevicePrompt.hidden = false;
         }
     };
+
+    const finishCredits = async () => {
+        if (sequenceCancelled || creditsFinished) return;
+        creditsFinished = true;
+        creditVideo.onended = null;
+        await stopVideoPlayback(creditVideo, false);
+        creditVideo.hidden = true;
+        videoSkip.hidden = true;
+        videoSkip.onclick = null;
+        delete videoScreen.dataset.campaignCredits;
+        await showThanks();
+    };
+
+    const startCredits = async () => {
+        if (sequenceCancelled || creditsStarted) return;
+        creditsStarted = true;
+        await delay(Math.max(0, 5_000 - (Date.now() - endingFinishedAt)));
+        if (sequenceCancelled) return;
+
+        videoScreen.dataset.campaignCredits = "true";
+        videoScreen.dataset.campaignThankYou = "true";
+        thankYou.hidden = false;
+        thankYouMessage.hidden = true;
+        homeButton.hidden = true;
+        creditVideo.pause();
+        creditVideo.src = "creditvideo.mp4";
+        creditVideo.muted = false;
+        creditVideo.hidden = false;
+        creditVideo.load();
+        videoSkip.textContent = "SKIP CREDITS →";
+        videoSkip.hidden = false;
+        videoSkip.onclick = () => void finishCredits();
+        creditVideo.onended = () => void finishCredits();
+        await playVideoInOrientation(creditVideo, (error) => {
+            console.error("Campaign credits video could not play.", error);
+            void finishCredits();
+        }, undefined, "landscape");
+    };
+
+    const finishEndingVideo = async () => {
+        if (sequenceCancelled || endingTransitionStarted) return;
+        endingTransitionStarted = true;
+        endingFinishedAt = Date.now();
+        videoSkip.hidden = true;
+        videoSkip.onclick = null;
+        videoAction.hidden = true;
+        videoAction.onclick = null;
+        transitionVideo.onended = null;
+        videoScreen.dataset.fullscreenVideo = "true";
+        videoScreen.dataset.campaignEnding = "true";
+        videoScreen.dataset.campaignFading = "true";
+        await stopVideoPlayback(transitionVideo, false);
+        await delay(700);
+        if (sequenceCancelled) return;
+        transitionVideo.hidden = true;
+        delete videoScreen.dataset.campaignFading;
+        delete videoScreen.dataset.campaignEnding;
+        await startCredits();
+    };
+
     const offerContinue = (message) => {
         void stopVideoPlayback(transitionVideo);
         delete videoScreen.dataset.fullscreenVideo;
@@ -2555,14 +2623,21 @@ function playCampaignEnding() {
         videoCaption.textContent = message;
         videoAction.textContent = "CONTINUE →";
         videoAction.hidden = false;
-        videoAction.onclick = () => void finish();
+        videoAction.onclick = () => void finishEndingVideo();
     };
 
     showScreen("video-screen");
     videoScreen.dataset.fullscreenVideo = "true";
     videoScreen.dataset.campaignEnding = "true";
     delete videoScreen.dataset.campaignThankYou;
+    delete videoScreen.dataset.campaignCredits;
+    delete videoScreen.dataset.campaignFading;
     thankYou.hidden = true;
+    creditVideo.hidden = true;
+    creditVideo.onended = null;
+    thankYouMessage.hidden = true;
+    homeButton.hidden = true;
+    homeButton.onclick = null;
     introVideo.pause();
     introVideo.hidden = true;
     transitionVideo.pause();
@@ -2579,8 +2654,8 @@ function playCampaignEnding() {
     videoCaption.textContent = "Campaign complete. Final transmission incoming…";
     videoSkip.textContent = "SKIP ENDING →";
     videoSkip.hidden = false;
-    videoSkip.onclick = () => void finish();
-    transitionVideo.onended = () => void finish();
+    videoSkip.onclick = () => void finishEndingVideo();
+    transitionVideo.onended = () => void finishEndingVideo();
     void playVideoInOrientation(transitionVideo, (error) => {
         console.warn("Campaign ending video could not autoplay.", error);
         delete videoScreen.dataset.fullscreenVideo;
@@ -2599,10 +2674,27 @@ function playCampaignEnding() {
                 delete videoScreen.dataset.fullscreenVideo;
                 delete videoScreen.dataset.campaignEnding;
                 transitionVideo.hidden = true;
-                offerContinue("The campaign ending video could not be played.");
+                offerContinue("The campaign ending video could not be played. Continue to the credits.");
             }, undefined, "landscape");
         };
     }, undefined, "landscape");
+
+    homeButton.onclick = async () => {
+        if (sequenceCancelled) return;
+        sequenceCancelled = true;
+        videoSkip.hidden = true;
+        videoSkip.onclick = null;
+        creditVideo.onended = null;
+        await stopVideoPlayback(creditVideo);
+        creditVideo.hidden = true;
+        thankYou.hidden = true;
+        delete videoScreen.dataset.campaignEnding;
+        delete videoScreen.dataset.campaignCredits;
+        delete videoScreen.dataset.campaignFading;
+        delete videoScreen.dataset.campaignThankYou;
+        delete videoScreen.dataset.fullscreenVideo;
+        showNameOrHome();
+    };
 }
 
 async function playLevelTransition(nextLevel, milestone) {

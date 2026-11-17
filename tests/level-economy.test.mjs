@@ -1130,24 +1130,35 @@ test("startup plays company and player introductions, then game video, then open
     assert.match(scene, /new THREE\.PointLight\(\s*crystalColors\[definition\.inputColor\]/);
 });
 
-test("campaign ending finishes on the landscape company-logo thank-you screen", () => {
+test("campaign ending plays landscape credits before the thank-you home screen", () => {
     const app = readFileSync(new URL("../app.js", import.meta.url), "utf8");
     const html = readFileSync(new URL("../index.html", import.meta.url), "utf8");
     const styles = readFileSync(new URL("../style.css", import.meta.url), "utf8");
+    const buildConfig = readFileSync(new URL("../vite.config.mjs", import.meta.url), "utf8");
     const ending = app.slice(
         app.indexOf("function playCampaignEnding"),
         app.indexOf("\nasync function playLevelTransition")
     );
 
-    assert.equal(existsSync(new URL("../endgamelogo.png", import.meta.url)), true);
+    assert.equal(existsSync(new URL("../creditvideo.mp4", import.meta.url)), true);
     assert.match(html, /id="video-screen"[\s\S]*id="campaign-thank-you"[\s\S]*<\/section>\s*<section id="name-screen"/);
-    assert.match(html, /id="campaign-thank-you"[\s\S]*?<img src="endgamelogo\.png" alt="CY-FUR Labs Inc\.">[\s\S]*?<p>Thanks for playing<\/p>/);
+    assert.match(html, /id="campaign-thank-you"[\s\S]*?<video id="campaign-credit-video"[\s\S]*?<p id="campaign-thank-you-message" hidden>Thanks for playing<\/p>[\s\S]*?<button id="campaign-home-button"[^>]*hidden>HOME/);
+    assert.doesNotMatch(html, /<img src="endgamelogo\.png" alt="CY-FUR Labs Inc\.">/);
+    assert.match(buildConfig, /"creditvideo\.mp4"/);
     assert.match(ending, /await stopVideoPlayback\(transitionVideo, false\)/);
+    assert.match(ending, /endingFinishedAt = Date\.now\(\)/);
+    assert.match(ending, /5_000 - \(Date\.now\(\) - endingFinishedAt\)/);
+    assert.match(ending, /10_000 - \(Date\.now\(\) - endingFinishedAt\)/);
+    assert.match(ending, /creditVideo\.src = "creditvideo\.mp4"/);
+    assert.match(ending, /videoSkip\.textContent = "SKIP CREDITS/);
+    assert.match(ending, /videoScreen\.dataset\.fullscreenVideo = "true";\s*videoScreen\.dataset\.campaignEnding = "true";\s*videoScreen\.dataset\.campaignFading = "true"/);
     assert.match(ending, /videoScreen\.dataset\.campaignThankYou = "true"/);
-    assert.match(ending, /thankYou\.hidden = false/);
+    assert.match(ending, /homeButton\.onclick = async \(\) => \{[\s\S]*?showNameOrHome\(\)/);
     assert.match(app, /async function lockCampaignThankYouLandscape\(\)[\s\S]*?ScreenOrientation\.lock\(\{ orientation: "landscape" \}\)/);
-    assert.doesNotMatch(ending.slice(ending.indexOf("const finish"), ending.indexOf("const offerContinue")), /showNameOrHome/);
+    assert.match(ending, /playVideoInOrientation\(creditVideo,[\s\S]*?undefined, "landscape"\)/);
     assert.match(styles, /\.video-screen\[data-campaign-thank-you="true"\] \.campaign-thank-you[\s\S]*?background: #000/);
+    assert.match(styles, /\.video-screen\[data-campaign-credits="true"\] \.video-skip-button \{ z-index: 5; \}/);
+    assert.match(styles, /\.campaign-credit-video[\s\S]*?object-fit: contain/);
     assert.match(styles, /\.campaign-thank-you p[\s\S]*?color: #fff/);
 });
 
@@ -1571,11 +1582,13 @@ test("RelicGrid branding is used in the game and hidden scenes stop rendering", 
         app.indexOf("\nasync function playLevelTransition")
     );
     assert.match(endingFlow, /await stopVideoPlayback\(transitionVideo, false\)/);
-    assert.match(endingFlow, /videoSkip\.onclick = \(\) => void finish\(\)/);
-    assert.match(endingFlow, /transitionVideo\.onended = \(\) => void finish\(\)/);
+    assert.match(endingFlow, /videoSkip\.onclick = \(\) => void finishEndingVideo\(\)/);
+    assert.match(endingFlow, /transitionVideo\.onended = \(\) => void finishEndingVideo\(\)/);
     assert.match(endingFlow, /videoScreen\.dataset\.fullscreenVideo = "true"/);
     assert.match(endingFlow, /playVideoInOrientation\(transitionVideo,[\s\S]*?undefined, "landscape"\)/);
     assert.match(endingFlow, /videoScreen\.dataset\.campaignEnding = "true"/);
+    assert.match(endingFlow, /await startCredits\(\)/);
+    assert.match(endingFlow, /homeButton\.onclick = async \(\) => \{[\s\S]*?showNameOrHome\(\)/);
     assert.match(app, /videoOrientationQuery = window\.matchMedia\("\(max-width: 900px\) and \(orientation: portrait\)"\)/);
     assert.match(app, /async function playVideoInOrientation\(video, onError, onPlaybackStarted, orientation = "portrait"\)/);
     assert.doesNotMatch(html, /title-screen|title-continue-button|PLAY NOW/);

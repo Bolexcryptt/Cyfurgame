@@ -5,6 +5,7 @@ import { defineConfig } from "vite";
 const packagedAssets = [
     "assets",
     "companyintro.mp4",
+    "creditvideo.mp4",
     "gamevideo.mp4",
     "intro.mp4",
     "levels1.mp4",
