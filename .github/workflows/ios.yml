@@ -1,0 +1,174 @@
+name: iOS build
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      testflight_release:
+        description: Sign, export, and upload this build to TestFlight
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+jobs:
+  unsigned-archive:
+    name: Build unsigned iOS archive
+    runs-on: macos-15
+    timeout-minutes: 45
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run project tests
+        run: npm test
+
+      - name: Build web app and sync Capacitor iOS
+        run: |
+          npm run build
+          npx cap sync ios
+          pod install --project-directory=ios/App
+
+      - name: Create unsigned archive
+        run: |
+          xcodebuild \
+            -workspace ios/App/App.xcworkspace \
+            -scheme App \
+            -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -archivePath "$RUNNER_TEMP/RelicGrid-unsigned.xcarchive" \
+            CODE_SIGNING_ALLOWED=NO \
+            archive
+
+      - name: Upload unsigned archive
+        uses: actions/upload-artifact@v4
+        with:
+          name: relicgrid-ios-unsigned-xcarchive
+          path: ${{ runner.temp }}/RelicGrid-unsigned.xcarchive
+          if-no-files-found: error
+          retention-days: 14
+
+  testflight:
+    name: Sign and upload to TestFlight
+    if: github.event_name == 'workflow_dispatch' && inputs.testflight_release
+    needs: unsigned-archive
+    runs-on: macos-15
+    timeout-minutes: 60
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run project tests
+        run: npm test
+
+      - name: Build web app and sync Capacitor iOS
+        run: |
+          npm run build
+          npx cap sync ios
+          pod install --project-directory=ios/App
+
+      - name: Import Apple distribution certificate
+        uses: apple-actions/import-codesign-certs@v3
+        with:
+          p12-file-base64: ${{ secrets.IOS_DISTRIBUTION_CERTIFICATE_P12_BASE64 }}
+          p12-password: ${{ secrets.IOS_DISTRIBUTION_CERTIFICATE_PASSWORD }}
+
+      - name: Install App Store provisioning profile
+        env:
+          IOS_PROVISIONING_PROFILE_BASE64: ${{ secrets.IOS_PROVISIONING_PROFILE_BASE64 }}
+        run: |
+          set -euo pipefail
+          profile_dir="$HOME/Library/MobileDevice/Provisioning Profiles"
+          mkdir -p "$profile_dir"
+          profile_path="$RUNNER_TEMP/relicgrid-appstore.mobileprovision"
+          printf '%s' "$IOS_PROVISIONING_PROFILE_BASE64" | base64 -D > "$profile_path"
+          security cms -D -i "$profile_path" > "$RUNNER_TEMP/relicgrid-profile.plist"
+          profile_uuid=$(/usr/libexec/PlistBuddy -c 'Print UUID' "$RUNNER_TEMP/relicgrid-profile.plist")
+          profile_name=$(/usr/libexec/PlistBuddy -c 'Print Name' "$RUNNER_TEMP/relicgrid-profile.plist")
+          cp "$profile_path" "$profile_dir/$profile_uuid.mobileprovision"
+          {
+            echo "IOS_PROFILE_UUID=$profile_uuid"
+            echo "IOS_PROFILE_NAME=$profile_name"
+          } >> "$GITHUB_ENV"
+
+      - name: Create App Store Connect API key file
+        env:
+          ASC_API_KEY_ID: ${{ secrets.ASC_API_KEY_ID }}
+          ASC_API_ISSUER_ID: ${{ secrets.ASC_API_ISSUER_ID }}
+          ASC_API_PRIVATE_KEY: ${{ secrets.ASC_API_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          python3 -c 'import json, os; json.dump({"key_id": os.environ["ASC_API_KEY_ID"], "issuer_id": os.environ["ASC_API_ISSUER_ID"], "key": os.environ["ASC_API_PRIVATE_KEY"], "in_house": False}, open(os.path.join(os.environ["RUNNER_TEMP"], "app-store-connect-key.json"), "w"))'
+          chmod 600 "$RUNNER_TEMP/app-store-connect-key.json"
+
+      - name: Archive signed iOS app
+        env:
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          set -euo pipefail
+          xcodebuild \
+            -workspace ios/App/App.xcworkspace \
+            -scheme App \
+            -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -archivePath "$RUNNER_TEMP/RelicGrid.xcarchive" \
+            CODE_SIGN_STYLE=Manual \
+            CODE_SIGN_IDENTITY="Apple Distribution" \
+            DEVELOPMENT_TEAM="$APPLE_TEAM_ID" \
+            PROVISIONING_PROFILE_SPECIFIER="$IOS_PROFILE_NAME" \
+            archive
+
+      - name: Export App Store IPA
+        env:
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          set -euo pipefail
+          python3 -c 'import os, plistlib; plistlib.dump({"method": "app-store-connect", "signingStyle": "manual", "teamID": os.environ["APPLE_TEAM_ID"], "provisioningProfiles": {"com.relicgrid.cyfurgame": os.environ["IOS_PROFILE_NAME"]}}, open(os.path.join(os.environ["RUNNER_TEMP"], "ExportOptions.plist"), "wb"))'
+          xcodebuild \
+            -exportArchive \
+            -archivePath "$RUNNER_TEMP/RelicGrid.xcarchive" \
+            -exportPath "$RUNNER_TEMP/export" \
+            -exportOptionsPlist "$RUNNER_TEMP/ExportOptions.plist"
+
+      - name: Set up Ruby for Fastlane
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.3"
+
+      - name: Upload build to TestFlight
+        run: |
+          set -euo pipefail
+          gem install fastlane --no-document
+          fastlane pilot upload \
+            --ipa "$RUNNER_TEMP/export/RelicGrid.ipa" \
+            --api_key_path "$RUNNER_TEMP/app-store-connect-key.json" \
+            --skip_waiting_for_build_processing true
+
+      - name: Remove signing files
+        if: always()
+        run: |
+          rm -f "$RUNNER_TEMP/relicgrid-appstore.mobileprovision"
+          rm -f "$RUNNER_TEMP/relicgrid-profile.plist"
+          rm -f "$RUNNER_TEMP/app-store-connect-key.json"
