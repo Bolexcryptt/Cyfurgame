@@ -328,35 +328,35 @@ test("withdrawal status reports the authenticated player's balance and eligibili
         highestServerLevelReached: 32,
         met: true
     });
+});
 
-    test("withdrawal status falls back to the authenticated player's latest ledger balance", async () => {
-        resetScenario({
-            balance: 0n,
-            accountMissing: true,
-            ledgerBalanceOverride: 2800n
-        });
-        installFakeFetch();
-
-        const response = await getWithdrawalStatus();
-
-        assert.equal(response.statusCode, 200);
-        assert.equal(response.payload.balanceCredits, "2800");
-        assert.equal(response.payload.availableCredits, "2800");
+test("withdrawal status falls back to the authenticated player's latest ledger balance", async () => {
+    resetScenario({
+        balance: 0n,
+        accountMissing: true,
+        ledgerBalanceOverride: 2800n
     });
+    installFakeFetch();
 
-    test("an existing zero account balance remains authoritative over an older ledger entry", async () => {
-        resetScenario({
-            balance: 0n,
-            ledgerBalanceOverride: 2800n
-        });
-        installFakeFetch();
+    const response = await getWithdrawalStatus();
 
-        const response = await getWithdrawalStatus();
+    assert.equal(response.statusCode, 200);
+    assert.equal(response.payload.balanceCredits, "2800");
+    assert.equal(response.payload.availableCredits, "2800");
+});
 
-        assert.equal(response.statusCode, 200);
-        assert.equal(response.payload.balanceCredits, "0");
-        assert.equal(response.payload.availableCredits, "0");
+test("an existing zero account balance remains authoritative over an older ledger entry", async () => {
+    resetScenario({
+        balance: 0n,
+        ledgerBalanceOverride: 2800n
     });
+    installFakeFetch();
+
+    const response = await getWithdrawalStatus();
+
+    assert.equal(response.statusCode, 200);
+    assert.equal(response.payload.balanceCredits, "0");
+    assert.equal(response.payload.availableCredits, "0");
 });
 
 test("withdrawal status unlocks when a server-recorded paid entry reaches level 20", async () => {
