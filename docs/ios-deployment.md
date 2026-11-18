@@ -8,6 +8,18 @@ The `iOS build` GitHub Actions workflow runs on `macos-15` when code is pushed t
 
 An unsigned archive is for build verification only. It cannot be installed on an iPhone or uploaded to TestFlight without Apple signing.
 
+## Install on an iPhone with Sideloadly
+
+The same macOS workflow also packages the unsigned archive as an arm64 `.ipa` and uploads the `relicgrid-ios-unsigned-ipa-sideloadly` artifact. The workflow validates the `Payload/App.app` structure, the existing bundle identifier, launch-screen and asset catalog resources, the arm64 executable, and that the executable is not FairPlay-encrypted.
+
+This IPA is intentionally unsigned. Sideloadly must sign it locally with your Apple Account before installing it; a free Apple Account normally creates a short-lived personal provisioning profile (typically seven days). Re-sign or reinstall it when that profile expires. The project keeps `com.relicgrid.cyfurgame`; no bundle-ID change is made. If Apple reports that identifier is unavailable for your account, stop before changing it, because a different ID creates a separate app identity and may affect app callbacks.
+
+1. Download `relicgrid-ios-unsigned-ipa-sideloadly` from the successful **iOS build** GitHub Actions run and extract the artifact ZIP to find `RelicGrid-unsigned.ipa`.
+2. Connect the iPhone, unlock it, and trust the Dell when prompted.
+3. Open Sideloadly, select the IPA, select the connected iPhone, enter your Apple Account in Sideloadly on the PC, and start sideloading. Never send the Apple password to anyone.
+4. On the iPhone, enable **Settings → Privacy & Security → Developer Mode** if prompted and restart. Then trust the developer under **Settings → General → VPN & Device Management** if iOS asks.
+5. Launch RelicGrid. Free-account signing is for personal testing and is not TestFlight/App Store distribution.
+
 ## Apple setup for TestFlight
 
 You need:

@@ -53,6 +53,56 @@ jobs:
             CODE_SIGNING_ALLOWED=NO \
             archive
 
+      - name: Package and validate unsigned IPA for Sideloadly
+        run: |
+          set -euo pipefail
+          app="$RUNNER_TEMP/RelicGrid-unsigned.xcarchive/Products/Applications/App.app"
+          payload="$RUNNER_TEMP/RelicGrid-ipa/Payload"
+          ipa="$RUNNER_TEMP/RelicGrid-unsigned.ipa"
+          test -d "$app"
+
+          bundle_id=$(/usr/libexec/PlistBuddy -c 'Print CFBundleIdentifier' "$app/Info.plist")
+          test "$bundle_id" = "com.relicgrid.cyfurgame"
+          executable_name=$(/usr/libexec/PlistBuddy -c 'Print CFBundleExecutable' "$app/Info.plist")
+          executable="$app/$executable_name"
+          test -f "$executable"
+          test -f "$app/Assets.car"
+          test -d "$app/Base.lproj/LaunchScreen.storyboardc"
+
+          architectures=$(lipo -archs "$executable")
+          case " $architectures " in
+            *" arm64 "*) ;;
+            *) echo "iPhone arm64 architecture is missing: $architectures" >&2; exit 1 ;;
+          esac
+
+          cryptid=$(otool -l "$executable" | awk '/LC_ENCRYPTION_INFO/ { in_encryption = 1 } in_encryption && /cryptid/ { print $2; in_encryption = 0 }')
+          if [ -n "$cryptid" ] && [ "$cryptid" != "0" ]; then
+            echo "Expected an unencrypted executable, found cryptid=$cryptid" >&2
+            exit 1
+          fi
+
+          if codesign -dv "$app" >/dev/null 2>&1; then
+            echo "Expected an unsigned app for Sideloadly to sign." >&2
+            exit 1
+          fi
+
+          mkdir -p "$payload"
+          ditto "$app" "$payload/App.app"
+          (cd "$RUNNER_TEMP/RelicGrid-ipa" && /usr/bin/zip -qry "$ipa" Payload)
+          /usr/bin/unzip -tq "$ipa"
+          /usr/libexec/PlistBuddy -c 'Print CFBundleIdentifier' "$payload/App.app/Info.plist"
+          echo "Architectures: $architectures"
+          echo "Encryption cryptid: ${cryptid:-not present (unencrypted)}"
+          echo "IPA ready for Sideloadly re-signing: $ipa"
+
+      - name: Upload unsigned IPA for Sideloadly
+        uses: actions/upload-artifact@v4
+        with:
+          name: relicgrid-ios-unsigned-ipa-sideloadly
+          path: ${{ runner.temp }}/RelicGrid-unsigned.ipa
+          if-no-files-found: error
+          retention-days: 14
+
       - name: Upload unsigned archive
         uses: actions/upload-artifact@v4
         with:

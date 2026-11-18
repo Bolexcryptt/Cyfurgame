@@ -91,6 +91,13 @@ test("iOS workflow defaults to unsigned archives and gates TestFlight signing be
 
     assert.match(workflow, /runs-on: macos-15/);
     assert.match(workflow, /CODE_SIGNING_ALLOWED=NO/);
+    assert.match(workflow, /relicgrid-ios-unsigned-ipa-sideloadly/);
+    assert.match(workflow, /ditto "\$app" "\$payload\/App\.app"/);
+    assert.match(workflow, /lipo -archs "\$executable"/);
+    assert.match(workflow, /LC_ENCRYPTION_INFO/);
+    assert.match(workflow, /codesign -dv "\$app"/);
+    assert.match(workflow, /Print CFBundleIdentifier/);
+    assert.match(workflow, /Base\.lproj\/LaunchScreen\.storyboardc/);
     assert.match(workflow, /github\.event_name == 'workflow_dispatch' && inputs\.testflight_release/);
     assert.match(workflow, /apple-actions\/import-codesign-certs@v3/);
     assert.match(workflow, /fastlane pilot upload/);
