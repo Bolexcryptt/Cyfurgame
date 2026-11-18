@@ -1099,6 +1099,7 @@ test("startup plays company and player introductions, then game video, then open
 
     const html = readFileSync(new URL("../index.html", import.meta.url), "utf8");
     const styles = readFileSync(new URL("../style.css", import.meta.url), "utf8");
+    assert.match(html, /<section id="video-screen"[^>]*hidden>/);
     assert.match(styles, /\.video-screen\[data-opening-sequence="true"\]\s*\{[^}]*height: 100dvh/);
     assert.match(styles, /\.video-screen\[data-opening-sequence="true"\]:not\(\[data-company-intro="true"\]\) #intro-video\s*\{[^}]*object-fit: contain/);
     assert.match(styles, /\.video-screen\[data-company-intro="true"\]\s*\{[^}]*background: #000/);
