@@ -1717,11 +1717,15 @@ test("deposit UI shows only the treasury wallet and accepts a transaction ID wit
 test("Android RelicGrid app supports landscape videos and restores portrait", () => {
     const config = JSON.parse(readFileSync(new URL("../capacitor.config.json", import.meta.url), "utf8"));
     const manifest = readFileSync(new URL("../android/app/src/main/AndroidManifest.xml", import.meta.url), "utf8");
+    const androidGradle = readFileSync(new URL("../android/app/build.gradle", import.meta.url), "utf8");
+    const androidVersions = readFileSync(new URL("../android/variables.gradle", import.meta.url), "utf8");
     const strings = readFileSync(new URL("../android/app/src/main/res/values/strings.xml", import.meta.url), "utf8");
     const app = readFileSync(new URL("../app.js", import.meta.url), "utf8");
     assert.equal(config.appId, "com.relicgrid.cyfurgame");
     assert.equal(config.appName, "RelicGrid");
     assert.equal(config.plugins.ScreenOrientation.orientation, "portrait");
+    assert.match(androidVersions, /minSdkVersion\s*=\s*24\b/);
+    assert.match(androidGradle, /versionCode\s+43\b/);
     assert.match(manifest, /android:screenOrientation="fullSensor"/);
     assert.match(strings, /<string name="app_name">RelicGrid<\/string>/);
     assert.match(strings, /<string name="title_activity_main">RelicGrid<\/string>/);
