@@ -139,3 +139,16 @@ test("App Store distribution has a separate manual signed IPA workflow with opti
     assert.match(guide, /ASC_API_PRIVATE_KEY/);
     assert.doesNotMatch(workflow, /-----BEGIN (?:RSA )?PRIVATE KEY-----/);
 });
+
+test("iOS signing diagnostics validates the PKCS#12 without exposing secrets or uploading", () => {
+    const workflow = readFileSync(new URL("../.github/workflows/ios-signing-diagnostics.yml", import.meta.url), "utf8");
+
+    assert.match(workflow, /workflow_dispatch:/);
+    assert.match(workflow, /IOS_DISTRIBUTION_CERTIFICATE_P12_BASE64/);
+    assert.match(workflow, /IOS_DISTRIBUTION_CERTIFICATE_PASSWORD/);
+    assert.match(workflow, /Buffer\.from\(encoded, "base64"\)/);
+    assert.match(workflow, /-passin env:IOS_CERTIFICATE_PASSWORD/);
+    assert.match(workflow, /apple-actions\/import-codesign-certs@v3/);
+    assert.doesNotMatch(workflow, /upload-app|upload-artifact/);
+    assert.doesNotMatch(workflow, /echo\s+["']?\$IOS_CERTIFICATE/);
+});

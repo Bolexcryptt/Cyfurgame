@@ -1,0 +1,116 @@
+name: iOS signing diagnostics
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate-distribution-certificate:
+    name: Validate PKCS#12 and macOS import
+    runs-on: macos-15
+    timeout-minutes: 10
+    steps:
+      - name: Check certificate secrets are configured
+        env:
+          IOS_CERTIFICATE_BASE64: ${{ secrets.IOS_DISTRIBUTION_CERTIFICATE_P12_BASE64 }}
+          IOS_CERTIFICATE_PASSWORD: ${{ secrets.IOS_DISTRIBUTION_CERTIFICATE_PASSWORD }}
+        run: |
+          set -euo pipefail
+          missing=()
+          [ -n "$IOS_CERTIFICATE_BASE64" ] || missing+=("IOS_DISTRIBUTION_CERTIFICATE_P12_BASE64")
+          [ -n "$IOS_CERTIFICATE_PASSWORD" ] || missing+=("IOS_DISTRIBUTION_CERTIFICATE_PASSWORD")
+          if [ "${#missing[@]}" -gt 0 ]; then
+            printf 'Missing required GitHub Actions secrets: %s\n' "${missing[*]}" >&2
+            exit 1
+          fi
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Decode and validate PKCS#12 with OpenSSL
+        env:
+          IOS_CERTIFICATE_BASE64: ${{ secrets.IOS_DISTRIBUTION_CERTIFICATE_P12_BASE64 }}
+          IOS_CERTIFICATE_PASSWORD: ${{ secrets.IOS_DISTRIBUTION_CERTIFICATE_PASSWORD }}
+        run: |
+          set -euo pipefail
+          p12_path="$RUNNER_TEMP/relicgrid-certificate-validation.p12"
+          openssl_log="$RUNNER_TEMP/relicgrid-pkcs12-validation.log"
+          trap 'rm -f "$p12_path" "$openssl_log"' EXIT
+
+          node - "$p12_path" <<'NODE'
+          const fs = require("node:fs");
+          const encoded = process.env.IOS_CERTIFICATE_BASE64.replace(/\s/g, "");
+
+          if (!encoded || !/^[A-Za-z0-9+/]*={0,2}$/.test(encoded) || encoded.length % 4 === 1) {
+            console.error("Certificate secret is not valid Base64.");
+            process.exit(1);
+          }
+
+          const p12 = Buffer.from(encoded, "base64");
+          if (p12.length === 0 || p12[0] !== 0x30) {
+            console.error("Decoded certificate secret is not a DER-encoded PKCS#12 payload.");
+            process.exit(1);
+          }
+
+          const canonicalBase64 = p12.toString("base64").replace(/=+$/, "");
+          if (canonicalBase64 !== encoded.replace(/=+$/, "")) {
+            console.error("Certificate secret does not round-trip as valid Base64.");
+            process.exit(1);
+          }
+
+          fs.writeFileSync(process.argv[2], p12, { mode: 0o600 });
+          console.log(`Decoded PKCS#12 byte length: ${p12.length}`);
+          NODE
+
+          echo "OpenSSL: $(openssl version)"
+          if openssl pkcs12 \
+            -in "$p12_path" \
+            -passin env:IOS_CERTIFICATE_PASSWORD \
+            -noout \
+            -info \
+            > /dev/null 2> "$openssl_log"; then
+            echo "OpenSSL accepted the decoded PKCS#12 and configured password."
+            grep -E '^(MAC:|PKCS7|Shrouded Keybag|Key bag|Certificate bag)' "$openssl_log" || true
+          elif grep -Eiq 'mac verify error|invalid password|bad decrypt' "$openssl_log"; then
+            echo "OpenSSL rejected the PKCS#12 MAC/password check; the password does not match this payload or the payload is corrupted." >&2
+            exit 1
+          elif grep -Eiq 'unsupported|unknown cipher|legacy provider' "$openssl_log"; then
+            if openssl pkcs12 -help 2>&1 | grep -q -- '-legacy'; then
+              if openssl pkcs12 \
+                -legacy \
+                -in "$p12_path" \
+                -passin env:IOS_CERTIFICATE_PASSWORD \
+                -noout \
+                -info \
+                > /dev/null 2> "$openssl_log"; then
+                echo "OpenSSL accepted the PKCS#12 with its legacy provider; macOS import will check platform compatibility."
+                grep -E '^(MAC:|PKCS7|Shrouded Keybag|Key bag|Certificate bag)' "$openssl_log" || true
+              elif grep -Eiq 'mac verify error|invalid password|bad decrypt' "$openssl_log"; then
+                echo "OpenSSL legacy-mode MAC/password check failed; the password does not match this payload or the payload is corrupted." >&2
+                exit 1
+              else
+                echo "OpenSSL legacy mode could not parse the PKCS#12; macOS import will check platform compatibility."
+              fi
+            else
+              echo "This OpenSSL build cannot check the PKCS#12 encryption algorithm; macOS import will check platform compatibility."
+            fi
+          else
+            echo "OpenSSL could not parse the decoded PKCS#12. Sanitized diagnostics:" >&2
+            grep -E 'error:|Error|unsupported|unknown cipher' "$openssl_log" | head -n 5 >&2 || true
+            exit 1
+          fi
+
+      - name: Import certificate with macOS security
+        uses: apple-actions/import-codesign-certs@v3
+        with:
+          p12-file-base64: ${{ secrets.IOS_DISTRIBUTION_CERTIFICATE_P12_BASE64 }}
+          p12-password: ${{ secrets.IOS_DISTRIBUTION_CERTIFICATE_PASSWORD }}
+
+      - name: Clean up temporary keychain
+        if: always()
+        run: |
+          security delete-keychain signing_temp.keychain >/dev/null 2>&1 || true
