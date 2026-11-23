@@ -1,0 +1,254 @@
+name: iOS App Store distribution
+
+on:
+  workflow_dispatch:
+    inputs:
+      ios_build_number:
+        description: Unique App Store Connect build number (check the app's build history first)
+        required: true
+        type: string
+      upload_to_app_store_connect:
+        description: Upload the exported IPA to App Store Connect after the artifact is saved
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+jobs:
+  app-store-ipa:
+    name: Sign and export App Store IPA
+    runs-on: macos-15
+    timeout-minutes: 60
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Validate build number and signing secrets
+        env:
+          IOS_BUILD_NUMBER: ${{ inputs.ios_build_number }}
+          IOS_CERTIFICATE: ${{ secrets.IOS_DISTRIBUTION_CERTIFICATE_P12_BASE64 }}
+          IOS_CERTIFICATE_PASSWORD: ${{ secrets.IOS_DISTRIBUTION_CERTIFICATE_PASSWORD }}
+          IOS_PROFILE: ${{ secrets.IOS_PROVISIONING_PROFILE_BASE64 }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          set -euo pipefail
+          if [[ ! "$IOS_BUILD_NUMBER" =~ ^[0-9]+$ ]]; then
+            echo "ios_build_number must be a positive integer." >&2
+            exit 1
+          fi
+          if [ "$IOS_BUILD_NUMBER" -lt 1 ]; then
+            echo "ios_build_number must be a positive integer." >&2
+            exit 1
+          fi
+
+          missing=()
+          [ -n "$IOS_CERTIFICATE" ] || missing+=("IOS_DISTRIBUTION_CERTIFICATE_P12_BASE64")
+          [ -n "$IOS_CERTIFICATE_PASSWORD" ] || missing+=("IOS_DISTRIBUTION_CERTIFICATE_PASSWORD")
+          [ -n "$IOS_PROFILE" ] || missing+=("IOS_PROVISIONING_PROFILE_BASE64")
+          [ -n "$APPLE_TEAM_ID" ] || missing+=("APPLE_TEAM_ID")
+          if [ "${#missing[@]}" -gt 0 ]; then
+            printf 'Missing required GitHub Actions secrets: %s\n' "${missing[*]}" >&2
+            exit 1
+          fi
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run project tests
+        run: npm test
+
+      - name: Build web app and sync Capacitor iOS
+        run: |
+          npm run build
+          npx cap sync ios
+          pod install --project-directory=ios/App
+
+      - name: Import Apple Distribution certificate
+        uses: apple-actions/import-codesign-certs@v3
+        with:
+          p12-file-base64: ${{ secrets.IOS_DISTRIBUTION_CERTIFICATE_P12_BASE64 }}
+          p12-password: ${{ secrets.IOS_DISTRIBUTION_CERTIFICATE_PASSWORD }}
+
+      - name: Install and validate App Store provisioning profile
+        env:
+          IOS_PROVISIONING_PROFILE_BASE64: ${{ secrets.IOS_PROVISIONING_PROFILE_BASE64 }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          set -euo pipefail
+          profile_dir="$HOME/Library/MobileDevice/Provisioning Profiles"
+          mkdir -p "$profile_dir"
+          profile_path="$RUNNER_TEMP/relicgrid-appstore.mobileprovision"
+          printf '%s' "$IOS_PROVISIONING_PROFILE_BASE64" | base64 -D > "$profile_path"
+          security cms -D -i "$profile_path" > "$RUNNER_TEMP/relicgrid-profile.plist"
+
+          python3 - "$RUNNER_TEMP/relicgrid-profile.plist" "$APPLE_TEAM_ID" <<'PY'
+          import plistlib
+          import sys
+
+          with open(sys.argv[1], "rb") as profile_file:
+              profile = plistlib.load(profile_file)
+          team_id = sys.argv[2]
+          app_id = profile.get("Entitlements", {}).get("application-identifier")
+          valid_app_ids = {
+              f"{prefix}.com.relicgrid.cyfurgame"
+              for prefix in profile.get("ApplicationIdentifierPrefix", [])
+          }
+          if app_id not in valid_app_ids:
+              raise SystemExit("Provisioning profile does not match com.relicgrid.cyfurgame")
+          if team_id not in profile.get("TeamIdentifier", []):
+              raise SystemExit("Provisioning profile Team ID does not match APPLE_TEAM_ID")
+          if profile.get("Entitlements", {}).get("get-task-allow") is not False:
+              raise SystemExit("Provisioning profile is not an App Store distribution profile")
+          if "ProvisionedDevices" in profile:
+              raise SystemExit("Provisioning profile is device-limited, not an App Store profile")
+          PY
+
+          profile_uuid=$(/usr/libexec/PlistBuddy -c 'Print UUID' "$RUNNER_TEMP/relicgrid-profile.plist")
+          profile_name=$(/usr/libexec/PlistBuddy -c 'Print Name' "$RUNNER_TEMP/relicgrid-profile.plist")
+          cp "$profile_path" "$profile_dir/$profile_uuid.mobileprovision"
+          {
+            echo "IOS_PROFILE_UUID=$profile_uuid"
+            echo "IOS_PROFILE_NAME=$profile_name"
+          } >> "$GITHUB_ENV"
+
+      - name: Archive signed iOS app
+        env:
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          IOS_BUILD_NUMBER: ${{ inputs.ios_build_number }}
+        run: |
+          set -euo pipefail
+          xcodebuild \
+            -workspace ios/App/App.xcworkspace \
+            -scheme App \
+            -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -archivePath "$RUNNER_TEMP/RelicGrid-AppStore.xcarchive" \
+            CODE_SIGN_STYLE=Manual \
+            CODE_SIGN_IDENTITY="Apple Distribution" \
+            DEVELOPMENT_TEAM="$APPLE_TEAM_ID" \
+            PROVISIONING_PROFILE_SPECIFIER="$IOS_PROFILE_NAME" \
+            CURRENT_PROJECT_VERSION="$IOS_BUILD_NUMBER" \
+            archive
+
+      - name: Export and validate App Store IPA
+        env:
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          IOS_BUILD_NUMBER: ${{ inputs.ios_build_number }}
+        run: |
+          set -euo pipefail
+          python3 - "$RUNNER_TEMP/ExportOptions.plist" "$APPLE_TEAM_ID" "$IOS_PROFILE_NAME" <<'PY'
+          import plistlib
+          import sys
+
+          options = {
+              "method": "app-store-connect",
+              "signingStyle": "manual",
+              "teamID": sys.argv[2],
+              "provisioningProfiles": {
+                  "com.relicgrid.cyfurgame": sys.argv[3]
+              }
+          }
+          with open(sys.argv[1], "wb") as options_file:
+              plistlib.dump(options, options_file)
+          PY
+
+          xcodebuild \
+            -exportArchive \
+            -archivePath "$RUNNER_TEMP/RelicGrid-AppStore.xcarchive" \
+            -exportPath "$RUNNER_TEMP/app-store-export" \
+            -exportOptionsPlist "$RUNNER_TEMP/ExportOptions.plist"
+
+          ipa_count=$(find "$RUNNER_TEMP/app-store-export" -maxdepth 1 -name '*.ipa' | wc -l | tr -d ' ')
+          if [ "$ipa_count" -ne 1 ]; then
+            echo "Expected exactly one exported IPA, found $ipa_count." >&2
+            exit 1
+          fi
+          ipa=$(find "$RUNNER_TEMP/app-store-export" -maxdepth 1 -name '*.ipa' -print -quit)
+          final_ipa="$RUNNER_TEMP/RelicGrid-AppStore.ipa"
+          cp "$ipa" "$final_ipa"
+
+          validation_dir="$RUNNER_TEMP/RelicGrid-AppStore-validation"
+          mkdir -p "$validation_dir"
+          ditto -x -k "$final_ipa" "$validation_dir"
+          app="$validation_dir/Payload/App.app"
+          test -d "$app"
+          test -f "$app/embedded.mobileprovision"
+
+          bundle_id=$(/usr/libexec/PlistBuddy -c 'Print CFBundleIdentifier' "$app/Info.plist")
+          build_number=$(/usr/libexec/PlistBuddy -c 'Print CFBundleVersion' "$app/Info.plist")
+          test "$bundle_id" = "com.relicgrid.cyfurgame"
+          test "$build_number" = "$IOS_BUILD_NUMBER"
+          codesign --verify --deep --strict "$app"
+          codesign -dv --verbose=4 "$app" 2> "$RUNNER_TEMP/relicgrid-codesign.txt"
+          grep -q 'Authority=Apple Distribution' "$RUNNER_TEMP/relicgrid-codesign.txt"
+
+          /usr/bin/unzip -tq "$final_ipa"
+          echo "Bundle ID: $bundle_id"
+          echo "Build number: $build_number"
+          echo "Distribution signing: Apple Distribution"
+          echo "IPA ready: $final_ipa"
+
+      - name: Upload App Store IPA artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: relicgrid-ios-app-store-ipa
+          path: ${{ runner.temp }}/RelicGrid-AppStore.ipa
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Validate App Store Connect upload secrets
+        if: inputs.upload_to_app_store_connect
+        env:
+          ASC_API_KEY_ID: ${{ secrets.ASC_API_KEY_ID }}
+          ASC_API_ISSUER_ID: ${{ secrets.ASC_API_ISSUER_ID }}
+          ASC_API_PRIVATE_KEY: ${{ secrets.ASC_API_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          missing=()
+          [ -n "$ASC_API_KEY_ID" ] || missing+=("ASC_API_KEY_ID")
+          [ -n "$ASC_API_ISSUER_ID" ] || missing+=("ASC_API_ISSUER_ID")
+          [ -n "$ASC_API_PRIVATE_KEY" ] || missing+=("ASC_API_PRIVATE_KEY")
+          if [ "${#missing[@]}" -gt 0 ]; then
+            printf 'App Store Connect upload was selected, but these GitHub Actions secrets are missing: %s\n' "${missing[*]}" >&2
+            exit 1
+          fi
+
+      - name: Create App Store Connect API key file
+        if: inputs.upload_to_app_store_connect
+        env:
+          ASC_API_KEY_ID: ${{ secrets.ASC_API_KEY_ID }}
+          ASC_API_ISSUER_ID: ${{ secrets.ASC_API_ISSUER_ID }}
+          ASC_API_PRIVATE_KEY: ${{ secrets.ASC_API_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          python3 -c 'import json, os; json.dump({"key_id": os.environ["ASC_API_KEY_ID"], "issuer_id": os.environ["ASC_API_ISSUER_ID"], "key": os.environ["ASC_API_PRIVATE_KEY"], "in_house": False}, open(os.path.join(os.environ["RUNNER_TEMP"], "app-store-connect-key.json"), "w"))'
+          chmod 600 "$RUNNER_TEMP/app-store-connect-key.json"
+
+      - name: Upload IPA to App Store Connect
+        if: inputs.upload_to_app_store_connect
+        env:
+          ASC_API_KEY_ID: ${{ secrets.ASC_API_KEY_ID }}
+          ASC_API_ISSUER_ID: ${{ secrets.ASC_API_ISSUER_ID }}
+        run: |
+          set -euo pipefail
+          xcrun altool --upload-app \
+            --type ios \
+            --file "$RUNNER_TEMP/RelicGrid-AppStore.ipa" \
+            --apiKey "$ASC_API_KEY_ID" \
+            --apiIssuer "$ASC_API_ISSUER_ID"
+
+      - name: Remove temporary signing files
+        if: always()
+        run: |
+          rm -f "$RUNNER_TEMP/relicgrid-appstore.mobileprovision"
+          rm -f "$RUNNER_TEMP/relicgrid-profile.plist"
+          rm -f "$RUNNER_TEMP/ExportOptions.plist"
+          rm -f "$RUNNER_TEMP/app-store-connect-key.json"

@@ -2,6 +2,8 @@
 
 RelicGrid uses Capacitor 7.6.10 with the matching iOS platform and iOS-compatible App, Browser, Screen Orientation, and Status Bar plugins. The iOS app keeps the existing `com.relicgrid.cyfurgame` bundle identifier, `relicgrid` URL scheme, portrait/landscape support, and the same web app and backend as Android. Its deployment target is iOS 14.0.
 
+For a signed App Store distribution IPA, use the separate [App Store distribution workflow and setup guide](./ios-app-store-distribution.md). The personal Sideloadly workflow below remains unsigned and unchanged.
+
 ## Unsigned build
 
 The `iOS build` GitHub Actions workflow runs on `macos-15` when code is pushed to `main`. It builds the web app, syncs Capacitor, installs CocoaPods, and creates an unsigned `.xcarchive`. Download the `relicgrid-ios-unsigned-xcarchive` artifact from the completed workflow run.

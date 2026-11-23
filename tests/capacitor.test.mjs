@@ -114,3 +114,28 @@ test("iOS workflow defaults to unsigned archives and gates TestFlight signing be
     }
     assert.doesNotMatch(workflow, /-----BEGIN (?:RSA )?PRIVATE KEY-----/);
 });
+
+test("App Store distribution has a separate manual signed IPA workflow with optional upload", () => {
+    const workflow = readFileSync(new URL("../.github/workflows/ios-app-store.yml", import.meta.url), "utf8");
+    const guide = readFileSync(new URL("../docs/ios-app-store-distribution.md", import.meta.url), "utf8");
+
+    assert.match(workflow, /workflow_dispatch:/);
+    assert.match(workflow, /upload_to_app_store_connect:[\s\S]*?default: false/);
+    assert.match(workflow, /ios_build_number:[\s\S]*?required: true/);
+    assert.match(workflow, /IOS_DISTRIBUTION_CERTIFICATE_P12_BASE64/);
+    assert.match(workflow, /IOS_DISTRIBUTION_CERTIFICATE_PASSWORD/);
+    assert.match(workflow, /IOS_PROVISIONING_PROFILE_BASE64/);
+    assert.match(workflow, /APPLE_TEAM_ID/);
+    assert.match(workflow, /runs-on: macos-15/);
+    assert.match(workflow, /-configuration Release/);
+    assert.match(workflow, /CODE_SIGN_IDENTITY="Apple Distribution"/);
+    assert.match(workflow, /"method": "app-store-connect"/);
+    assert.match(workflow, /com\.relicgrid\.cyfurgame/);
+    assert.match(workflow, /relicgrid-ios-app-store-ipa/);
+    assert.match(workflow, /xcrun altool --upload-app/);
+    assert.match(workflow, /if: inputs\.upload_to_app_store_connect/);
+    assert.match(guide, /IOS_DISTRIBUTION_CERTIFICATE_P12_BASE64/);
+    assert.match(guide, /IOS_PROVISIONING_PROFILE_BASE64/);
+    assert.match(guide, /ASC_API_PRIVATE_KEY/);
+    assert.doesNotMatch(workflow, /-----BEGIN (?:RSA )?PRIVATE KEY-----/);
+});
