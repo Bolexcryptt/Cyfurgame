@@ -128,8 +128,9 @@ test("App Store distribution has a separate manual signed IPA workflow with opti
     assert.match(workflow, /APPLE_TEAM_ID/);
     assert.match(workflow, /runs-on: macos-15/);
     assert.match(workflow, /-configuration Release/);
-    assert.match(workflow, /CODE_SIGN_IDENTITY="Apple Distribution"/);
+    assert.match(workflow, /CODE_SIGNING_ALLOWED=NO/);
     assert.match(workflow, /"method": "app-store-connect"/);
+    assert.match(workflow, /"signingCertificate": "Apple Distribution"/);
     assert.match(workflow, /com\.relicgrid\.cyfurgame/);
     assert.match(workflow, /relicgrid-ios-app-store-ipa/);
     assert.match(workflow, /xcrun altool --upload-app/);
